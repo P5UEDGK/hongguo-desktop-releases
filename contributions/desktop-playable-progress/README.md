@@ -100,3 +100,8 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 本地 MEDIA-SEQUENCE 只接受一个合法十进制整数，拒绝缺值、负数、小数、重复标签及 uint64 越界；缺少标签仍按零处理。旧代码回放失败，当前29项回归通过。
 
 本机完整候选、安装回读与反馈观察期仍待完成。
+
+
+本轮审查回归（2026-10-12，第四批）：4242218253：MEDIA-SEQUENCE必须位于第一个媒体URI之前。
+
+修改后公共回归、待机组合180项、Chrome87项和真实libmpv字幕检查通过。暂停预加载实测触及8MiB硬上限并稳定，2x/3x恢复及释放通过。本机候选融合与安装尚未完成，上游PR尚未合并；公共测试通过不等于安装验收通过。

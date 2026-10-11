@@ -60,6 +60,8 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
         mapped, ended = False, False
         seen = set()
         for line in lines:
+            if line.startswith("#EXT-X-MEDIA-SEQUENCE") and seen:
+                return [0, 0]
             if line.startswith("#EXT-X-MAP:"):
                 if line != '#EXT-X-MAP:URI="init.mp4"':
                     return [0, 0]

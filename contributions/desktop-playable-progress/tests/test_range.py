@@ -18,8 +18,13 @@ class RangeTests(unittest.TestCase):
             with self.subTest(tag=tag):
                 playlist.write_text(original+tag+'\n',encoding='utf8')
                 self.assertEqual(playable_range(self.job),[0,0])
-        playlist.write_text(original+'#EXT-X-MEDIA-SEQUENCE:0\n',encoding='utf8')
+        playlist.write_text(original.replace('#EXTM3U\n','#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n',1),encoding='utf8')
         self.assertEqual(playable_range(self.job),[0,2])
+    def test_media_sequence_after_first_media_uri_is_rejected(self):
+        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
+        for body in (original+'#EXT-X-MEDIA-SEQUENCE:0\n',original.replace('#EXT-X-ENDLIST','#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-ENDLIST')):
+            playlist.write_text(body,encoding='utf8');self.assertEqual(playable_range(self.job),[0,0])
+
     def test_master_tags_cannot_enter_local_media_coverage(self):
         self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
         for tag in ('#EXT-X-SESSION-DATA:DATA-ID="fixture",VALUE="x"',
