@@ -18,7 +18,7 @@ async function scenario(fault){
   const context={URL,Event,Number,Math,Map,AbortController,window:{devicePixelRatio:1},
     Date:{now:()=>now},ResizeObserver:class{observe(){}disconnect(){}},
     document:{hidden:['hidden-surface','original-expiry'].includes(fault),head:{append(){}},createElement:()=>({remove(){}}),addEventListener(name,fn){documentListeners.set(name,fn);},removeEventListener(name){documentListeners.delete(name);}},
-    setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000||(fault==='cancel-pending'&&delay>10000))return 999;const id=setTimeout(()=>{now+=250;if(fault==='hidden-surface'&&now>=5000)context.document.hidden=false;fn()},1);timers.add(id);return id;},
+    setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000||(fault==='cancel-pending'&&delay>10000))return 999;const id=setTimeout(()=>{now+=250;if(['hidden-surface','hidden-before-activate'].includes(fault)&&now>=5000)context.document.hidden=false;fn()},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id)},
     w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
     desktopCodecHls(target,url,position,handlers,preparation){
@@ -38,6 +38,7 @@ async function scenario(fault){
       else if(url.endsWith('/control')){if(fault==='cold-registration')assert(registrationPolls>=2,'no controls before native registration');commands.push(JSON.parse(init.body));if(fault==='rejected-control')return {ok:false,status:429};if(fault==='hung-control')return new Promise(()=>{});if(fault==='pause-during-flush'&&!pauseInjected){pauseInjected=true;media.pause();}body={revision:10+commands.length};}
       else if(url.endsWith('/activate')){if(fault==='hidden-during-activate'){context.document.hidden=true;documentListeners.get('visibilitychange')?.();}if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}if(fault==='pause-during-activate'){pauseInjected=true;media.pause();}else if(fault.startsWith('pause-during-'))assert.equal(commands.at(-1).paused,true,'queued pause must be applied before activation');activated=true;body={activated:true}}
       else if(url.endsWith('/status')){
+        if(fault==='hidden-before-activate'&&commands.length&&!pauseInjected){pauseInjected=true;context.document.hidden=true;documentListeners.get('visibilitychange')?.();}
         if(fault==='pause-during-status'&&commands.length&&!pauseInjected){pauseInjected=true;media.pause();}
         if(selected&&fault==='hung')return new Promise(()=>{});
         body={state:'complete',source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},
@@ -73,7 +74,7 @@ async function scenario(fault){
     await new Promise(r=>setTimeout(r,5));await tick();
     assert(!scheduled.includes(40),'paused tail must retain normal polling rate');
   }
-  else if(['copy-fallback','resume-seek-fallback','invalid-resume','hidden-surface'].includes(fault)){assert(activated);assert.equal(errors,0);assert.equal(released,0)}
+  else if(['copy-fallback','resume-seek-fallback','invalid-resume','hidden-surface','hidden-before-activate'].includes(fault)){assert(activated);assert.equal(errors,0);assert.equal(released,0)}
   else if(fault.startsWith('pause-during-')){assert(activated,'pause race must still activate');assert(pauseInjected);assert.equal(errors,0);assert.equal(media.paused,true);assert.equal(commands.at(-1).paused,true);}
   else if(fault==='cold-registration'){await new Promise(r=>setTimeout(r,5));await tick();assert(activated);assert.equal(errors,0);assert(registrationPolls>=2);assert(commands.length>0);assert(finished>0,'cold native readiness releases retained old picture');}
   else {assert.equal(errors,1,fault+' must report bounded activation failure');
@@ -82,6 +83,6 @@ async function scenario(fault){
   if(fault==='rejected-control'){await tick();assert(!requests.some(url=>url.includes('/null/')),'terminal flush failure must not poll a null session');assert.equal(errors,1);assert.equal(activated,false);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['hidden-during-activate','settings-during-claim','rejected-control','original-expiry','hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
+(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['hidden-before-activate','hidden-during-activate','settings-during-claim','rejected-control','original-expiry','hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exit(1)});

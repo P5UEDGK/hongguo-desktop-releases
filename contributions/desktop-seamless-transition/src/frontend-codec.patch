@@ -1,9 +1,9 @@
 --- a/frontend/frontend-codec.js
 +++ b/frontend/frontend-codec.js
-@@ -15,8 +15,8 @@
+@@ -24,8 +24,8 @@
    } catch { return false; }
  }
-
+ 
 -function desktopCreateCodecFetch(forceH264 = false) {
 -  let closed = false, usedCopy = false, failureCode = null;
 +function desktopCreateCodecFetch(forceH264 = false, standbyParent = null) {
@@ -11,7 +11,7 @@
    const pending = new Map();
    const request = async (input, init = {}) => {
      const url = new URL(input);
-@@ -24,14 +24,21 @@
+@@ -33,14 +33,21 @@
          !url.pathname.startsWith('/desktop/hls')) throw Error('Invalid codec endpoint');
      if (closed && init.method !== 'DELETE') throw Error('Expired codec controller');
      const headers = new Headers(init.headers);
@@ -33,7 +33,7 @@
      if (status.videoMode) usedCopy = status.videoMode === 'copy';
      if (!forceH264 && status.source && status.videoMode === null) {
        if (!pending.has(url.pathname)) pending.set(url.pathname, (async () => {
-@@ -50,6 +57,7 @@
+@@ -59,6 +66,7 @@
      return response;
    };
    request.usedCopy = () => usedCopy;
@@ -41,8 +41,8 @@
    request.failureCode = () => failureCode;
    request.close = () => {closed = true;};
    return request;
-@@ -57,11 +65,13 @@
-
+@@ -66,11 +74,13 @@
+ 
  function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
    let disposed = false, retried = false, epoch = 0, controller, transport;
 +  let standbyParent = initialState?.standbyParent;
@@ -55,7 +55,7 @@
      if (!internalPause && !internalPlay) {wantedPlaying = true; pauseUntil = 0; if (ready) watchPlayback();}
      return originalPlay.apply(media, args);
    };
-@@ -105,7 +115,7 @@
+@@ -114,7 +124,7 @@
      try {controller?.();} finally {internalPause = false;}
      position = target;
      origin = 0;
@@ -64,7 +64,7 @@
      const active = () => !disposed && epoch === ownEpoch;
      let decoded = false;
      const frameCount = () => {
-@@ -122,6 +132,7 @@
+@@ -131,6 +141,7 @@
        }, 8000);
      };
      const wrapped = {...callbacks,
@@ -72,7 +72,7 @@
        onReady() {
          if (!active()) return;
          ready = true;
-@@ -197,7 +208,9 @@
+@@ -206,7 +217,9 @@
    }, {seek(value) {if (!disposed) {
        position = value; internalPause = true;
        try {controller?.seek(value);} finally {internalPause = false; internalPlay = false;}
@@ -81,5 +81,5 @@
 +    activate() {standbyParent = null;},
 +    sessionId: () => transport?.sessionId?.()});
  }
-
+ 
  // Complete backend prefetch owns speculative media. Keep the resolved episode

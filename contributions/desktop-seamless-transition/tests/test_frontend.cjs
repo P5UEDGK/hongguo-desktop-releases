@@ -34,7 +34,7 @@ async function scenario(native,fail=false,fault=null){
     fetch:async(url,init={})=>{
       url=String(url);calls.push({url,...init});let body={};
       if(init.method==='DELETE'){released++;return {ok:true,status:204};}
-      if(url.endsWith('/activate')){await activated;if(fault==='activate')throw Error('activation rejected');}
+      if(url.endsWith('/activate')){await activated;if(['activate','activate-paused'].includes(fault))throw Error('activation rejected');}
       if(url.endsWith('/status')&&fault==='hung-status')return new Promise(()=>{});
       if(url.endsWith('/capabilities'))body={standbyPlayback:1,nativePlayback:native?1:0};
       else if(url.endsWith('/mode')){selected=true;body=JSON.parse(init.body);}
@@ -77,7 +77,8 @@ async function scenario(native,fail=false,fault=null){
     let timeline;const acceptance=[];
     if(fault==='replacement-id')controllerId='d'.repeat(32);
     if(fault==='pending-id')controllerId=null;
-    const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d,onAcceptanceHlsTransition:(...args)=>acceptance.push(args)},()=>{
+    const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d,onAcceptanceHlsTransition:(...args)=>acceptance.push(args)},intent=>{
+      if(fault==='activate-paused')assert.equal(intent?.paused,true,'failed activation carries latest pause to cold fallback');
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);
       assert.equal(started,1,'failed standby must retain the old picture until fallback is ready');
@@ -106,7 +107,7 @@ async function scenario(native,fail=false,fault=null){
     await tick();assert.equal(media.paused,true);assert.equal(started,1,'retain old picture until activation is acknowledged');
     if(fault==='replacement-id'||fault==='pending-id')assert(calls.some(c=>c.url.endsWith('/'+'d'.repeat(32)+'/activate')));
     media.playbackRate=2;media.volume=.6;media.muted=true;
-    if(fault==='pause-activation'||fault==='paused-frame-hold')media.pause();
+    if(['pause-activation','paused-frame-hold','activate-paused'].includes(fault))media.pause();
     if(fault==='paused-frame-hold')children[0].requestVideoFrameCallback=()=>1;
     if(fault&&fault!=='replacement-id'&&fault!=='pending-id'&&fault!=='pause-activation'&&fault!=='paused-frame-hold'){
       if(fault==='cancel')dispose();
@@ -127,7 +128,7 @@ async function scenario(native,fail=false,fault=null){
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['activate','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold'])await scenario(false,false,fault);
+  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

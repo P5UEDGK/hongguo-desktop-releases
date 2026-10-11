@@ -71,6 +71,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
         assert.equal(prep.resumePosition,fault==='prepare-failed-unknown'?null:position>=90?0:position,'failed preparation cannot bypass cold EOF validation without a known duration');
         assert.equal(retired,0);prep.finishRetained();assert.equal(retired,1);
       }
+      else if(fault==='mode-mismatch'){assert.equal(retired,0,'mode mismatch keeps old picture for cold readiness');prep.finishRetained();assert.equal(retired,1);}
       else if(fault==='unknown-duration'){assert.equal(prep.resumeFailed,true);assert.equal(prep.resumePosition,null,'unknown duration cannot preserve an unvalidated cold resume');prep.finishRetained();}
       else if(['timeout','seek-error'].includes(fault)){assert.equal(prep.resumeFailed,true);assert.equal(prep.resumePosition,position);assert.equal(prep.settings.rate,2);assert.equal(prep.settings.volume,.4);assert.equal(prep.settings.muted,true);assert.equal(retired,0,'seek failure preserves old picture for ordinary loading');prep.finishRetained();assert.equal(retired,1);}
       else {

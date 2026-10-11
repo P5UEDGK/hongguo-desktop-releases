@@ -13,6 +13,15 @@ function media(){return {desktopNativePicture:true,videoWidth:128,videoHeight:12
   assert.equal(await hold.claim('cold-source',0),null,'legacy HLS cold loading consumes the same retention owner');
   hold.dispose();assert.equal(releases,0,'cold playback owns the retained picture until ready');
   hold.finishRetained();hold.finishRetained();assert.equal(releases,1);
+  const noSession=media(),unprepared=c.desktopPrepareNext('cold-source',noSession);
+  assert.equal(unprepared.failed,true,'missing parent is not a usable preparation');
+  c.noSession=noSession;c.unprepared=unprepared;
+  vm.runInContext('desktopStandbys.set(noSession,unprepared)',c);
+  const cold=c.desktopHoldForNext(noSession);
+  assert.notEqual(cold,unprepared,'EOF replaces unavailable prewarm with a retention owner');
+  c.desktopRetainPicture(noSession)(()=>releases++);
+  await cold.claimRecord();cold.finishRetained();assert.equal(releases,2);
+  releases--;
   const cancelled=media(),pending=c.desktopHoldForNext(cancelled);
   c.desktopRetainPicture(cancelled)(()=>releases++);pending.dispose();assert.equal(releases,2,'cancel before cold claim releases');
   c.failedMedia=media();vm.runInContext('desktopStandbys.set(failedMedia,{failed:true})',c);

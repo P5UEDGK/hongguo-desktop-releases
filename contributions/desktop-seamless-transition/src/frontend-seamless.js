@@ -62,7 +62,7 @@ function desktopRetainPicture(media) {
 
 function desktopPrepareNext(url, currentMedia, windowed = false) {
   if (!currentMedia || !currentMedia.desktopSessionId?.())
-    return {dispose() {}, claim: async () => null};
+    return {failed:true, dispose() {}, claim: async () => null};
   const endpoint = w0(url);
   let parent = null;
   const previous = desktopStandbys.get(currentMedia);
@@ -174,8 +174,9 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     cancelClaim: cleanup,
     claim: async () => null,
     async claimRecord(wanted, position = 0, requestedWindowed = false) {
-      if (disposed || claimed || Date.now() >= deadline || wanted !== url || requestedWindowed !== windowed) {preparation.dispose(); return null;}
+      if (disposed || claimed || Date.now() >= deadline || wanted !== url) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
+      if (requestedWindowed !== windowed) {cleanup(true);return null;}
       resumePosition = position;
       if (!Number.isFinite(position) || position < 0 || position > 86400) {
         resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
@@ -341,7 +342,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         }).catch(()=>{
           if (closed || disposed) return;
           restoreAdoption();cleanup(true);
-          if (onFailure) onFailure(); else handlers.onError?.();
+          if (onFailure) onFailure({paused:!wantsPlayback}); else handlers.onError?.();
         });
         return Object.assign(() => {
           if(restoreAdoption())cleanup();
