@@ -49,9 +49,8 @@
    }
    function seek(value) {
      if (disposed || !Number.isFinite(value)) return;
-@@ -193,9 +210,12 @@
-     style.textContent = '.desktop-native-playback .player-chrome{opacity:1!important;pointer-events:auto!important}';
-     document.head.append(style); stage?.classList.add('desktop-native-playback');
+@@ -193,8 +210,11 @@
+     stage?.classList.add('desktop-native-playback');
      resize = new ResizeObserver(layout); resize.observe(media);
 +    const chrome = stage?.querySelector?.('.player-chrome');
 +    if (chrome) resize.observe(chrome);
