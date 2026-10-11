@@ -24,13 +24,16 @@ def validate_danmaku(items):
         raise ValueError("Invalid danmaku list")
     result = []
     for row in items:
-        if not isinstance(row, dict) or set(row) != {"text", "offset_ms", "lane"}:
+        if not isinstance(row, dict) or set(row) not in ({"text", "offset_ms", "lane"}, {"text", "offset_ms", "lane", "motion_start_ms"}):
             raise ValueError("Invalid danmaku item")
         text, offset, lane = row["text"], row["offset_ms"], row["lane"]
         if (not isinstance(text, str) or len(text) > 200 or "\x00" in text
                 or type(offset) is not int or not 0 <= offset <= 86400000
                 or type(lane) is not int or not 0 <= lane < 6):
             raise ValueError("Invalid danmaku value")
+        if "motion_start_ms" in row and (type(row["motion_start_ms"]) is not int
+                or not -24000 <= row["motion_start_ms"] <= 86400000):
+            raise ValueError("Invalid danmaku motion origin")
         result.append(dict(row))
     return result
 
@@ -39,7 +42,7 @@ def active_danmaku(items, seconds, settings):
     if not math.isfinite(seconds):
         return []
     return [row for row in items if row['lane'] < settings['lanes']
-            and 0 <= seconds - row['offset_ms'] / 1000 < settings['duration']]
+            and 0 <= seconds - row.get('motion_start_ms', row['offset_ms']) / 1000 < settings['duration']]
 
 
 def ass_document(items, settings=None, *, assets=None):
@@ -73,10 +76,14 @@ def ass_document(items, settings=None, *, assets=None):
         parts=emoji_parts(text)
         width = max(60,sum(size+4 if part in assets else len(part)*size for part in parts))
         y = 25 + row["lane"] * (size + 15)
-        start = row['offset_ms']
-        prefix=f'Dialogue: 0,{stamp(start)},{stamp(start + duration * 1000)},Default,,0,0,0,,'
+        origin = row.get('motion_start_ms', row['offset_ms'])
+        start, end = max(0, origin), origin + duration * 1000
+        if end <= start:
+            continue
+        progress = (start - origin) / (duration * 1000)
+        prefix=f'Dialogue: 0,{stamp(start)},{stamp(end)},Default,,0,0,0,,'
         def movement(x,top):
-            return r'{\an7\move(' + f'{1000+x:g},{top:g},{-width+x:g},{top:g},0,{duration*1000}' + r')\clip(0,0,1000,562)'
+            return r'{\an7\move(' + f'{1000-(1000+width)*progress+x:g},{top:g},{-width+x:g},{top:g},0,{end-start}' + r')\clip(0,0,1000,562)'
         x=0
         for part in parts:
             if part not in assets:

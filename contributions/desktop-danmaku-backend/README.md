@@ -10,7 +10,7 @@
 
 将 src 的两个模块加入后端 import 路径，依次应用 patches/native-danmaku.patch、patches/native-events.patch。补丁基于公开 #204 的 desktop_native.py/frontend-native.js；集成到私有源码时按同名契约接线，先检查上下文。
 
-补丁已重定位到 #204 的 `41f1fb6`，保留播放器复用、持续丢帧检测和播放意图追踪。随后可应用 #210 的原生布局补丁；应用前仍应执行 `git apply --check`，不要用旧播放器文件覆盖新修复。
+补丁已重定位到 #204 的 `6223e50`，保留播放器复用、持续丢帧检测和播放意图追踪。随后可应用 #210 的原生布局补丁；应用前仍应执行 `git apply --check`，不要用旧播放器文件覆盖新修复。
 
 DanmakuTrack 只在日程/设置变化时创建有绝对视频时间的 ASS 轨道。普通 time-pos 轮询不清空或重建；libass 在视频呈现时钟上移动字幕，因此暂停冻结、seek 与倍速跟随原播放器。替换时先 add/select 新轨道，再 remove 本包拥有的旧轨道，不移除其他轨道。MPV_EVENT_FILE_LOADED(8) 后重新加载。
 
@@ -22,7 +22,7 @@ DanmakuTrack 只在日程/设置变化时创建有绝对视频时间的 ASS 轨�
 
 ## 验证
 
-Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。Python API 测试先安装本包 requirements-test.txt。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
+Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。本包 Python 校验只使用标准库。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
 
 ```pwsh
 python -X utf8 -m unittest discover -s contributions/desktop-danmaku-backend/tests -v
@@ -51,3 +51,10 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 无Dialogue事件的ASS作为空日程处理，不选择空字幕轨；已有owned轨会按原清理流程移除并恢复原字幕。14项Python与真实libmpv的原字幕保留/恢复通过，旧空日程回归失败。所用libmpv及[当前手册](https://mpv.io/manual/stable/#options-secondary-sub-ass-override)支持secondary-sub-ass-override的no/yes/scale/force/strip枚举，实际scale设置与恢复成功；不按旧版布尔限制改写当前枚举。
 
 原生内核和事件补丁同步 6223e50a7f470065f6cbd5d4dc520690c2e8e516。弹幕更新保留在命令循环内，暂停、音频、seek和解除暂停仍按原生owner的新顺序执行；四份社交补丁精确组合、校验函数和Node桥接回归通过。本机安装待完成。
+
+
+## 本轮二次反馈修复
+
+运行中用户选择字幕后，重新选择本包弹幕并保留新字幕；源重载、取消失败的 sub-add 不再沿用旧字幕状态。两个字幕位的 ASS override 与 delay 按实际修改值保存、迁移和恢复，主弹幕使用 no 与零延迟，数字属性按 mpv 回读的规范值比较。旧代码回放失败，当前20项 Python 与实际 libmpv 验证通过。控制行可选 motion_start_ms（整数 -24000..86400000），与 #209 共用在途调速进度；ASS 将负起点裁至零并换算初始位置，offset_ms 仍保留原始评论时间。
+
+本机完整候选、安装回读与反馈观察期仍待完成。

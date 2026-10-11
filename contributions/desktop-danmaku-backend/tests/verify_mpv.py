@@ -33,11 +33,40 @@ try:
         caption=ass_document([{'text':'fixture caption','offset_ms':0,'lane':0}])
         player.command('sub-add','memory://'+caption,'select','original caption')
         original=player.get('sid');assert original and original.isdigit()
+        original_options={'sub-ass-override':'force','secondary-sub-ass-override':'strip','sub-delay':'1.25','secondary-sub-delay':'-0.75'}
+        for name,value in original_options.items():player.command('set',name,value)
+        original_options={name:player.get(name) for name in original_options}
         override=player.get('secondary-sub-ass-override')
         track=DanmakuTrack();track.update({'danmaku':[{'text':'overlay','offset_ms':0,'lane':1}]});track.apply(player)
         assert not track.failed and player.get('secondary-sid')==original and player.get('sid')==track.track_id
+        assert player.get('sub-ass-override')=='no' and float(player.get('sub-delay'))==0
+        assert player.get('secondary-sub-ass-override')=='force' and float(player.get('secondary-sub-delay'))==1.25
         track.update({'danmaku':[]});track.apply(player)
         assert not track.failed and player.get('sid')==original and player.get('secondary-sid')=='no'
         assert player.get('secondary-sub-ass-override')==override
+        actual={name:player.get(name) for name in original_options}
+        assert actual==original_options,(actual,original_options)
+        player.command('set','sid','no');player.command('set','sub-ass-override','strip')
+        track=DanmakuTrack();track.update({'danmaku':[{'text':'no caption overlay','offset_ms':0,'lane':1}]});track.apply(player)
+        assert not track.failed and player.get('sub-ass-override')=='no'
+        owned=track.track_id;player.command('set','sid',original);track.apply(player)
+        assert not track.failed and player.get('sid')==owned and player.get('secondary-sid')==original
+        track.update({'danmaku':[]});track.apply(player)
+        assert not track.failed and player.get('sub-ass-override')=='strip' and player.get('sid')==original
+        player.command('set','sub-ass-override','force')
+        track.update({'danmaku':[{'text':'reload overlay','offset_ms':0,'lane':1}]});track.apply(player)
+        assert player.get('secondary-sub-ass-override')=='force'
+        player.command('loadfile',path)
+        deadline=time.monotonic()+5
+        while player.get('sid')!='no' and time.monotonic()<deadline:time.sleep(.02)
+        assert player.get('sid')=='no','new source must discard subtitle tracks'
+        player.command('sub-add','memory://'+caption,'select','new caption')
+        replacement=player.get('sid')
+        track.source_reloaded();track.apply(player)
+        assert not track.failed and player.get('secondary-sid')==replacement
+        track.update({'danmaku':[]});track.apply(player)
+        assert not track.failed and player.get('sid')==replacement
+        actual={name:player.get(name) for name in original_options}
+        assert actual==original_options,(actual,original_options)
         print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration; no pixel or Win32 claim'}))
 finally:player.close()

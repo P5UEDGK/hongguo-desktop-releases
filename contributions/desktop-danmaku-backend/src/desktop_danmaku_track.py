@@ -14,6 +14,9 @@ class DanmakuTrack:
         self.failed = False
         self.loads = 0
         self.saved = None
+        self.saved_options = None
+        self.modified_options = {}
+        self.reload_options = False
         self.promoted = False
         self.pending_removals = set()
         self.retry_at = 0
@@ -29,6 +32,7 @@ class DanmakuTrack:
         # Old IDs belong to the discarded file, never remove them in the new one.
         self.track_id, self.document, self.dirty = None, '', True
         self.saved = None
+        self.reload_options = self.saved_options is not None
         self.promoted = False
         self.pending_removals.clear()
         self.retry_at = 0
@@ -46,9 +50,45 @@ class DanmakuTrack:
             # mpv has two subtitle slots. Leave both user caption tracks intact.
             raise RuntimeError('Both subtitle slots are in use')
         self.saved = (primary, secondary, player.get('secondary-sub-ass-override') or 'strip')
+        self.saved_options = {name:player.get(name) or default for name,default in (
+            ('sub-ass-override','scale'),('secondary-sub-ass-override','strip'),
+            ('sub-delay','0'),('secondary-sub-delay','0'))}
+
+    def set_option(self, player, name, value):
+        if str(player.get(name)) != str(value):
+            self.modified_options[name] = str(value)
+            player.command('set', name, value)
+            # mpv canonicalizes numeric properties (e.g. 0 -> 0.000000).
+            self.modified_options[name] = str(player.get(name))
+
+    def restore_options(self, player):
+        for name,value in self.modified_options.items():
+            if str(player.get(name)) == value:
+                player.command('set', name, self.saved_options[name])
+        self.saved_options = None
+        self.modified_options = {}
+        self.reload_options = False
 
     def show_captions(self, player):
-        if self.saved is None or not self.selected(self.saved[0]):
+        if self.saved is None:
+            return
+        live = player.get('sid') or 'no'
+        secondary = player.get('secondary-sid') or 'no'
+        if str(live) != str(self.track_id):
+            if self.selected(live) and self.selected(secondary) and (
+                    not self.promoted or str(secondary) != str(self.saved[0])):
+                raise RuntimeError('Both subtitle slots are in use')
+            if self.promoted and str(secondary) == str(self.saved[0]):
+                player.command('set', 'secondary-sid', self.saved[1])
+            self.saved = (live, self.saved[1], self.saved[2])
+            self.promoted = False
+            player.command('set', 'sid', self.track_id)
+            if str(player.get('sid')) != str(self.track_id):
+                raise RuntimeError('Native danmaku track selection failed')
+        # ASS motion is absolute video time, independent of caption overrides.
+        self.set_option(player, 'sub-ass-override', 'no')
+        self.set_option(player, 'sub-delay', '0')
+        if not self.selected(self.saved[0]):
             return
         primary = self.saved[0]
         secondary = player.get('secondary-sid') or 'no'
@@ -57,18 +97,21 @@ class DanmakuTrack:
         # mpv refuses the same track in both slots. Select the overlay first,
         # then move the saved caption; assigning it before sub-add loses it.
         self.promoted = True
-        player.command('set', 'secondary-sub-ass-override', player.get('sub-ass-override') or 'scale')
-        player.command('set', 'secondary-sid', primary)
+        self.set_option(player, 'secondary-sub-ass-override', self.saved_options['sub-ass-override'])
+        self.set_option(player, 'secondary-sub-delay', self.saved_options['sub-delay'])
+        if str(player.get('secondary-sid')) != str(primary):
+            player.command('set', 'secondary-sid', primary)
 
     def restore_captions(self, player):
         if self.saved is None:
+            if self.saved_options is not None: self.restore_options(player)
             return
         primary, secondary, override = self.saved
         if self.promoted and str(player.get('secondary-sid')) in (str(primary),str(secondary)):
             player.command('set', 'secondary-sid', secondary)
-            player.command('set', 'secondary-sub-ass-override', override)
         if str(player.get('sid')) == str(self.track_id):
             player.command('set', 'sid', primary)
+        self.restore_options(player)
 
     def remove_pending(self, player):
         for identifier in tuple(self.pending_removals):
@@ -76,16 +119,23 @@ class DanmakuTrack:
             self.pending_removals.remove(identifier)
 
     def apply(self, player):
-        if not self.dirty or self.clock() < self.retry_at:
+        if self.track_id and str(player.get('sid')) != str(self.track_id):
+            self.dirty = True
+        if not self.dirty or self.clock() < self.retry_at and (self.track_id or self.items or self.pending_removals):
             return
         self.dirty = False
         try:
+            if self.reload_options: self.restore_options(player)
             self.remove_pending(player)
             document = ass_document(self.items, self.settings, assets=self.assets) if self.items else ''
             if not any(line.startswith('Dialogue:') for line in document.splitlines()):
                 document = ''
             if document == self.document:
                 if document: self.show_captions(player)
+                else:
+                    self.restore_captions(player)
+                    self.saved = None
+                    self.promoted = False
                 self.failed = False
                 return
             previous = self.track_id

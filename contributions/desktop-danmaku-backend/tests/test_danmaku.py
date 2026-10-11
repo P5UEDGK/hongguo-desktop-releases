@@ -7,7 +7,7 @@ from desktop_danmaku_track import DanmakuTrack
 
 ITEM={'text':'safe{\\pos(0,0)}[unknown]👍','offset_ms':1000,'lane':0}
 class Player:
-    def __init__(self): self.commands=[]; self.sid=0; self.fail=False; self.properties={'sid':'no','secondary-sid':'no','secondary-sub-ass-override':'strip','sub-ass-override':'scale'};self.fail_remove=False
+    def __init__(self): self.commands=[]; self.sid=0; self.fail=False; self.properties={'sid':'no','secondary-sid':'no','secondary-sub-ass-override':'strip','sub-ass-override':'scale','sub-delay':'0','secondary-sub-delay':'0'};self.fail_remove=False
     def command(self,*args):
         if self.fail: raise RuntimeError('test failure')
         if self.fail_remove and args[0]=='sub-remove':raise RuntimeError('remove failure')
@@ -19,6 +19,60 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_retimed_negative_origin_matches_dom_phase_and_clips_ass_start(self):
+        item={**ITEM,'offset_ms':0,'text':'甲乙','motion_start_ms':-5000}
+        settings={**DEFAULT_SETTINGS,'duration':24}
+        doc=ass_document([item],settings)
+        self.assertIn('0:00:00.00,0:00:19.00',doc)
+        self.assertIn(r'\move(779.167,25,-60,25,0,19000)',doc)
+        self.assertEqual(len(active_danmaku([item],7,settings)),1)
+        self.assertEqual(active_danmaku([item],19,settings),[])
+        for bad in (True,-24001,86400001,1.5):
+            with self.assertRaises(ValueError):validate_danmaku([{**item,'motion_start_ms':bad}])
+
+    def test_caption_enabled_during_clean_overlay_is_promoted_and_overlay_reselected(self):
+        p=Player();track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p);owned=track.track_id
+        p.command('set','sid','7');track.apply(p)
+        self.assertEqual(p.get('sid'),owned);self.assertEqual(p.get('secondary-sid'),'7')
+        self.assertFalse(track.failed);self.assertEqual(track.loads,1)
+        track.update({'danmaku':[]});track.apply(p)
+        self.assertEqual(p.get('sid'),'7');self.assertEqual(p.get('secondary-sid'),'no')
+
+    def test_no_caption_overlay_neutralizes_and_restores_ass_override_and_delay(self):
+        p=Player();p.properties.update({'sub-ass-override':'strip','sub-delay':'1.25','secondary-sub-delay':'-2'})
+        original=dict(p.properties);track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertEqual(p.get('sub-ass-override'),'no');self.assertEqual(p.get('sub-delay'),'0')
+        track.update({'danmaku':[]});track.apply(p)
+        self.assertEqual(p.properties,original)
+
+    def test_caption_delays_follow_slot_swap_and_restore(self):
+        p=Player();p.properties.update(sid='7',**{'sub-delay':'2.5','secondary-sub-delay':'-1','sub-ass-override':'force'})
+        original=dict(p.properties);track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertEqual(p.get('sub-delay'),'0');self.assertEqual(p.get('secondary-sub-delay'),'2.5')
+        self.assertEqual(p.get('sub-ass-override'),'no');self.assertEqual(p.get('secondary-sub-ass-override'),'force')
+        track.update({'danmaku':[]});track.apply(p)
+        self.assertEqual(p.properties,original)
+
+    def test_source_reload_does_not_recapture_temporary_option_values(self):
+        p=Player();p.properties.update(sid='7',**{'sub-delay':'2','secondary-sub-delay':'-1'})
+        track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        p.properties.update(sid='8',**{'secondary-sid':'no'}) # tracks reset, options persist
+        track.source_reloaded();track.apply(p)
+        self.assertEqual(p.get('secondary-sid'),'8');self.assertEqual(p.get('secondary-sub-delay'),'2')
+        track.update({'danmaku':[]});track.apply(p)
+        self.assertEqual(p.get('sid'),'8');self.assertEqual(p.get('sub-ass-override'),'scale')
+        self.assertEqual(p.get('secondary-sub-ass-override'),'strip')
+        self.assertEqual(p.get('sub-delay'),'2');self.assertEqual(p.get('secondary-sub-delay'),'-1')
+
+    def test_cancel_failed_add_discards_old_caption_before_retry(self):
+        clock=[0];p=Player();p.properties['sid']='7';p.fail=True
+        track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertTrue(track.failed)
+        track.update({'danmaku':[]});track.apply(p)
+        p.fail=False;p.properties['sid']='9';clock[0]=1
+        track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertFalse(track.failed);self.assertEqual(p.get('secondary-sid'),'9')
+
     def test_filtered_schedule_does_not_select_an_empty_ass_track(self):
         p=Player();p.properties['sid']='7';track=DanmakuTrack()
         track.update({'danmaku':[{**ITEM,'lane':5}], 'danmakuSettings':{**DEFAULT_SETTINGS,'lanes':1}})
@@ -54,11 +108,12 @@ class DanmakuTests(unittest.TestCase):
     def test_ordinary_poll_does_not_reload(self):
         p=Player(); track=DanmakuTrack(); track.update({'danmaku':[ITEM]}); track.apply(p)
         for _ in range(100): track.apply(p); track.update({'danmaku':[ITEM]})
-        self.assertEqual(len(p.commands),1); self.assertEqual(track.loads,1)
+        self.assertEqual(len([c for c in p.commands if c[0]=='sub-add']),1); self.assertEqual(track.loads,1)
+        stable=len(p.commands);track.apply(p);self.assertEqual(len(p.commands),stable)
     def test_replace_adds_before_removing_owned_track(self):
         p=Player(); track=DanmakuTrack(); track.update({'danmaku':[ITEM]}); track.apply(p)
         track.update({'danmaku':[ITEM,{**ITEM,'offset_ms':3000}]}); track.apply(p)
-        self.assertEqual([c[0] for c in p.commands],['sub-add','sub-add','sub-remove'])
+        self.assertEqual([c[0] for c in p.commands if c[0] in ('sub-add','sub-remove')],['sub-add','sub-add','sub-remove'])
         self.assertEqual(p.commands[-1],('sub-remove','1'))
     def test_pause_seek_rate_use_absolute_media_timestamps(self):
         track=DanmakuTrack(); p=Player(); track.update({'danmaku':[ITEM]}); track.apply(p)
