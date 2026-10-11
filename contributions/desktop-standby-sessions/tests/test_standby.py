@@ -20,6 +20,45 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_standby_claims_queued_and_inflight_download_before_fallback(self):
+        vid='123456780002'
+        for kind in ('queued-encode','queued-download','inflight-download'):
+            with self.subTest(kind=kind):
+                loaded=[];entered=threading.Event();release=threading.Event();source=SimpleNamespace(close=lambda:None)
+                def fallback(_):loaded.append('fallback');return source
+                def download(_):entered.set();release.wait(2);loaded.append('download');return source
+                prefetch=EpisodePrefetcher(fallback,lambda _:({},[{'index':2,'vid':vid}]),self.root/kind,encoder=lambda *_:None,download_loader=download,ahead=0)
+                self.addCleanup(prefetch.close);prefetch.generation=1;prefetch.pending=[(1,2,vid,'h264')]
+                if kind!='queued-encode':prefetch.download_pending=[(1,2,vid)]
+                if kind=='inflight-download':
+                    prefetch.downloader=threading.Thread(target=prefetch._download,daemon=True);prefetch.downloader.start();self.assertTrue(entered.wait(1))
+                job=SimpleNamespace(id='warm',prewarm_parent='parent',prefetch_generation=1,cancelled=threading.Event());returned=[]
+                worker=threading.Thread(target=lambda:returned.append(prefetch.load_standby_source(job,'series',2)));worker.start()
+                if kind=='inflight-download':
+                    eventually(lambda:not prefetch.pending);self.assertEqual(returned,[]);self.assertEqual(loaded,[]);release.set()
+                worker.join(2);self.assertFalse(worker.is_alive());self.assertEqual(returned,[source])
+                self.assertEqual(prefetch.pending,[]);self.assertEqual(prefetch.download_pending,[]);self.assertNotIn(vid,prefetch.sources)
+                self.assertEqual(loaded,['download'] if kind=='inflight-download' else ['fallback']);prefetch.close()
+
+    def test_activation_rejects_parent_pause_ownership_changed_after_child_control(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='native'
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='native';child.activation_revision=1
+        host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0}
+        def submit(body):
+            state.update(body,revision=state['revision']+1)
+            if 'paused' in body:previous.pause_revision=state['revision']
+            return state['revision']
+        previous=SimpleNamespace(job=parent,stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=submit)
+        session=SimpleNamespace(job=child,stop=threading.Event(),snapshot=lambda:{'visible':True,'outputReady':True,'revision':1},submit=lambda _:1)
+        host.sessions={parent.id:previous,child.id:session};jobs.native=host
+        try:
+            host.control(child.id,{'visible':True,'paused':False});host.control(parent.id,{'paused':False})
+            with self.assertRaises(HTTPException) as error:jobs.activate(child)
+            self.assertEqual(error.exception.status_code,409);self.assertEqual(child.prewarm_parent,parent.id);self.assertTrue(session.handoff_previous)
+            host.control(child.id,{'visible':True,'paused':False});jobs.activate(child)
+            self.assertTrue(state['paused']);self.assertIsNone(child.prewarm_parent);self.assertEqual(session.handoff_previous,[])
+        finally:jobs.native=None
+
     def test_duplicate_creation_token_does_not_revoke_existing_standby(self):
         import uuid
         jobs,_=self.jobs();token=f'{int((time.time()+30)*1000):013d}-{uuid.uuid4().hex}'
@@ -78,8 +117,9 @@ class StandbyTests(unittest.TestCase):
         jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='native'
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='native';child.activation_revision=1
         host=object.__new__(NativeHost);host.guard=threading.RLock()
-        previous=object();session=SimpleNamespace(handoff_previous=[(previous,False,1)],snapshot=lambda:{'visible':True,'outputReady':True,'revision':1})
-        host.sessions={child.id:session};jobs.native=host
+        previous=SimpleNamespace(pause_revision=1,snapshot=lambda:{'paused':True,'revision':1})
+        session=SimpleNamespace(handoff_previous=[(previous,False,1)],snapshot=lambda:{'visible':True,'outputReady':True,'revision':1})
+        host.sessions={parent.id:previous,child.id:session};jobs.native=host
         try:
             jobs.activate(child);self.assertEqual(session.handoff_previous,[]);self.assertIsNone(child.prewarm_parent)
         finally:jobs.native=None

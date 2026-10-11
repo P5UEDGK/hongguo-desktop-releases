@@ -12,7 +12,7 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,56 @@
+@@ -291,7 +296,69 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -62,6 +62,19 @@
 +                        pass  # Preserve the original control failure.
 +                raise
 +
++    def validate_handoff(self, identifier):
++        with self.guard:
++            session = self.sessions.get(identifier)
++            if session is None: raise ValueError("Standby session unavailable")
++            for previous, _, pause_revision in getattr(session, "handoff_previous", ()):
++                if not any(previous is live for live in self.sessions.values()): continue
++                desired = previous.desired_state() if hasattr(previous, "desired_state") else previous.snapshot()
++                value = previous.snapshot()
++                current = getattr(previous, "pause_revision", value.get("revision", 0))
++                if (current != pause_revision or not desired.get("paused") or not value.get("paused")
++                        or value.get("revision", -1) < pause_revision):
++                    raise ValueError("Parent handoff pause changed")
++
 +    def commit_handoff(self, identifier):
 +        with self.guard:
 +            session = self.sessions.get(identifier)
@@ -70,7 +83,7 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -301,6 +355,15 @@
+@@ -301,6 +368,15 @@
          with self.guard:
              if self.sessions.get(identifier) is session:
                  self.sessions.pop(identifier, None)
@@ -86,7 +99,7 @@
          return True
  
  
-@@ -429,6 +492,8 @@
+@@ -429,6 +505,8 @@
              revision = self.revision + 1
              self.commands.put_nowait((revision, command))
              self.revision = revision
@@ -95,7 +108,7 @@
              self.queued_state.update({key: value for key, value in command.items()
                                        if key in self.queued_state})
              return revision
-@@ -455,7 +520,8 @@
+@@ -455,7 +533,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -105,7 +118,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -642,6 +708,7 @@
+@@ -642,6 +721,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
