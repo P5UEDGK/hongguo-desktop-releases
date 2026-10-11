@@ -95,6 +95,7 @@ try{
  const socialCalls=()=>page.evaluate(()=>calls.filter(c=>/comments|metrics|replies/.test(c.path)));
  check((await socialCalls()).length===0,'remembered open drawer starts on episodes without comments/metrics/replies');
  check(await page.getByRole('button',{name:'关闭选集',exact:true}).getAttribute('aria-expanded')==='true','remembered-open selection exposes its closing action and expanded state');
+ check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-pressed')==='false'&&await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-expanded')===null,'disabled comments use pressed state while the remembered drawer stays expanded');
  check(await page.locator('aside').evaluate(n=>n.firstElementChild.classList.contains('desktop-social')),'drawer navigation is first in DOM order');
  await page.getByRole('tab',{name:'选集',exact:true}).focus();await page.keyboard.press('Tab');
  check(await page.getByRole('button',{name:'关闭右侧抽屉',exact:true}).evaluate(n=>n===document.activeElement),'keyboard reaches visible close control before episode list');
@@ -143,6 +144,7 @@ try{
  check(Math.min(pinMini.x+pinMini.width,toggleMini.x+toggleMini.width)<=Math.max(pinMini.x,toggleMini.x),'visible mini toggle avoids measured pin');
  await page.evaluate(()=>document.querySelector('.desktop-player').classList.remove('mini'));
  await page.getByRole('button',{name:'评论与互动',exact:true}).click();
+ check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-pressed')==='true','enabled comments expose pressed state');
  await page.getByText('整剧收藏 18',{exact:true}).waitFor();
  check((await socialCalls()).some(c=>c.path.endsWith('/comments')),'comments load on explicit request');
  check(await page.locator('.desktop-social-header,h3').count()===0,'comment tab has no redundant title row');
@@ -154,6 +156,7 @@ try{
  check(Math.abs((await page.locator('video').boundingBox()).width-narrow.width)<1,'closing comments preserves video width');
  check(await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'comment toggle returns to selection');
  check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集'),'bottom toggle removes both comment tabs');
+ check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-pressed')==='false','disabled comments expose unpressed state while selection remains open');
  await page.getByRole('button',{name:'评论与互动',exact:true}).click();
  await page.getByText('整剧收藏 18',{exact:true}).waitFor();
  await page.getByRole('button',{name:'关闭评论页面',exact:true}).click();
@@ -193,7 +196,7 @@ try{
  await page.getByRole('button',{name:'关闭评论页面',exact:true}).click();
  check(await page.locator('aside').isVisible()&&await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'series review close returns to selection and retains drawer');
  check(Math.abs((await page.locator('video').boundingBox()).width-narrow.width)<1,'series review close preserves video width');
- check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-expanded')==='true','comment tabs stay enabled after returning to selection');
+ check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-pressed')==='true','comment tabs stay enabled after returning to selection');
  await page.getByRole('button',{name:'评论与互动',exact:true}).click();
  check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集'),'bottom toggle on selection removes both enabled comment tabs');
  await page.getByRole('button',{name:'评论与互动',exact:true}).click();
@@ -247,6 +250,15 @@ try{
  await page.mouse.move(0,0);
  await page.getByRole('button',{name:'弹幕',exact:true}).focus();
  await page.getByRole('region',{name:'弹幕设置',exact:true}).waitFor();
+ await page.getByRole('button',{name:'弹幕',exact:true}).click();
+ await page.mouse.move(0,0);await page.waitForTimeout(350);
+ check(await page.getByRole('button',{name:'弹幕',exact:true}).evaluate(node=>node===document.activeElement)&&await page.locator('.desktop-danmaku-panel').count()===0,'pointer leave closes mouse-focused toggle settings');
+ await page.getByRole('button',{name:'弹幕',exact:true}).click();
+ await page.mouse.move(0,0);await page.waitForTimeout(350);
+ await page.locator('.player-mini-toggle').focus();
+ await page.getByRole('button',{name:'弹幕',exact:true}).focus();
+ await page.mouse.move(0,0);await page.waitForTimeout(350);
+ check(await page.getByRole('region',{name:'弹幕设置',exact:true}).isVisible(),'keyboard focus keeps settings open after pointer leaves');
  check(await page.locator('.desktop-danmaku-panel input[type=range]').count()===4,'focus on same danmaku toggle exposes all settings without a shortcut');
  check(await page.locator('.desktop-danmaku-panel').evaluate(panel=>{
   const p=document.createElement('p');p.textContent='长'.repeat(300);panel.append(p);
