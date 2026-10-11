@@ -21,7 +21,7 @@ async function scenario(native,fail=false,fault=null){
   const endpoint={origin:'http://127.0.0.1:23456',url:'http://127.0.0.1:23456/desktop/hls?series_id=1234567890123456&ep=2',key:'b'.repeat(64)};
   const context={URL,Event,Number,Math,Date:{now:()=>now},WeakMap,Proxy,Map,AbortController,window:{devicePixelRatio:1},
     w0:()=>endpoint,ik(){},desktopSupportsSource:async()=>true,
-    setTimeout(fn,ms){if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;if(ms<=2000&&ms>100){activationBudget=ms;if(fault!=='activation-timeout')return 998;}const id=setTimeout(()=>{if(fault==='activation-timeout'&&ms>100)now+=ms;if(fault==='no-frame'&&ms===100)now=90001;fn();},1);timers.add(id);return id;},
+    setTimeout(fn,ms){if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;if(ms<=2000&&ms>100){activationBudget=ms;if(fault!=='activation-timeout')return 998;}const id=setTimeout(()=>{if(fault?.startsWith('eof-during-')&&ms===20)now+=20;if(fault==='activation-timeout'&&ms>100)now+=ms;if(fault==='no-frame'&&ms===100)now=90001;fn();},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id);},requestAnimationFrame:fn=>queueMicrotask(fn),
     document:{createElement:()=>new Video()},
     desktopCodecHls(video,url,start,callbacks,prep,windowed,state){
@@ -36,7 +36,7 @@ async function scenario(native,fail=false,fault=null){
       if(init.method==='DELETE'){released++;return {ok:true,status:204};}
       if(url.endsWith('/activate')){await activated;if(['activate','activate-paused','near-eof-activate'].includes(fault))throw Error('activation rejected');}
       if(url.endsWith('/status')&&fault==='hung-status')return new Promise(()=>{});
-      if(url.endsWith('/capabilities'))body={standbyPlayback:1,nativePlayback:native?1:0};
+      if(url.endsWith('/capabilities')){if(fault?.startsWith('eof-during-')){await tick();if(fault==='eof-during-capabilities')delete current.desktopSessionId;else current.stage=null;}body={standbyPlayback:1,nativePlayback:native?1:0};}
       else if(url.endsWith('/mode')){selected=true;body=JSON.parse(init.body);}
       else if(url.endsWith('/control')){revision++;body={revision};}
       else if(init.method==='POST'&&!url.endsWith('/activate'))body={id:'c'.repeat(32)};
@@ -121,7 +121,7 @@ async function scenario(native,fail=false,fault=null){
       terminalCallback(Error('adopted HLS terminal error'));assert.equal(errors,1);assert.equal(started,2,'adopted HLS error releases retained predecessor before forwarding error');
       dispose();await tick();for(const timer of timers)clearTimeout(timer);return;
     }
-    if(fault&&fault!=='replacement-id'&&fault!=='pending-id'&&fault!=='pause-activation'&&fault!=='paused-frame-hold'){
+    if(fault&&!fault.startsWith('eof-during-')&&fault!=='replacement-id'&&fault!=='pending-id'&&fault!=='pause-activation'&&fault!=='paused-frame-hold'){
       if(fault==='cancel')dispose();
       confirmActivation();await tick();
       assert.equal(errors,0);assert.equal(fallbacks,fault==='cancel'?0:1);
@@ -140,7 +140,7 @@ async function scenario(native,fail=false,fault=null){
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{if(process.argv[3]){await scenario(false,false,process.argv[3]);return;}await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
+  for(const fault of ['eof-during-capabilities','eof-during-stage','activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

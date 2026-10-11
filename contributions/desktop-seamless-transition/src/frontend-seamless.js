@@ -65,7 +65,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
   if (!currentMedia || typeof currentMedia.desktopSessionId !== 'function')
     return {failed:true, dispose() {}, claim: async () => null};
   const endpoint = w0(url);
-  let parent = null;
+  let parent = currentMedia.desktopSessionId();
+  const stage = currentMedia.closest?.('.player-stage') || currentMedia.parentElement;
   const previous = desktopStandbys.get(currentMedia);
   previous?.dispose();
   let disposed = false, claimed = false, id = null, controller = null, video = null, creationToken = null;
@@ -242,7 +243,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       if (capability.standbyPlayback !== 1 || disposed) return null;
       const parentUntil=Math.min(deadline,Date.now()+2000);
       while (!disposed && Date.now()<parentUntil) {
-        parent=currentMedia.desktopSessionId?.();
+        const refreshed = currentMedia.desktopSessionId?.();
+        if (/^[a-f0-9]{32}$/.test(refreshed || '')) parent = refreshed;
         if (/^[a-f0-9]{32}$/.test(parent || '')) break;
         await new Promise(resolve=>setTimeout(resolve,20));
       }
@@ -295,7 +297,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       video.className = 'validation-video'; video.playsInline = true;
       video.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0';
       video.muted = true; video.volume = 0; video.playbackRate = currentMedia.playbackRate || 1;
-      (currentMedia.closest('.player-stage') || currentMedia.parentElement).append(video);
+      stage.append(video);
       controller = desktopCodecHls(video, url, 0, callbacks,
         {claim:async()=>id,dispose(){}}, windowed, {paused:true,standbyParent:parent});
       while (!disposed && !failed && Date.now() < deadline) {
