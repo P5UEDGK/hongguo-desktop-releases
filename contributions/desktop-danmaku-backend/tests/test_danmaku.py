@@ -19,6 +19,21 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_first_add_retry_captures_latest_caption_and_options(self):
+        clock=[0];p=Player();p.properties.update({'sid':'7','sub-delay':'2'});p.fail=True
+        track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertTrue(track.failed);self.assertIsNone(track.track_id)
+        p.fail=False;p.properties.update({'sid':'8','sub-delay':'3','sub-pos':'90'});clock[0]=2;track.apply(p)
+        self.assertFalse(track.failed);self.assertEqual(p.get('secondary-sid'),'8');track.close(p)
+        self.assertEqual((p.get('sid'),p.get('sub-delay'),p.get('sub-pos')),('8','3','90'))
+
+    def test_pending_removal_runs_while_both_caption_slots_stay_full(self):
+        clock=[0];p=Player();p.properties['secondary-sid']='7';track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p);old=track.track_id
+        p.command('set','sid','8');p.fail_remove=True;track.apply(p)
+        self.assertIn(old,track.pending_removals);p.fail_remove=False;clock[0]=2;track.apply(p)
+        self.assertNotIn(old,track.pending_removals);self.assertIn(('sub-remove',old),p.commands)
+        self.assertEqual((p.get('sid'),p.get('secondary-sid')),('8','7'));self.assertIsNone(track.track_id)
+
     def test_partial_caption_slot_transitions_preserve_primary_on_retry(self):
         for phase in ('promote','restore'):
             with self.subTest(phase=phase):

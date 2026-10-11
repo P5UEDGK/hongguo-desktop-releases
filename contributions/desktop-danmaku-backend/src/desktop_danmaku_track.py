@@ -160,6 +160,14 @@ class DanmakuTrack:
             return
         self.dirty = False
         try:
+            if not self.track_id:
+                self.remove_pending(player)
+                if self.pending_removals: return
+                # A failed first add never owns the user's current selection.
+                if self.saved is not None:
+                    self.restore_options(player)
+                    self.saved = None
+                    self.promoted = False
             if self.reload_options: self.restore_options(player)
             document = ass_document(self.items, self.settings, assets=self.assets) if self.items else ''
             if not any(line.startswith('Dialogue:') for line in document.splitlines()):
