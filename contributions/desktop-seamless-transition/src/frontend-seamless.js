@@ -1,6 +1,16 @@
 // One speculative next episode; React still owns episode identity/auto-continue.
 const desktopStandbys = new WeakMap();
 
+function desktopNativeSurfaceRect(media) {
+  const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
+  const stage = media.closest('.player-stage') || media.parentElement;
+  const chrome = stage?.querySelector?.('.player-chrome')?.getBoundingClientRect();
+  const reserved = chrome?.height > 0 ? rect.top + rect.height - chrome.top : 84;
+  const bar = Math.min(Math.max(0, reserved), Math.max(0, rect.height - 1));
+  return [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+    Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
+}
+
 function desktopShouldPrewarm(media) {
   const duration = media.desktopTimelineDuration || media.duration;
   const position = media.currentTime + (media.desktopTimeOrigin || 0);
@@ -138,11 +148,9 @@ function desktopPrepareNext(url, currentMedia) {
         while (!disposed && Date.now() < deadline) {
           value = await request('/' + id + '/status');
           if (value.state === 'failed' || value.native?.state === 'failed') throw Error('Standby decoder failed');
-          if (value.native?.outputReady && placement === null) {
-            const r=currentMedia.getBoundingClientRect(),s=window.devicePixelRatio || 1;
+          if (Number.isInteger(value.native?.revision) && placement === null) {
             placement=(await request('/'+id+'/control',{method:'POST',headers:{'content-type':'application/json'},
-              body:JSON.stringify({rect:[Math.max(0,Math.round(r.left*s)),Math.max(0,Math.round(r.top*s)),
-                Math.max(1,Math.round(r.width*s)),Math.max(1,Math.round((r.height-Math.min(84,Math.max(0,r.height-1)))*s))],
+              body:JSON.stringify({rect:desktopNativeSurfaceRect(currentMedia),
                 visible:false,paused:true,muted:true,rate:currentMedia.playbackRate || 1})})).revision;
           }
           if (value.native?.outputReady && placement !== null && value.native.revision >= placement)

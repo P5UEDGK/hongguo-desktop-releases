@@ -83,6 +83,15 @@
        revision = result.revision;
      } catch {if (!disposed) failPreparation();}
      finally {
+@@ -135,7 +145,7 @@
+     // Keep the existing timeline, volume, speed and fullscreen buttons above
+     // the native surface; the reserved band is part of the current stage.
+     const bar = Math.min(84, Math.max(0, rect.height - 1));
+-    const bounds = [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
++    const bounds = typeof desktopNativeSurfaceRect === "function" ? desktopNativeSurfaceRect(media) : [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+       Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
+     const visible = !document.hidden && rect.width > 0 && rect.height > 0;
+     const signature = JSON.stringify([bounds, visible]);
 @@ -156,13 +166,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
@@ -154,8 +163,24 @@
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
            body: JSON.stringify({mode: 'native'})});
        } catch (error) {
-@@ -292,13 +314,42 @@
+@@ -290,15 +312,58 @@
+         if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
+         delegate(false, true); return;
        }
++      if (!preparedNative) {
++        let registered = false;
++        while (!disposed && Date.now() < deadline) {
++          const result = await request('/' + id + '/status');
++          if (result.state === 'failed' || result.native?.state === 'failed') {
++            if (result.failureCode === 'source-read' || result.native?.failureCode === 'source-read') failPreparation();
++            else delegate(true);
++            return;
++          }
++          if (Number.isInteger(result.native?.revision)) {registered = true; break;}
++          await new Promise(resolve => setTimeout(resolve, 20));
++        }
++        if (!disposed && !registered) throw Error('Native session registration timed out');
++      }
        if (disposed) return;
        preparation?.dispose();
 -      patch(); poll(generation);
