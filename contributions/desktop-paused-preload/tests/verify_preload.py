@@ -251,14 +251,17 @@ def main():
                       value['native']['bufferEnd']>=min(12,value['duration']),value)
                 check('payload-cached-on-disk',value['native']['cacheFileBytes']>0 and not value['native']['preloadLimited'])
             for rate in (2,3):
-                request('/'+identifier+'/control','POST',{'paused':False,'rate':rate,'volume':0})
-                state=wait(identifier,lambda s:s['native']['rate']==rate and not s['native']['paused'])
+                if value['duration'] < 1:raise ValueError('Rate checks require a fixture of at least one second')
+                advance=min(1.,value['duration']/4)
+                request('/'+identifier+'/control','POST',{'paused':True,'seek':0})
+                state=wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time'])<.15)
                 position=state['native']['time']
+                request('/'+identifier+'/control','POST',{'paused':False,'rate':rate,'volume':0})
                 # Resuming software output can take longer than a fixed sleep.
                 # This checks eventual progress/sync, not real-time throughput.
-                state=wait(identifier,lambda s:s['native']['time']>position+1 and
+                state=wait(identifier,lambda s:s['native']['rate']==rate and s['native']['time']>position+advance and
                            not s['native']['buffering'],timeout=6)['native']
-                check(str(rate)+'x-resumes-default-audio',state['time']>position+1 and abs(state['avsync'])<.1 and
+                check(str(rate)+'x-resumes-default-audio',state['time']>position+advance and abs(state['avsync'])<.1 and
                       state['audioDevice']=='auto' and state['audioOutput']=='wasapi' and
                       (not args.software or state['hwdec']=='no'),state)
             target=seek_target(value['duration'])

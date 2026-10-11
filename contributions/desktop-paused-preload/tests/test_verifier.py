@@ -14,6 +14,26 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_actual_rate_loop_accepts_one_second_fixture_twice(self):
+        tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
+        loop=next(n for n in ast.walk(scenario) if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='rate')
+        native=dict(time=0,rate=1,paused=True,seeking=False,buffering=False,avsync=0,audioDevice='auto',audioOutput='wasapi',hwdec='dxva2-copy')
+        checks=[];seeks=[]
+        def request(path,method='GET',body=None):
+            if body:
+                native.update({k:v for k,v in body.items() if k!='seek'})
+                if 'seek' in body:native['time']=body['seek'];seeks.append(body['seek'])
+        def wait(identifier,predicate,**kw):
+            for _ in range(25):
+                sample={'duration':1,'native':dict(native)}
+                if predicate(sample):return sample
+                if not native['paused']:native['time']=min(1,native['time']+.05)
+            raise AssertionError('no progress within one-second clip')
+        def check(name,condition,*_):self.assertTrue(condition,name);checks.append(name)
+        scope=dict(vars(probe),identifier='owned',request=request,wait=wait,check=check,value={'duration':1},args=SimpleNamespace(software=False))
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[loop],type_ignores=[])),'<actual-one-second-rate-loop>','exec'),scope)
+        self.assertEqual(checks,['2x-resumes-default-audio','3x-resumes-default-audio']);self.assertEqual(seeks,[0,0])
+
     def test_actual_scenario_accepts_bootstrap_eof_without_claiming_pause_fill(self):
         tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
         body=next(n for n in scenario.body if isinstance(n,ast.Try)).body
