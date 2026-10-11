@@ -245,6 +245,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
   const [open, setOpen] = O.useState(false), [page, setPage] = O.useState(null);
   const [busy, setBusy] = O.useState(false), [error, setError] = O.useState('');
   const own = O.useRef(null);
+  const detachedCursor = O.useRef(null);
   const failedCursor = O.useRef('');
   O.useEffect(() => {
     own.current = {abort: new AbortController(), busy: false};
@@ -253,15 +254,17 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
   async function load(cursor = '') {
     const request = own.current;
     if (!request || request.busy || request.abort.signal.aborted) return;
-    request.busy = true; failedCursor.current = cursor; setBusy(true); setError('');
+    request.busy = true; request.cursor = cursor; failedCursor.current = cursor; setBusy(true); setError('');
     try {
       const params = {comment_id:item.id, cursor};
       const result = await (store ? store.read('replies', params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
       if (own.current === request && !request.abort.signal.aborted) setPage(previous => {
-        const keepLater = !cursor && previous && previous.items.some(row => !result.items.some(item => item.id === row.id));
+        detachedCursor.current = null;
+        const freshIds = new Set(result.items.map(row => row.id));
+        const keepLater = !cursor && previous && previous.items.some(row => !freshIds.has(row.id));
         return {...result, cursor: keepLater ? previous.cursor : result.cursor,
           has_more: keepLater ? previous.has_more : result.has_more && result.cursor !== cursor,
-          items: previous ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : result.items};
+          items: !previous ? result.items : cursor ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : [...result.items, ...previous.items.filter(row => !freshIds.has(row.id))]};
       });
     } catch (e) {if (!request.abort.signal.aborted) setError('回复加载失败，请重试');}
     finally {request.busy = false; if (!request.abort.signal.aborted) setBusy(false);}
@@ -271,7 +274,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     b.jsx('p', {children: b.jsx(DesktopEmojiText,{text:item.text || (item.image_count ? '[图片评论]' : '[无文字评论]')})}),
     b.jsx('small', {children: (item.created_at ? new Date(item.created_at * 1000).toLocaleDateString('zh-CN') + ' · ' : '') + '赞 ' + item.likes}),
     replies && item.replies > 0 && b.jsx('button', {'aria-expanded': open, onClick: () => {
-      setOpen(!open); if (open) {own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!busy && (store || !page)) load();}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
+      setOpen(!open); if (open) {if (store && own.current?.busy) detachedCursor.current = own.current.cursor; own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!busy && (store || !page)) load(detachedCursor.current ?? '');}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
     open && b.jsxs('div', {className: 'desktop-social-replies', children: [
       page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, store, replies: false}, row.id)),
       page && !page.items.length && b.jsx('p', {children: '暂无回复'}),
