@@ -79,6 +79,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
       }
     }else{
       assert(record,'valid resume reuses the prepared session');assert.equal(plays,0);
+      assert.equal(record.expiresAt,90000,'claim carries the original preparation expiry');
       assert.equal(record.id,'b'.repeat(32));assert.equal(record.settings.rate,2);
       if(position>.05){assert.equal(calls.filter(x=>'seek'in x).length,1);assert.equal(native?target:videos[0].currentTime,position);}
       else assert(!calls.some(x=>'seek'in x));

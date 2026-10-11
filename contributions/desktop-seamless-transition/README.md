@@ -94,3 +94,10 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 两份前端补丁及BASELINES已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee。预热直接使用原生包的desktopNativeSurfaceRect，隐藏控制栏不预留84像素；移除重复函数。补丁应用/SHA和全部Node交接、续播、几何回归通过，本批安装验收待完成。
 
 最新三条复审已修复：准备失败仍校验已知时长，未知续播位置不跳过冷加载校验；冷HLS终止错误立即释放保帧；activate返回后在同一2秒期限内排空新控制并核验revision。同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516，预热也携带当前Tauri物理客户区上下文。40项原生/HLS续播场景和全部前端交接回归通过，三个新缺陷在旧补丁上均失败。本机安装待完成。
+
+
+## 本轮二次反馈修复
+
+claim 携带原准备 expiresAt；隐藏表面等待与交接沿用这一期限，不重新获得90秒。旧实现的原期限回归失败；修改后的完整前端补丁及原有交接测试通过。
+
+本机完整候选、安装回读与反馈观察期仍待完成。

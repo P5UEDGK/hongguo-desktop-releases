@@ -194,7 +194,7 @@ function desktopPrepareNext(url, currentMedia) {
         try {await seekToResume(result,position);} catch {resumeFailed = true;cleanup(true);return null;}
         if (disposed) return null;
       }
-      return {...result, settings:preparation.settings};
+      return {...result, settings:preparation.settings, expiresAt:deadline};
     }
   };
   expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup();}}, 90000);

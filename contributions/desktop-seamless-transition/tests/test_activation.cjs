@@ -12,11 +12,11 @@ async function scenario(fault){
       adopt(target,handlers,onFailure){
         assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);
         queueMicrotask(onFailure);return ()=>{};
-      }}:{id:'a'.repeat(32),mode:'native',source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},dispose(){}}),dispose(){},
+      }}:{id:'a'.repeat(32),mode:'native',expiresAt:fault==='original-expiry'?1000:90000,source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},dispose(){}}),dispose(){},
     finishRetained(){if(fault==='success')assert(activated,'old picture retained until activate ACK');if(fault==='pause-during-activate')assert.equal(commands.at(-1).paused,true,'in-flight pause is ACKed before old picture release');finished++},cancelClaim(){cancelled++}};
   const context={URL,Event,Number,Math,Map,AbortController,window:{devicePixelRatio:1},
     Date:{now:()=>now},ResizeObserver:class{observe(){}disconnect(){}},
-    document:{hidden:fault==='hidden-surface',head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
+    document:{hidden:['hidden-surface','original-expiry'].includes(fault),head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
     setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000||(fault==='cancel-pending'&&delay>10000))return 999;const id=setTimeout(()=>{now+=250;if(fault==='hidden-surface'&&now>=5000)context.document.hidden=false;fn()},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id)},
     w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
@@ -68,8 +68,9 @@ async function scenario(fault){
   else if(fault==='cold-registration'){await new Promise(r=>setTimeout(r,5));await tick();assert(activated);assert.equal(errors,0);assert(registrationPolls>=2);assert(commands.length>0);assert(finished>0,'cold native readiness releases retained old picture');}
   else {assert.equal(errors,1,fault+' must report bounded activation failure');
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
+  if(fault==='original-expiry')assert(now<=1250,'claim cannot renew the original preparation deadline');
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
+(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['original-expiry','hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exitCode=1});

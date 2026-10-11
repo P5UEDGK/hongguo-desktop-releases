@@ -153,9 +153,10 @@
 -      id = await createSession();
 +      id = standby?.id || await createSession();
        if (disposed) return;
-       const deadline = Date.now() + 90000;
+-      const deadline = Date.now() + 90000;
 -      let metadata;
 -      while (!disposed && Date.now() < deadline) {
++      const deadline = Math.min(Date.now() + 90000, standby?.expiresAt ?? Infinity);
 +      let metadata = preparedNative ? standby.source : null;
 +      while (!metadata && !disposed && Date.now() < deadline) {
          const result = await request('/' + id + '/status');
@@ -233,7 +234,7 @@
 +        Object.assign(pending, {paused: state.paused, rate: state.rate, volume: state.volume, muted: state.muted});
 +        batchingControls = false;
 +        clearTimeout(controlTimer); controlTimer = null;
-+        const untilVisible = Date.now() + 2000;
++        const untilVisible = Math.min(deadline, Date.now() + 2000);
 +        await flush(untilVisible);
 +        let confirmed = false;
 +        while (!disposed && Date.now() < untilVisible) {
