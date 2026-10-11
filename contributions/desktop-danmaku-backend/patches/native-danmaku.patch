@@ -1,9 +1,9 @@
 --- a/contributions/desktop-native-playback/src/desktop_native.py
 +++ b/contributions/desktop-native-playback/src/desktop_native.py
-@@ -14,13 +14,15 @@
- import threading
- import time
+@@ -17,13 +17,15 @@
  from desktop_stream import ProgressiveSource, SourceReadError
+ from desktop_native_engine import EnginePool
+ import uuid
 +from desktop_danmaku import validate_danmaku, validate_settings
 +from desktop_danmaku_track import DanmakuTrack
 
@@ -17,7 +17,7 @@
          raise ValueError("Invalid native control")
      for name in ("paused", "muted", "visible"):
          if name in body and type(body[name]) is not bool:
-@@ -36,7 +38,12 @@
+@@ -39,7 +41,12 @@
                  or any(type(v) is not int or not 0 <= v <= 32768 for v in rect)
                  or rect[2] < 1 or rect[3] < 1):
              raise ValueError("Invalid native rectangle")
@@ -31,15 +31,15 @@
 
 
  class Event(C.Structure):
-@@ -281,6 +288,7 @@
-         last_progress, last_position, slow_since = initial, None, None
-         retried = False
+@@ -358,6 +365,7 @@
          frame_ready = False
+         requested_position = self.job.start_seconds
+         drop_watch = FrameDropWatch()
 +        danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
-@@ -343,6 +351,8 @@
+@@ -439,6 +447,8 @@
                          break
                      if event.id == 21:  # MPV_EVENT_PLAYBACK_RESTART: first frame has restarted.
                          frame_ready = True
@@ -48,7 +48,7 @@
                      if event.id == 7 and event.data:
                          fields = C.cast(event.data, C.POINTER(C.c_int))
                          if fields[0] == 4 or fields[1] < 0:
-@@ -363,6 +373,7 @@
+@@ -459,6 +469,7 @@
                          user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
@@ -56,7 +56,7 @@
                      for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
                          if key in command:
                              value = command[key]
-@@ -388,6 +399,7 @@
+@@ -485,6 +496,7 @@
                  # hardware capability string or successful loadfile command.
                  hwdec = player.get("hwdec-current")
                  position = player.number("time-pos", self.job.start_seconds)
@@ -64,12 +64,12 @@
                  paused = player.get("pause") == "yes"
                  seeking = player.get("seeking") == "yes"
                  eof = player.get("eof-reached") == "yes"
-@@ -436,7 +448,8 @@
+@@ -540,7 +552,8 @@
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
--                                     frameDrops=player.number("frame-drop-count"), decoderDrops=player.number("decoder-frame-drop-count"))
-+                                     frameDrops=player.number("frame-drop-count"), decoderDrops=player.number("decoder-frame-drop-count"),
+-                                     frameDrops=frame_drops, decoderDrops=decoder_drops)
++                                     frameDrops=frame_drops, decoderDrops=decoder_drops,
 +                                     **danmaku_track.snapshot(position))
                  self.stop.wait(.04)
          except SourceReadError:

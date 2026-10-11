@@ -10,6 +10,8 @@
 
 将 src 的两个模块加入后端 import 路径，依次应用 patches/native-danmaku.patch、patches/native-events.patch。补丁基于公开 #204 的 desktop_native.py/frontend-native.js；集成到私有源码时按同名契约接线，先检查上下文。
 
+补丁已重定位到 #204 的 `41f1fb6`，保留播放器复用、持续丢帧检测和播放意图追踪。随后可应用 #210 的原生布局补丁；应用前仍应执行 `git apply --check`，不要用旧播放器文件覆盖新修复。
+
 DanmakuTrack 只在日程/设置变化时创建有绝对视频时间的 ASS 轨道。普通 time-pos 轮询不清空或重建；libass 在视频呈现时钟上移动字幕，因此暂停冻结、seek 与倍速跟随原播放器。替换时先 add/select 新轨道，再 remove 本包拥有的旧轨道，不移除其他轨道。MPV_EVENT_FILE_LOADED(8) 后重新加载。
 
 控制协议新增 danmaku（最多300条，每条 text≤200字符、offset_ms≤86400000、lane=0..5）和 danmakuSettings（精确四个整数：opacity10..100、lanes1..6、fontSize18..36、duration4..24）。保持原控制鉴权、会话/窗口归属，拒绝任意 mpv 命令、用户 URL、ASS 指令与文件路径。
