@@ -11,36 +11,15 @@
    let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
      rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
      seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
-@@ -61,13 +63,23 @@
+@@ -65,6 +67,7 @@
      negotiationMethods.clear();
    }
    const headers = {'x-api-key': endpoint.key};
 +  media.desktopSessionId = () => id || delegated?.sessionId?.();
    const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
    const event = name => {if (!disposed && native) media.dispatchEvent(new Event(name));};
--  async function request(path, init = {}) {
--    const response = await fetch(endpoint.origin + '/desktop/hls' + path,
--      {...options, ...init, headers: {...headers, ...init.headers}});
--    if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
--    return response.status === 204 ? null : response.json();
-+  async function request(path, init = {}, timeoutMs = 15000) {
-+    const abort = new AbortController();
-+    let timeout;
-+    try {
-+      return await Promise.race([
-+        (async () => {
-+          const response = await fetch(endpoint.origin + '/desktop/hls' + path,
-+            {...options,...init,signal:abort.signal,headers:{...headers,...init.headers}});
-+          if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
-+          return response.status === 204 ? null : response.json();
-+        })(),
-+        new Promise((_,reject)=>{timeout=setTimeout(()=>{abort.abort();reject(Error('Desktop request timed out'));},Math.max(1,timeoutMs));})
-+      ]);
-+    } finally {clearTimeout(timeout);}
-   }
-   async function release(identifier) {
-     if (!identifier) return true;
-@@ -97,7 +109,7 @@
+   async function request(path, init = {}, timeoutMs = 15000) {
+@@ -110,7 +113,7 @@
        if (descriptor) Object.defineProperty(media, key, descriptor);
        else delete media[key];
      }
@@ -49,10 +28,10 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -124,14 +136,14 @@
-       transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
+@@ -138,14 +141,14 @@
                    dispose() {if (!claimed) {claimed = true; release(old);}}};
      }
+     if (resetHlsOrigin && seekPending === null && state.time > 0) seekPending = state.time;
 -    const hlsCallbacks = resetHlsOrigin ? {...callbacks, onReady() {
 -      if (seekPending !== null) {
 +    const hlsCallbacks = {...callbacks, onReady() {
@@ -68,7 +47,7 @@
      delegated = desktopCodecHls(media, url, resetHlsOrigin ? 0 : Math.max(0, state.time), hlsCallbacks,
        transfer, windowed && !resetHlsOrigin, {forceH264, paused: state.paused});
    }
-@@ -141,7 +153,7 @@
+@@ -155,7 +158,7 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -77,7 +56,7 @@
    }
    function delegateCommittedHls(status) {
      const start = Math.max(requestedStart, ...[status.startSeconds,status.windowOrigin].filter(Number.isFinite));
-@@ -151,17 +163,21 @@
+@@ -165,17 +168,21 @@
    }
    function queue(command) {
      if (disposed || !native || fallbackStarted) return;
@@ -103,7 +82,7 @@
        revision = result.revision;
      } catch {if (!disposed) failPreparation();}
      finally {
-@@ -175,7 +191,7 @@
+@@ -189,7 +196,7 @@
      const bounds = desktopNativeSurfaceRect(media);
      const visible = !document.hidden && rect.width > 0 && rect.height > 0;
      const signature = JSON.stringify([bounds, visible]);
@@ -112,7 +91,7 @@
    }
    function seek(value) {
      if (disposed || !Number.isFinite(value)) return;
-@@ -192,13 +208,13 @@
+@@ -206,13 +213,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -128,7 +107,7 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -276,6 +292,7 @@
+@@ -290,6 +297,7 @@
            else {callbacks.onReady(); if (!state.paused) event('playing');}
          }
          const applied = value.revision >= revision && !controlBusy && !Object.keys(pending).length;
@@ -136,7 +115,7 @@
          if (reportedSeek && applied && !value.seeking) {
            state.time = value.time;
            reportedSeek = false; seekPending = null; state.seeking = false;
-@@ -291,12 +308,38 @@
+@@ -305,12 +313,39 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -173,11 +152,12 @@
 +        return;
 +      }
 +      const preparedNative = standby?.mode === 'native';
++      if (preparedNative && !(Number.isFinite(standby.containerDuration) && standby.containerDuration > 0)) resetHlsOrigin = true;
 +      const capability = preparedNative ? {nativePlayback:1} : await request('/capabilities');
        if (disposed) return;
        const sourceUrl = new URL(endpoint.url);
        requestedStart = state.time;
-@@ -310,9 +353,9 @@
+@@ -324,9 +359,9 @@
          if (disposed) {await release(identifier); return null;}
          return identifier;
        }
@@ -189,7 +169,7 @@
        async function resetSavedPosition() {
          const invalid = id; id = null;
          if (!await release(invalid)) throw Error('Invalid resume session release failed');
-@@ -321,8 +364,8 @@
+@@ -335,8 +370,8 @@
          sourceUrl.searchParams.delete('start_seconds');
          id = await createSession();
        }
@@ -200,7 +180,7 @@
          const result = await request('/' + id + '/status');
          if (result.state === 'failed' && result.failureCode === 'start-position' && requestedStart > 0) {
            await resetSavedPosition();
-@@ -347,7 +390,7 @@
+@@ -361,7 +396,7 @@
        // Source download/transport failure says nothing about decoder support.
        if (!metadata) {failPreparation(); return;}
        if (capability.nativePlayback !== 1 || !metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
@@ -209,7 +189,7 @@
          const context = await desktopNativeWindowContext();
          if (disposed) return;
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
-@@ -359,29 +402,114 @@
+@@ -373,29 +408,114 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegateCommittedHls(latest); return;
        }

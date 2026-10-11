@@ -5,13 +5,13 @@
  }
  
 -function desktopCreateCodecFetch(forceH264 = false) {
--  let closed = false, usedCopy = false, failureCode = null;
+-  let closed = false, usedCopy = false, failureCode = null, knownDuration = false;
 +function desktopCreateCodecFetch(forceH264 = false, standbyParent = null) {
-+  let closed = false, usedCopy = false, sessionId = null, failureCode = null;
++  let closed = false, usedCopy = false, sessionId = null, failureCode = null, knownDuration = false;
    const pending = new Map();
    const request = async (input, init = {}) => {
      const url = new URL(input);
-@@ -33,14 +33,21 @@
+@@ -33,15 +33,22 @@
          !url.pathname.startsWith('/desktop/hls')) throw Error('Invalid codec endpoint');
      if (closed && init.method !== 'DELETE') throw Error('Expired codec controller');
      const headers = new Headers(init.headers);
@@ -28,23 +28,24 @@
        return response;
      const status = await response.clone().json();
      failureCode = status.failureCode || null;
+     knownDuration = Number.isFinite(status.duration) && status.duration > 0;
      if (closed || init.signal?.aborted) return response;
 +    sessionId = url.pathname.split("/")[3]; // Claimed standbys have no creation POST in this transport.
      if (status.videoMode) usedCopy = status.videoMode === 'copy';
      if (!forceH264 && status.source && status.videoMode === null) {
        if (!pending.has(url.pathname)) pending.set(url.pathname, (async () => {
-@@ -59,6 +66,7 @@
-     return response;
+@@ -61,6 +68,7 @@
    };
    request.usedCopy = () => usedCopy;
+   request.durationKnown = () => knownDuration;
 +  request.sessionId = () => sessionId;
    request.failureCode = () => failureCode;
    request.close = () => {closed = true;};
    return request;
-@@ -66,11 +74,13 @@
- 
+@@ -69,11 +77,13 @@
  function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
    let disposed = false, retried = false, epoch = 0, controller, transport;
+   let pendingSeek = null, zeroOriginRecovery = false;
 +  let standbyParent = initialState?.standbyParent;
    let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
    let rate = media.playbackRate || 1, watchdog, frameToken, watchPlayback = () => {}, pauseUntil = 0, internalPause = false, internalPlay = false;
@@ -55,7 +56,7 @@
      if (!internalPause && !internalPlay) {wantedPlaying = true; pauseUntil = 0; if (ready) watchPlayback();}
      return originalPlay.apply(media, args);
    };
-@@ -114,7 +124,7 @@
+@@ -119,7 +129,7 @@
      try {controller?.();} finally {internalPause = false;}
      position = target;
      origin = 0;
@@ -64,17 +65,17 @@
      const active = () => !disposed && epoch === ownEpoch;
      let decoded = false;
      const frameCount = () => {
-@@ -131,6 +141,7 @@
+@@ -136,6 +146,7 @@
        }, 8000);
      };
      const wrapped = {...callbacks,
 +      preserveResumePosition: position > .05 && preparation?.resumePosition === position,
        onReady() {
          if (!active()) return;
-         ready = true;
-@@ -206,7 +217,9 @@
-   }, {seek(value) {if (!disposed) {
-       position = value; internalPause = true;
+         if (pendingSeek !== null) {
+@@ -218,7 +229,9 @@
+       if (pendingSeek !== null) {pendingSeek = value;return;}
+       internalPause = true;
        try {controller?.seek(value);} finally {internalPause = false; internalPlay = false;}
 -    }}});
 +    }},

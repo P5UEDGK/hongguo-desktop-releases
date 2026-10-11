@@ -1,15 +1,15 @@
 {
-  "nativeHead": "6b505b46f431535c370643b8432b04ff1efba131",
+  "nativeHead": "a9dfda0befa64f4c1fb3a982ae6c20dd010a31c3",
   "files": [
     {
       "path": "frontend/frontend-native.js",
-      "baseSha256": "829985a138b7a97fd21f851b85141eef8750ed49c5a87eb42bc2a77457e0bb80",
-      "patchedSha256": "d4a3750d556a3ff85532c0c4460a27fef5f12537c69c17995da654fc91526315"
+      "baseSha256": "2cae699d2b0ffce46b582d7ec54f293cf1e202a6f1bb0b6f44ae20068fc8e80e",
+      "patchedSha256": "3b3d08a78ad92b9e7e5cf1bd3db240cc08521338f7867d0a2f1f002aee1a4be8"
     },
     {
       "path": "frontend/frontend-codec.js",
-      "baseSha256": "08a9728fed0f158b9277707ed38f1b38003842abcbc47b75dd06e9a12f4f0291",
-      "patchedSha256": "f8aadcb8a1aed10667c06e0c9ace998f7e75505cb3e7370847c99d530379864a"
+      "baseSha256": "728be649087cf74732a6d676de75f46875fcbafaada2ce0d93a0bf8d4cc0f726",
+      "patchedSha256": "c310e0a486d48806ef329be32238159e136dbc650621c0667c93fd7f5c8ecc05"
     }
   ],
   "controlsPolicy": {

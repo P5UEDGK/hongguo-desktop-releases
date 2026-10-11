@@ -175,7 +175,9 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     cancelClaim: cleanup,
     claim: async () => null,
     async claimRecord(wanted, position = 0, requestedWindowed = false) {
-      if (claimed || Date.now() >= deadline || wanted !== url) {preparation.dispose(); return null;}
+      if (claimed) return null;
+      if (Date.now() >= deadline) {claimed = true;failed = true;cleanup(retained.length > 0);return null;}
+      if (wanted !== url) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
       if (requestedWindowed !== windowed) {cleanup(true);return null;}
       resumePosition = position;
@@ -204,7 +206,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       return {...result, seek:position=>seekToResume(result,position), settings:preparation.settings, expiresAt:deadline};
     }
   };
-  expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup();}}, 90000);
+  expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup(retained.length > 0);}}, 90000);
   desktopStandbys.set(currentMedia, preparation);
   const callbacks = Object.fromEntries(['onTimeline','onPlayableRange','onComplete','onWindowOrigin',
     'onReady','onError','onAcceptanceHlsTransition'].map(name => [name, (...args) => {
@@ -257,7 +259,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
           if (value.native?.outputReady && placement !== null && value.native.revision >= placement) {
             if (value.native.time > .05 || value.native.paused === false || value.native.muted === false || value.native.visible === true)
               throw Error('Standby advanced beyond its opening frame');
-            return {id, mode, source:value.source, duration:value.native.duration || value.duration, dispose:cleanup};
+            return {id, mode, source:value.source, containerDuration:value.duration, duration:value.native.duration || value.duration, dispose:cleanup};
           }
           await new Promise(resolve => setTimeout(resolve, 100));
         }
