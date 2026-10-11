@@ -308,6 +308,10 @@ class NativeSession:
             original = [None]
             @self.host.window_callback
             def procedure(hwnd, message, wparam, lparam, target=widget, previous=original):
+                if message == 0x0084 and hwnd == container:  # WM_NCHITTEST
+                    # STATIC defaults to HTTRANSPARENT without SS_NOTIFY.
+                    # Own the hit so Windows delivers real pointer input here.
+                    return 1  # HTCLIENT
                 if message == 0x0021:  # WM_MOUSEACTIVATE: keep focus in WebView2.
                     return 3  # MA_NOACTIVATE
                 if 0x0200 <= message <= 0x020E or message in (0x0100,0x0101,0x0102,0x0104,0x0105,0x0106):

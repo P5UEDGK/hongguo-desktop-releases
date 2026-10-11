@@ -30,6 +30,7 @@ class InputTests(unittest.TestCase):
             self.assertEqual(len(user.posts),before+1)
             self.assertEqual(user.posts[-1],(200,0x0201,1,(27<<16)|19))
             self.assertEqual(procedure(hwnd,0x0021,0,0),3)
+            self.assertEqual(procedure(hwnd,0x0084,0,0),1 if hwnd==10 else 123)
             self.assertEqual(procedure(hwnd,0x000F,0,0),123)
         self.assertEqual(len(user.posts),2)
     def test_container_without_renderer_child_still_forwards_input(self):
