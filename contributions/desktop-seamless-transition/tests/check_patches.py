@@ -28,4 +28,5 @@ with tempfile.TemporaryDirectory() as temp:
     subprocess.run(['node',str(root/'tests/test_frontend.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_frontend.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_activation.cjs'),str(root/'src/frontend-native.js')],check=True)
+    subprocess.run(['node',str(package/'tests/test_codec_handoff.cjs'),str(root/'src/frontend-codec.js')],check=True)
 print('PASS: exact public bridge patches, syntax and frontend regressions')

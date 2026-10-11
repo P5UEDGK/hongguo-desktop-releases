@@ -146,7 +146,7 @@ function desktopPrepareNext(url, currentMedia) {
                 visible:false,paused:true,muted:true,rate:currentMedia.playbackRate || 1})})).revision;
           }
           if (value.native?.outputReady && placement !== null && value.native.revision >= placement)
-            return {id, mode, dispose:cleanup};
+            return {id, mode, source:value.source, dispose:cleanup};
           await new Promise(resolve => setTimeout(resolve, 100));
         }
         throw Error('Standby frame timed out');
@@ -210,6 +210,7 @@ function desktopPrepareNext(url, currentMedia) {
           } while (true);
           if (disposed || closed) throw Error('Expired adoption');
           await request('/'+activeId+'/activate',{method:'POST'});
+          controller?.activate?.();
         })().then(() => {
           if (disposed) return;
           return video.play();

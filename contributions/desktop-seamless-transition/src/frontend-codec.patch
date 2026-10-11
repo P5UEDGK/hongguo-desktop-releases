@@ -41,21 +41,30 @@
    request.failureCode = () => failureCode;
    request.close = () => {closed = true;};
    return request;
-@@ -96,7 +104,7 @@
+@@ -57,6 +65,7 @@
+ 
+ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
+   let disposed = false, retried = false, epoch = 0, controller, transport;
++  let standbyParent = initialState?.standbyParent;
+   let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
+   let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false;
+   const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
+@@ -102,7 +111,7 @@
      try {controller?.();} finally {internalPause = false;}
      position = target;
      origin = 0;
 -    transport = desktopCreateCodecFetch(force);
-+    transport = desktopCreateCodecFetch(force, initialState?.standbyParent);
++    transport = desktopCreateCodecFetch(force, standbyParent);
      const active = () => !disposed && epoch === ownEpoch;
      const wrapped = {...callbacks,
        onReady() {
-@@ -164,7 +172,8 @@
-     if (media.pause === pause) {if (savedPause) Object.defineProperty(media, 'pause', savedPause); else delete media.pause;}
+@@ -171,7 +180,9 @@
+     if (media.play === play) {if (savedPlay) Object.defineProperty(media, 'play', savedPlay); else delete media.play;}
      media.removeEventListener('error', onError, true);
      media.removeEventListener('timeupdate', rememberTime);
 -  }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}}});
 +  }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}},
++    activate() {standbyParent = null;},
 +    sessionId: () => transport?.sessionId?.()});
  }
  

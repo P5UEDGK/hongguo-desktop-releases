@@ -1,6 +1,15 @@
 --- a/frontend/frontend-native.js
 +++ b/frontend/frontend-native.js
-@@ -33,13 +33,23 @@
+@@ -6,7 +6,7 @@
+   let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
+   let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
+   let style = null, resize = null, lastRect = '', generation = 0, seekPending = null;
+-  let reportedSeek = false, fallbackStarted = false;
++  let reportedSeek = false, fallbackStarted = false, batchingControls = false;
+   let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
+     rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
+     seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
+@@ -36,13 +36,23 @@
      negotiationMethods.clear();
    }
    const headers = {'x-api-key': endpoint.key};
@@ -29,7 +38,7 @@
    }
    async function release(identifier) {
      if (!identifier) return true;
-@@ -68,7 +78,7 @@
+@@ -71,7 +81,7 @@
        if (descriptor) Object.defineProperty(media, key, descriptor);
        else delete media[key];
      }
@@ -38,7 +47,7 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -93,7 +103,7 @@
+@@ -98,7 +108,7 @@
        transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
                    dispose() {if (!claimed) {claimed = true; release(old);}}};
      }
@@ -47,7 +56,7 @@
        transfer, windowed, {forceH264, paused: state.paused});
    }
    async function failPreparation() {
-@@ -102,21 +112,21 @@
+@@ -107,21 +117,21 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -57,9 +66,11 @@
    function queue(command) {
      if (disposed || !native || fallbackStarted) return;
      Object.assign(pending, command);
-     if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
-   }
+-    if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
+-  }
 -  async function flush() {
++    if (!batchingControls && !controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
++  }
 +  async function flush(deadline = null) {
      controlTimer = null;
      if (disposed || !id || !native || controlBusy || !Object.keys(pending).length) return;
@@ -72,7 +83,7 @@
        revision = result.revision;
      } catch {if (!disposed) failPreparation();}
      finally {
-@@ -151,13 +161,13 @@
+@@ -156,13 +166,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -88,7 +99,7 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -244,20 +254,31 @@
+@@ -249,26 +259,38 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -98,6 +109,7 @@
    }
    (async () => {
      try {
+-      const capability = await request('/capabilities');
 +      const standby = await preparation?.claimRecord?.(url, initialPosition);
 +      if (disposed) {standby?.dispose(); return;}
 +      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
@@ -109,7 +121,8 @@
 +        });
 +        return;
 +      }
-       const capability = await request('/capabilities');
++      const preparedNative = standby?.mode === 'native';
++      const capability = preparedNative ? {nativePlayback:1} : await request('/capabilities');
        if (disposed) return;
        if (capability.nativePlayback !== 1) {delegate(false); return;}
        const sourceUrl = new URL(endpoint.url);
@@ -124,15 +137,39 @@
        if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid native session');
        if (disposed) {await release(identifier); return;}
        id = identifier;
-@@ -288,12 +309,35 @@
+       const deadline = Date.now() + 90000;
+-      let metadata;
+-      while (!disposed && Date.now() < deadline) {
++      let metadata = preparedNative ? standby.source : null;
++      while (!metadata && !disposed && Date.now() < deadline) {
+         const result = await request('/' + id + '/status');
+         if (result.state === 'failed') throw Error('Source preparation failed');
+         if (result.source) {
+@@ -281,7 +303,7 @@
+       // Source download/transport failure says nothing about decoder support.
+       if (!metadata) {failPreparation(); return;}
+       if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
+-      try {
++      if (!preparedNative) try {
+         await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
+           body: JSON.stringify({mode: 'native'})});
+       } catch (error) {
+@@ -292,13 +314,42 @@
+       }
        if (disposed) return;
        preparation?.dispose();
-       patch(); poll(generation);
+-      patch(); poll(generation);
++      // Batch initial layout and playback before allowing observers or polls
++      // to announce readiness. A prepared first frame must start advancing in
++      // the same control revision that makes the surface visible.
++      batchingControls = !!standby;
++      patch();
 +      if (standby) {
 +        // Apply geometry, speed and audio in the same activation command.
 +        // The backend refuses activation until a decoded output frame exists.
 +        layout();
 +        Object.assign(pending, {paused: false, rate: state.rate, volume: state.volume, muted: state.muted});
++        batchingControls = false;
 +        clearTimeout(controlTimer); controlTimer = null;
 +        const untilVisible = Date.now() + 2000;
 +        await flush(untilVisible);
@@ -144,6 +181,7 @@
 +        }
 +        if (!disposed && !confirmed) throw Error('Standby activation timed out');
 +      }
++      if (!disposed) poll(generation);
      } catch {if (!disposed) failPreparation();}
    })();
    return Object.assign(() => {
