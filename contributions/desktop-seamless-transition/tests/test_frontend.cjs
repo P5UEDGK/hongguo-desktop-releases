@@ -55,10 +55,12 @@ async function scenario(native,fail=false,fault=null){
   if(fail||fault==='pre-adoption-error')prep.retain(()=>retired++);
   if(fault==='late-claim'||fault==='idle-expiry'){
     await tick();now=90001;if(fault==='idle-expiry')expire();
-    const record=await prep.claimRecord(endpoint.url,0);await tick();
+    if(fault==='url-mismatch'){prep.retain(()=>retired++);await tick();assert.equal(await prep.claimRecord(endpoint.url+'&refresh=1',0),null);await tick();assert.equal(retired,0,'URL identity fallback retains the predecessor until cold readiness');prep.finishRetained();assert.equal(retired,1);for(const timer of timers)clearTimeout(timer);return;}
+  const record=await prep.claimRecord(endpoint.url,0);await tick();
     assert.equal(record,null);assert.equal(released,1);if(!native)assert(children[0].removed);
     for(const timer of timers)clearTimeout(timer);return;
   }
+  if(fault==='url-mismatch'){prep.retain(()=>retired++);await tick();assert.equal(await prep.claimRecord(endpoint.url+'&refresh=1',0),null);await tick();assert.equal(retired,0,'URL identity fallback retains the predecessor until cold readiness');prep.finishRetained();assert.equal(retired,1);for(const timer of timers)clearTimeout(timer);return;}
   const record=await prep.claimRecord(endpoint.url,0);
   if(fail||fault==='no-frame'||fault==='pre-adoption-error'||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);if(fail||fault==='pre-adoption-error'){assert.equal(retired,0,'failed claimed preparation retains picture until cold fallback readiness');prep.finishRetained();assert.equal(retired,1);}for(const timer of timers)clearTimeout(timer);return;}
   assert(record);assert.equal(record.settings.volume,.3);assert.equal(record.settings.rate,3);
@@ -112,6 +114,7 @@ async function scenario(native,fail=false,fault=null){
     media.playbackRate=2;media.volume=.6;media.muted=true;
     if(['pause-activation','paused-frame-hold','activate-paused'].includes(fault))media.pause();
     if(fault==='paused-frame-hold')children[0].requestVideoFrameCallback=()=>1;
+    if(fault==='pause-after-frame-wait'){children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();assert.equal(started,1);media.pause();assert.equal(started,2,'activated pause releases predecessor without waiting for a future frame');assert(!children[0].removed);dispose();await tick();for(const timer of timers)clearTimeout(timer);return;}
     if(fault==='terminal-error'){
       children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();
       assert.equal(started,1,'old picture stays until the first actual HLS frame');
@@ -137,7 +140,7 @@ async function scenario(native,fail=false,fault=null){
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{if(process.argv[3]){await scenario(false,false,process.argv[3]);return;}await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate'])await scenario(false,false,fault);
+  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -187,7 +187,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     async claimRecord(wanted, position = 0, requestedWindowed = false) {
       if (claimed) return null;
       if (Date.now() >= deadline) {claimed = true;failed = true;cleanup(holdRequested || retained.length > 0);return null;}
-      if (wanted !== url) {preparation.dispose(); return null;}
+      if (wanted !== url) {claimed = true;cleanup(true);return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
       if (requestedWindowed !== windowed) {cleanup(true);return null;}
       resumePosition = position;
@@ -319,11 +319,11 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         for (const name of ['paused','ended','duration','readyState','videoWidth','videoHeight','buffered','seeking','error'])
           property(name,{get:()=>video[name]});
         property('play',{value:()=>{wantsPlayback=true;return activationComplete ? video.play() : Promise.resolve();}});
-        property('pause',{value:()=>{wantsPlayback=false;video.pause();}});
+        property('pause',{value:()=>{wantsPlayback=false;video.pause();if(activationComplete)finishRetained();}});
         property('desktopDisplayMedia',{value:video});
         property('desktopSessionId',{value:()=>controller?.sessionId?.() ?? null});
         for (const name of ['play','playing','pause','ended','timeupdate','waiting','seeking','seeked','progress','volumechange','ratechange','error','loadedmetadata','durationchange']) {
-          const forward=()=>{if(!closed)media.dispatchEvent(new Event(name));};
+          const forward=()=>{if(!closed){if(activationComplete&&(name==='pause'||name==='ended'))finishRetained();media.dispatchEvent(new Event(name));}};
           video.addEventListener(name,forward);listeners.push([name,forward]);
         }
         consumer = handlers;
