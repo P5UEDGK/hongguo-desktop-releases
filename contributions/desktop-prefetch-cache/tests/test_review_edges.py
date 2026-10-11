@@ -24,6 +24,53 @@ class ReviewEdges(unittest.TestCase):
         with self.assertRaises(ValueError):cache.store(self.source,self.output)
         playlist.write_text(original.replace('#EXTM3U\n','#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n',1),encoding='utf8');self.assertTrue(cache.store(self.source,self.output))
 
+    def test_dangling_exact_target_is_rejected_before_quota_eviction(self):
+        cache=self.cache();key,_=cache._identity(self.source);target=cache.root/key
+        try: target.symlink_to(cache.root/'absent',target_is_directory=True)
+        except OSError as error:self.skipTest(str(error))
+        with patch.object(cache,'_reserve',side_effect=AssertionError('must reject before quota')):
+            with self.assertRaises((ValueError,OSError)):cache.store(self.source,self.output)
+
+    def test_replacement_finishes_if_cancelled_during_destructive_remove(self):
+        cache=self.cache();target=cache.store(self.source,self.output);cancel=threading.Event()
+        remove=cache._remove_owned
+        def interrupted(directory,cancelled=lambda:False):
+            if directory==target:cancel.set()
+            return remove(directory,cancelled)
+        with patch.object(cache,'_remove_owned',interrupted):
+            self.assertEqual(cache.store(self.source,self.output,cancel.is_set),target)
+        self.assertTrue(cache.contains(self.source));self.assertEqual(list(cache.root.glob('stage-*')),[])
+
+    def test_cold_encode_hashes_stable_source_once(self):
+        cache=self.cache();digest=cache._digest;reads=[]
+        def counted(path,cancelled=lambda:False):
+            if path==self.source:reads.append(path)
+            return digest(path,cancelled)
+        with patch.object(cache,'_digest',counted):
+            self.assertTrue(cache.encode(self.source,self.root/'cold-encode'))
+        self.assertEqual(len(reads),1)
+
+    def test_fresh_stage_removal_failure_keeps_owner_marker(self):
+        cache=self.cache();stage=cache.root/('stage-'+uuid.uuid4().hex);stage.mkdir()
+        (stage/'owner.marker').write_text('desktop-playable-cache-v1',encoding='ascii')
+        (stage/'seg000000.m4s').write_bytes(b'media');unlink=Path.unlink
+        def denied(path,*args,**kwargs):
+            if path.name=='seg000000.m4s':raise PermissionError('locked')
+            return unlink(path,*args,**kwargs)
+        with patch.object(Path,'unlink',denied):
+            with self.assertRaises(PermissionError):cache._remove_fresh_stage(stage)
+        self.assertTrue((stage/'owner.marker').exists());cache._remove_owned(stage)
+
+    def test_complete_cache_playlist_type_is_unique_and_known(self):
+        path=self.output/'index.m3u8';original=path.read_text(encoding='utf8');cache=self.cache()
+        for tag in ('#EXT-X-PLAYLIST-TYPE:OTHER','#EXT-X-PLAYLIST-TYPE',
+                    '#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-PLAYLIST-TYPE:VOD'):
+            path.write_text(original+tag+'\n',encoding='utf8')
+            with self.assertRaises(ValueError):cache.store(self.source,self.output)
+        for tag in ('EVENT','VOD'):
+            path.write_text(original+'#EXT-X-PLAYLIST-TYPE:'+tag+'\n',encoding='utf8')
+            self.assertTrue(cache.store(self.source,self.output))
+
     def test_resumed_full_cache_restores_without_encoder(self):
         cache=self.cache();cache.store(self.source,self.output);windows=[];ready=[]
         cache.encoder=lambda *a,**kw:self.fail('cache hit must not encode a seek window')

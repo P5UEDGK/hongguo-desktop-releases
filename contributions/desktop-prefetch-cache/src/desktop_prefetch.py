@@ -243,14 +243,15 @@ class EpisodePrefetcher:
                 if cancel.is_set():
                     raise EncodingCancelled()
                 mode = task[3]
-                if not self.cache.contains(source, mode, cancelled=cancel.is_set):
+                identity_result = self.cache._identity(source, mode, cancel.is_set)
+                if not self.cache.contains(source, mode, cancelled=cancel.is_set, _identity_result=identity_result):
                     extra = {"video_mode": "copy"} if mode == "copy" else {}
                     if temporary.exists():
                         raise ValueError("Prefetch stage already exists")
                     stage_started = True
                     self.cache.encoder(source, temporary, cancelled=cancel.is_set, **extra)
                     (temporary / "owner.marker").write_text(OWNER, encoding="ascii")
-                    self.cache.store(source, temporary, cancel.is_set, video_mode=mode)
+                    self.cache.store(source, temporary, cancel.is_set, video_mode=mode, _identity_result=identity_result)
                 if cancel.is_set():
                     raise EncodingCancelled()
             except EncodingCancelled:

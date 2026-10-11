@@ -97,7 +97,7 @@ class PlayableEpisodeCache:
                 file.name in {'init.mp4','index.m3u8','index.m3u8.tmp','complete.marker','owner.marker'}
                 or re.fullmatch(r'seg[0-9]{6}\.m4s', file.name)) for file in files):
             raise ValueError('Unknown fresh encoder stage content')
-        for file in files:
+        for file in sorted(files, key=lambda file: file.name == "owner.marker"):
             file.unlink()
         directory.rmdir()
 
@@ -128,6 +128,9 @@ class PlayableEpisodeCache:
         lines = text.splitlines()
         if not lines or lines[0] != "#EXTM3U":
             raise ValueError("Artifact playlist header is invalid")
+        types = [line for line in lines if line.startswith('#EXT-X-PLAYLIST-TYPE')]
+        if len(types)>1 or types and types[0] not in ('#EXT-X-PLAYLIST-TYPE:EVENT','#EXT-X-PLAYLIST-TYPE:VOD'):
+            raise ValueError("Invalid artifact playlist type")
         parameters = {}
         sequences = [line for line in lines if line.startswith('#EXT-X-MEDIA-SEQUENCE')]
         if (len(sequences) > 1 or sequences and
@@ -185,11 +188,11 @@ class PlayableEpisodeCache:
                 raise ValueError("Artifact fragment is unavailable")
         return names
 
-    def _validated(self, source, video_mode="h264", cancelled=lambda: False):
+    def _validated(self, source, video_mode="h264", cancelled=lambda: False, identity_result=None):
         if not self.available:
             return None
         try:
-            key, identity = self._identity(source, video_mode, cancelled)
+            key, identity = identity_result or self._identity(source, video_mode, cancelled)
             directory = self.root / key
             manifest_path = directory / "cache.json"
             if not plain(directory) or not plain(manifest_path):
@@ -213,13 +216,13 @@ class PlayableEpisodeCache:
         except Exception:
             return None
 
-    def contains(self, source, video_mode="h264", *, cancelled=lambda: False):
+    def contains(self, source, video_mode="h264", *, cancelled=lambda: False, _identity_result=None):
         with self.guard:
-            return self._validated(source, video_mode, cancelled) is not None
+            return self._validated(source, video_mode, cancelled, _identity_result) is not None
 
-    def restore(self, source, directory, cancelled=lambda: False, *, video_mode="h264"):
+    def restore(self, source, directory, cancelled=lambda: False, *, video_mode="h264", _identity_result=None):
         with self.guard:
-            artifact = self._validated(source, video_mode, cancelled)
+            artifact = self._validated(source, video_mode, cancelled, _identity_result)
             if artifact is None:
                 return False
             cached, names = artifact
@@ -340,13 +343,13 @@ class PlayableEpisodeCache:
         if total + needed > self.quota_bytes:
             raise OSError("Playable cache budget is exhausted")
 
-    def store(self, source, directory, cancelled=lambda: False, *, video_mode="h264"):
+    def store(self, source, directory, cancelled=lambda: False, *, video_mode="h264", _identity_result=None):
         if cancelled():
             raise EncodingCancelled()
         if not self.available:
             return None
         with self.guard:
-            key, identity = self._identity(source, video_mode, cancelled)
+            key, identity = _identity_result or self._identity(source, video_mode, cancelled)
             names = self._media_files(Path(directory))
             directory = Path(directory)
             adopt = (directory.parent == self.root
@@ -388,19 +391,20 @@ class PlayableEpisodeCache:
                 if cancelled():
                     raise EncodingCancelled()
                 target = self.root / key
-                if target.exists():
+                target_present = os.path.lexists(target)
+                if target_present:
                     self._owned_children(target)  # Protect unrelated LRU before reservation.
                 # Stage bytes are already counted. Evict only at commit, after
                 # all cancellable copying/hashing and manifest construction.
                 metadata_bytes = sum((stage / name).stat().st_size for name in ("owner.marker", "cache.json"))
-                self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target.exists() else None,
+                self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target_present else None,
                               cancelled=cancelled)
                 if cancelled():
                     raise EncodingCancelled()
-                if target.exists():
-                    self._remove_owned(target, cancelled)
-                if cancelled():
-                    raise EncodingCancelled()
+                # Once destructive replacement starts, finish this commit even
+                # if the episode generation changes during removal.
+                if target_present:
+                    self._remove_owned(target)
                 os.replace(stage, target)
                 return target
             finally:
@@ -409,9 +413,12 @@ class PlayableEpisodeCache:
 
     def encode(self, source, directory, on_ready=lambda: None, *, cancelled=lambda: False,
                start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264"):
-        restored = False
+        restored, identity_result = False, None
         try:
-            restored = self.restore(source, directory, cancelled, video_mode=video_mode)
+            if self.available:
+                identity_result = self._identity(source, video_mode, cancelled)
+                restored = self.restore(source, directory, cancelled, video_mode=video_mode,
+                                        _identity_result=identity_result)
         except EncodingCancelled:
             raise
         except Exception:
@@ -428,7 +435,8 @@ class PlayableEpisodeCache:
         extra = {"video_mode": "copy"} if video_mode == "copy" else {}
         self.encoder(source, directory, on_ready, cancelled=cancelled, **extra)
         try:
-            return self.store(source, directory, cancelled, video_mode=video_mode) is not None
+            return identity_result is not None and self.store(source, directory, cancelled, video_mode=video_mode,
+                                                             _identity_result=identity_result) is not None
         except EncodingCancelled:
             raise
         except Exception:
