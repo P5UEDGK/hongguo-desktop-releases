@@ -97,6 +97,9 @@ class DanmakuTrack:
         primary = self.saved[0]
         secondary = player.get('secondary-sid') or 'no'
         if self.selected(secondary) and str(secondary) != str(primary):
+            # Both user slots now have captions. Give up our primary overlay
+            # while restoring A and preserving the user's new secondary B.
+            self.close(player)
             raise RuntimeError('Secondary subtitle slot changed')
         # mpv refuses the same track in both slots. Select the overlay first,
         # then move the saved caption; assigning it before sub-add loses it.
@@ -141,7 +144,7 @@ class DanmakuTrack:
     def apply(self, player):
         if self.track_id and str(player.get('sid')) != str(self.track_id):
             self.dirty = True
-        if not self.dirty or self.clock() < self.retry_at and (self.track_id or self.items or self.pending_removals):
+        if not self.dirty or self.clock() < self.retry_at and (self.track_id or self.items or self.pending_removals or self.saved_options or self.reload_options):
             return
         self.dirty = False
         try:

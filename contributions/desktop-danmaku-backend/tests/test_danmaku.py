@@ -19,6 +19,23 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_secondary_caption_change_relinquishes_owned_overlay(self):
+        p=Player();p.properties['sid']='7';track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p);owned=track.track_id
+        p.command('set','secondary-sid','8');track.update({'danmaku':[{**ITEM,'text':'updated'}]});track.apply(p)
+        self.assertEqual(p.get('sid'),'7');self.assertEqual(p.get('secondary-sid'),'8')
+        self.assertIsNone(track.track_id);self.assertIn(('sub-remove',owned),p.commands)
+        self.assertEqual(p.get('sub-ass-override'),'scale');self.assertEqual(p.get('secondary-sub-ass-override'),'strip')
+
+    def test_option_only_restore_failure_is_throttled(self):
+        clock=[0];p=Player();track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
+        track.source_reloaded();track.update({'danmaku':[]});command=p.command;attempts=[]
+        def reject(*args):
+            if args[:2]==('set','sub-ass-override'):attempts.append(args);raise RuntimeError('property unavailable')
+            command(*args)
+        p.command=reject;track.apply(p);self.assertTrue(track.failed);self.assertEqual(len(attempts),1)
+        for i in range(1,25):clock[0]=i*.04;track.apply(p)
+        self.assertEqual(len(attempts),1);clock[0]=1.01;track.apply(p);self.assertEqual(len(attempts),2)
+
     def test_caption_change_and_schedule_replacement_in_same_iteration(self):
         p=Player();track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
         p.command('set','sid','7');track.update({'danmaku':[{**ITEM,'text':'changed'}]});track.apply(p)
