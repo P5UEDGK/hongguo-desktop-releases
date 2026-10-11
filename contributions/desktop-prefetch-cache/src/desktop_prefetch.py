@@ -187,7 +187,8 @@ class EpisodePrefetcher:
                     current_vid = next((vid for index, vid in self.latest_episodes if index == episode), None)
                     if current_vid:
                         seen.add(current_vid)
-                        if not self.current_complete:
+                        if not self.current_complete and (getattr(job, "start_seconds", 0)
+                                or not (job.directory / "complete.marker").is_file()):
                             selected.append((episode, current_vid))
                     future_count = 0
                     for index, vid in self.latest_episodes:
@@ -268,7 +269,8 @@ class EpisodePrefetcher:
                 self._report()
 
     def encode(self, *args, **kwargs):
-        return self.cache.encode(*args, **kwargs)
+        cancelled = kwargs.pop("cancelled", lambda: False)
+        return self.cache.encode(*args, cancelled=lambda: self.closed or cancelled(), **kwargs)
 
     def snapshot(self):
         with self.condition:

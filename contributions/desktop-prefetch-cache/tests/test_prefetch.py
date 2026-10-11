@@ -44,6 +44,30 @@ def encoder(source, directory, on_ready=lambda: None, *, cancelled=lambda: False
 
 
 class PrefetchTests(unittest.TestCase):
+    def test_close_cancels_running_foreground_encoder(self):
+        entered=threading.Event();finished=threading.Event()
+        def blocking(source,directory,on_ready=lambda:None,*,cancelled,**kwargs):
+            entered.set()
+            while not cancelled():finished.wait(.01)
+            raise EncodingCancelled()
+        value=self.make(encode=blocking,ahead=0)
+        job,source=self.job(value,1)
+        def work():
+            try:value.encode(source,job.directory,cancelled=job.cancelled.is_set)
+            except EncodingCancelled:job.cancelled.set()
+            finally:value.finish(job,SERIES,1,source);finished.set()
+        thread=threading.Thread(target=work);thread.start()
+        self.assertTrue(entered.wait(2));value.close()
+        self.assertTrue(finished.wait(2));thread.join();self.assertTrue(value.wait_idle(.1))
+
+    def test_completed_uncacheable_foreground_does_not_encode_current_again(self):
+        calls=[]
+        def tracked(*args,**kwargs):calls.append(1);return encoder(*args,**kwargs)
+        value=self.make(encode=tracked,ahead=0,quota_bytes=1)
+        self.complete(value,1)
+        self.assertTrue(value.wait_idle(2));self.assertEqual(calls,[1])
+        self.assertFalse(value.snapshot()["failedEpisodes"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
@@ -219,7 +243,7 @@ class PrefetchTests(unittest.TestCase):
         self.assertTrue(value.wait_idle(3))
         self.assertEqual(encoded, [("10000002", 10), ("10000002", 0), ("10000003", 0), ("10000004", 0), ("10000005", 0)])
 
-    def test_current_cache_failure_blocks_future_preparation(self):
+    def test_completed_current_is_not_reported_failed_when_future_cache_fails(self):
         value = self.make()
         job, source = self.job(value, 2)
         complete_output(job.directory)
@@ -227,7 +251,7 @@ class PrefetchTests(unittest.TestCase):
         value.finish(job, SERIES, 2, source)
         self.assertTrue(value.wait_idle(3))
         self.assertEqual(self.calls[0], 2)
-        self.assertEqual(value.snapshot()["failedEpisodes"], [2])
+        self.assertEqual(value.snapshot()["failedEpisodes"], [3, 4, 5])
 
     def test_worker_start_failure_does_not_fail_completed_current(self):
         value = self.make()
