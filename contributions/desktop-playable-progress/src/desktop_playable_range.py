@@ -76,6 +76,8 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
             elif line and not line.startswith("#"):
                 if not mapped or pending is None or line in seen or not re.fullmatch(r"seg[0-9]{6}\.m4s", line):
                     return [0, 0]
+                if int(line[3:9]) != len(seen):
+                    return [0, 0]  # Host numbers every window from zero without gaps.
                 seen.add(line)
                 fragment = job.directory / line
                 if not incomplete:

@@ -9,6 +9,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from desktop_playable_range import playable_range
 
 class RangeTests(unittest.TestCase):
+    def test_numbered_fragments_must_be_contiguous_from_zero(self):
+        self.output(second=True)
+        playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
+        for name in ('seg000001.m4s','seg000002.m4s','seg000003.m4s'):
+            (self.path/name).write_bytes(b'fragment')
+        for body in (original.replace('seg000001','seg000002'),
+                     original.replace('seg000000','seg000002'),
+                     original.replace('seg000000','seg000002').replace('seg000001','seg000003')):
+            with self.subTest(playlist=body):
+                playlist.write_text(body,encoding='utf8')
+                self.assertEqual(playable_range(self.job),[0,0])
     def test_large_target_duration_cannot_hide_truncated_completed_playlist(self):
         self.output();self.job.done.set()
         path=self.path/'index.m3u8'

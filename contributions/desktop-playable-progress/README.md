@@ -87,3 +87,7 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 完成标记不能把截断清单扩到整集，仅在目标片段时长容差内补尾部舍入。Python25项及Node6项通过。 本次修复对应已收到的审查意见；尚无连续像素证据可证明零黑屏。
 
 本次回执修复与验证：完成范围的尾部补舍入使用宿主固定0.1秒容差及浮点误差余量，不再由清单TARGETDURATION放大。63秒任务只有2秒片段，即使TARGETDURATION=63仍只报告[0,2]。当前Python26项及Node6项通过。
+
+## 剩余审查回归（2026-10-11）
+
+本地分片必须从seg000000.m4s开始连续编号，跳号、倒序和非零起点不报告连续可播区间；完整缓存owner执行同一宿主编号约束。27项Python和6项Node回归通过。
