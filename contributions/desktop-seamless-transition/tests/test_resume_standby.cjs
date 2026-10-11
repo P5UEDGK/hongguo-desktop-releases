@@ -15,6 +15,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     cancelVideoFrameCallback(id){frames.delete(id);}
   }
   const current=new Video();current.volume=.4;current.playbackRate=2;current.desktopSessionId=()=> 'a'.repeat(32);
+  if(fault==='pending-parent')current.desktopSessionId=()=>null;
   current.stage={append:v=>{v.stage=current.stage;videos.push(v);},querySelector:()=>null};
   const url='http://127.0.0.1/desktop/hls?ep=2';
   const c={URL,Event,Number,Math,Map,WeakMap,AbortController,Date:{now:()=>now},window:{devicePixelRatio:1},
@@ -38,7 +39,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     fetch:async(input,init={})=>{
       const request=String(input);let body={};
       if(init.method==='DELETE'){released++;return {ok:true,status:204};}
-      if(request.endsWith('/capabilities')){if(fault==='parent-refresh')current.desktopSessionId=()=> 'c'.repeat(32);body={standbyPlayback:1,nativePlayback:native?1:0};}
+      if(request.endsWith('/capabilities')){if(['parent-refresh','pending-parent'].includes(fault))current.desktopSessionId=()=> 'c'.repeat(32);body={standbyPlayback:1,nativePlayback:native?1:0};}
       else if(request.endsWith('/mode'))selected=true;
       else if(request.endsWith('/control')){
         const command=JSON.parse(init.body);calls.push(command);revision++;
@@ -53,7 +54,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
             time:fault==='advanced'? .051:seeking?0:target,duration:fault==='unknown-duration'?Infinity:90,paused:true,muted:true,visible:false,seeking}:null};
         if(fault.startsWith('prepare-failed')){body.state='failed';if(fault==='prepare-failed-unknown')delete body.duration;}
       }else if(request.endsWith('/activate')){activated=true;body={activated:true};}
-      else if(init.method==='POST'){if(fault==='parent-refresh')assert.equal(init.headers['x-desktop-prewarm-parent'],'c'.repeat(32));body={id:'b'.repeat(32)};}
+      else if(init.method==='POST'){if(['parent-refresh','pending-parent'].includes(fault))assert.equal(init.headers['x-desktop-prewarm-parent'],'c'.repeat(32));body={id:'b'.repeat(32)};}
       return {ok:true,status:200,json:async()=>body};
     }};
   vm.createContext(c);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),c);vm.runInContext(source,c);const prep=c.desktopPrepareNext(url,current,['windowed','mode-mismatch'].includes(fault));
@@ -64,7 +65,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     prep.retain(()=>retired++);claimed=true;
     if(fault==='unknown-duration'&&videos[0])videos[0].duration=Infinity;
     const record=await prep.claimRecord(fault==='identity'?url+'&other=1':url,position,fault==='windowed');
-    if(fault&&!['windowed','parent-refresh','settings-live'].includes(fault)||!Number.isFinite(position)||position<0||position>=90){
+    if(fault&&!['windowed','parent-refresh','pending-parent','settings-live'].includes(fault)||!Number.isFinite(position)||position<0||position>=90){
       assert.equal(record,null,'unsafe/failed reuse must fall back');
       if(fault.startsWith('prepare-failed')){
         assert.equal(prep.resumeInvalid,fault!=='prepare-failed-unknown'&&position>=90);
@@ -102,7 +103,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     await scenario(native,90,'prepare-failed-unknown');
     for(const position of [0,.05,.051,30,89.8])await scenario(native,position);
     for(const position of [-1,NaN,Infinity,90,91])await scenario(native,position);
-    for(const fault of ['identity','cancel','timeout','seek-error','unknown-duration','windowed','mode-mismatch','parent-refresh'])await scenario(native,30,fault);
+    for(const fault of ['identity','cancel','timeout','seek-error','unknown-duration','windowed','mode-mismatch','parent-refresh','pending-parent'])await scenario(native,30,fault);
   }
   await scenario(true,0,'advanced');
   await scenario(false,0,'advanced');

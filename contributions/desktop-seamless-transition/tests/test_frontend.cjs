@@ -78,6 +78,7 @@ async function scenario(native,fail=false,fault=null){
     if(fault==='replacement-id')controllerId='d'.repeat(32);
     if(fault==='pending-id')controllerId=null;
     const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d,onAcceptanceHlsTransition:(...args)=>acceptance.push(args)},intent=>{
+      if(['activate','activate-paused','play'].includes(fault))assert.equal(intent?.time,7,'failure fallback inherits the live adopted seek');
       if(fault==='activate-paused')assert.equal(intent?.paused,true,'failed activation carries latest pause to cold fallback');
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);

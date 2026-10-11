@@ -18,6 +18,7 @@ function desktopHoldForNext(media) {
   let claimed = false, finished = false, timer;
   const releases = [];
   const holder = {
+    get settings() {return {rate:media.playbackRate || 1,volume:media.volume,muted:media.muted};},
     retain(release) {
       if (finished) {release();return;}
       releases.push(release);
@@ -61,7 +62,7 @@ function desktopRetainPicture(media) {
 }
 
 function desktopPrepareNext(url, currentMedia, windowed = false) {
-  if (!currentMedia || !currentMedia.desktopSessionId?.())
+  if (!currentMedia || typeof currentMedia.desktopSessionId !== 'function')
     return {failed:true, dispose() {}, claim: async () => null};
   const endpoint = w0(url);
   let parent = null;
@@ -174,7 +175,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     cancelClaim: cleanup,
     claim: async () => null,
     async claimRecord(wanted, position = 0, requestedWindowed = false) {
-      if (disposed || claimed || Date.now() >= deadline || wanted !== url) {preparation.dispose(); return null;}
+      if (claimed || Date.now() >= deadline || wanted !== url) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
       if (requestedWindowed !== windowed) {cleanup(true);return null;}
       resumePosition = position;
@@ -208,7 +209,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
   const callbacks = Object.fromEntries(['onTimeline','onPlayableRange','onComplete','onWindowOrigin',
     'onReady','onError','onAcceptanceHlsTransition'].map(name => [name, (...args) => {
     known[name] = args;
-    if (name === 'onError') {failed = true; if (!claimed) cleanup();}
+    if (name === 'onError') {failed = true; if (!claimed) cleanup(retained.length > 0);}
     consumer?.[name]?.(...args);
   }]));
   const prepared = (async () => {
@@ -341,15 +342,16 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
           else requestAnimationFrame(finishRetained);
         }).catch(()=>{
           if (closed || disposed) return;
+          const time = video.currentTime + (known.onWindowOrigin?.[0] || 0);
           restoreAdoption();cleanup(true);
-          if (onFailure) onFailure({paused:!wantsPlayback}); else handlers.onError?.();
+          if (onFailure) onFailure({paused:!wantsPlayback,time}); else handlers.onError?.();
         });
         return Object.assign(() => {
           if(restoreAdoption())cleanup();
         },{seek:value=>controller?.seek(value),sessionId:()=>controller?.sessionId?.() ?? null});
       }};
     } catch {
-      failed = true; if (!claimed) cleanup(); else {release();video?.remove();}
+      failed = true; if (!claimed) cleanup(retained.length > 0); else {release();video?.remove();}
       return null;
     }
   })();

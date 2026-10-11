@@ -7,6 +7,8 @@ function media(){return {desktopNativePicture:true,videoWidth:128,videoHeight:12
   const ended=media();let releases=0;
   assert.equal(c.desktopRetainPicture(ended),null,'last episode/ordinary close has no pending next hold');
   const hold=c.desktopHoldForNext(ended);assert.equal(c.desktopHoldForNext(ended),hold);
+  Object.assign(ended,{playbackRate:3,volume:.37,muted:true});
+  assert.equal(hold.settings.rate,3);assert.equal(hold.settings.volume,.37);assert.equal(hold.settings.muted,true);
   const retain=c.desktopRetainPicture(ended);assert(retain);retain(()=>releases++);
   assert.equal(releases,0,'ending without a successful prewarm keeps its native session');
   assert.equal(await hold.claimRecord('cold-source',0),null,'holder does not pretend to be a ready standby');
