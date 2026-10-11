@@ -67,3 +67,10 @@ python contributions/desktop-social-layout/tests/test_native_control.py contribu
 验证前置条件已移除不存在的 requirements-test.txt；本包 Python 校验只用标准库。跨包浏览器增加在途调速像素连续性与原生运动起点检查，沿用已有组合测试入口。
 
 本机完整候选、安装回读与反馈观察期仍待完成。
+
+
+## 本轮三次反馈修复
+
+pin参与顶部控件测量不再依赖dark颜色类。无dark的1280/640/1600像素窗口回归在旧样式失败，当前84项Chrome通过；保留在途调速、控件显隐及窄窗口回归。原生前端补丁对齐 #204 c7bfbc2ea269af4013ab971467d9ef68dc207b9a。
+
+本机候选与安装仍待完成。

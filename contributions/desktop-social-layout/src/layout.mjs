@@ -28,7 +28,7 @@ export function installSocialStyles() {
       .player-toolbar .desktop-social-controls button{font-size:12px;min-width:44px;padding:5px 8px;height:30px;border:1px solid #ffffff28;border-radius:7px;color:#bbb}
       .player-toolbar .desktop-social-controls button[aria-pressed=true],.player-toolbar .desktop-social-controls button[aria-expanded=true]{color:#ffacc4;background:#fb72991e;border-color:#fb729970}
       /* Include the pin in the measured controls row; the original absolute pin sits outside its group. */
-      .app-shell:has(.desktop-player) .window-controls.dark .window-pin{position:static}
+      .app-shell:has(.desktop-player) .window-controls .window-pin{position:static}
       .desktop-player header .desktop-selection-open{margin-left:auto;border:1px solid #ffffff25;border-radius:7px;background:#ffffff08;color:#eee;padding:6px 12px;cursor:pointer}
       .desktop-player header .desktop-selection-open{position:absolute;top:8px;right:190px;height:32px}
       .desktop-player-layout:not(.desktop-social-enabled){grid-template-columns:minmax(0,1fr)}

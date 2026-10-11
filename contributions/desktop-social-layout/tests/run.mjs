@@ -278,6 +278,12 @@ try{
   const boxes=await page.locator('.return-button,.desktop-selection-open,.player-mini-toggle,.window-controls button').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {name:n.textContent,left:r.left,right:r.right,top:r.top,bottom:r.bottom};}));
   check(boxes.every((a,i)=>a.left>=0&&a.right<=width&&boxes.slice(i+1).every(b=>Math.min(a.right,b.right)<=Math.max(a.left,b.left)||Math.min(a.bottom,b.bottom)<=Math.max(a.top,b.top))),`all individual top controls avoid overlap at ${width}px`);
  }
+ await page.locator('.window-controls').evaluate(node=>node.classList.remove('dark'));
+ for(const width of [1280,640,1600]){
+  await page.setViewportSize({width,height:720});await page.waitForTimeout(100);
+  const boxes=await page.locator('.return-button,.desktop-selection-open,.player-mini-toggle,.window-controls button').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};}));
+  check(boxes.every((a,i)=>a.left>=0&&a.right<=width&&boxes.slice(i+1).every(b=>Math.min(a.right,b.right)<=Math.max(a.left,b.left)||Math.min(a.bottom,b.bottom)<=Math.max(a.top,b.top))),`pin without dark color class avoids overlap at ${width}px`);
+ }
  await page.locator('.player-mini-toggle').evaluate(node=>node.style.width='96px');
  await page.waitForTimeout(100);
  const miniBox=await page.locator('.player-mini-toggle').boundingBox(),selectionBox=await page.locator('.desktop-selection-open').boundingBox();
