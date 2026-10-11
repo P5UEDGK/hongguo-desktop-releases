@@ -58,12 +58,12 @@
      const active = () => !disposed && epoch === ownEpoch;
      const wrapped = {...callbacks,
        onReady() {
-@@ -174,7 +183,9 @@
-     if (media.play === play) {if (savedPlay) Object.defineProperty(media, 'play', savedPlay); else delete media.play;}
-     media.removeEventListener('error', onError, true);
-     media.removeEventListener('timeupdate', rememberTime);
--  }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}}});
-+  }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}},
+@@ -177,7 +186,9 @@
+   }, {seek(value) {if (!disposed) {
+       position = value; internalPause = true;
+       try {controller?.seek(value);} finally {internalPause = false; internalPlay = false;}
+-    }}});
++    }},
 +    activate() {standbyParent = null;},
 +    sessionId: () => transport?.sessionId?.()});
  }
