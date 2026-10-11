@@ -14,6 +14,22 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_generated_png_strips_embedded_icc_profile(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            for format in ('PNG','JPEG'):
+                path=Path(directory)/('profile.'+format.lower())
+                Image.new('RGB',(4,4),'red').save(path,format=format,icc_profile=b'owned readable profile metadata')
+                row=compiler.compile_assets({'[测试]':path})['[测试]']
+                raw=base64.b64decode(row['src'].split(',',1)[1]);self.assertNotIn(b'iCCP',raw)
+                validate_assets({'[测试]':row})
+
+    def test_mapping_cardinality_and_type_rejected_before_image_open(self):
+        with patch('PIL.Image.open') as opened:
+            for mapping in ([],{'[x'+str(n)+']':'unused.png' for n in range(257)}):
+                with self.assertRaisesRegex(ValueError,'mapping'):compiler.compile_assets(mapping)
+            opened.assert_not_called()
+
     def test_mapping_read_is_bounded_before_decode(self):
         stream=MagicMock();stream.__enter__.return_value=stream;stream.read.return_value=b' '*(1024*1024+1);path=MagicMock();path.open.return_value=stream
         with patch.object(compiler.json,'loads') as decode:

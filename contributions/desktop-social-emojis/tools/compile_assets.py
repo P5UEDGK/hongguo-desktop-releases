@@ -13,9 +13,15 @@ MAX_MAPPING_BYTES = 1024 * 1024
 def load_mapping(path):
     with path.open('rb') as stream:data=stream.read(MAX_MAPPING_BYTES+1)
     if len(data)>MAX_MAPPING_BYTES:raise ValueError('Emoji mapping exceeds 1 MiB')
-    return json.loads(data.decode('utf8'))
+    return validate_mapping(json.loads(data.decode('utf8')))
+
+def validate_mapping(mapping):
+    if not isinstance(mapping,dict) or len(mapping)>256:
+        raise ValueError('Emoji mapping must be an object with at most 256 tags')
+    return mapping
 
 def compile_assets(mapping):
+    validate_mapping(mapping)
     from PIL import Image
     result={}
     for name, source_path in mapping.items():
@@ -26,7 +32,7 @@ def compile_assets(mapping):
                 raise ValueError('Emoji image dimensions exceed 16 megapixels')
             image=source.convert('RGBA')
             image.thumbnail((256,256),Image.Resampling.LANCZOS)
-            png=io.BytesIO(); image.save(png,format='PNG',optimize=True)
+            png=io.BytesIO(); image.save(png,format='PNG',optimize=True,icc_profile=None)
             ratio=48/max(image.size)
             fitted=image.resize((max(1,round(image.width*ratio)),max(1,round(image.height*ratio))),Image.Resampling.LANCZOS)
             small=Image.new('RGBA',(48,48),(0,0,0,0))
