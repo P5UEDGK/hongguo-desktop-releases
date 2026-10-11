@@ -11,7 +11,7 @@
    const pending = new Map();
    const request = async (input, init = {}) => {
      const url = new URL(input);
-@@ -24,9 +24,15 @@
+@@ -24,14 +24,21 @@
          !url.pathname.startsWith('/desktop/hls')) throw Error('Invalid codec endpoint');
      if (closed && init.method !== 'DELETE') throw Error('Expired codec controller');
      const headers = new Headers(init.headers);
@@ -27,7 +27,13 @@
      if (!response.ok || init.method === 'DELETE' || !/\/desktop\/hls\/[a-f0-9]{32}\/status$/.test(url.pathname))
        return response;
      const status = await response.clone().json();
-@@ -50,6 +56,7 @@
+     failureCode = status.failureCode || null;
+     if (closed || init.signal?.aborted) return response;
++    sessionId = url.pathname.split("/")[3]; // Claimed standbys have no creation POST in this transport.
+     if (status.videoMode) usedCopy = status.videoMode === 'copy';
+     if (!forceH264 && status.source && status.videoMode === null) {
+       if (!pending.has(url.pathname)) pending.set(url.pathname, (async () => {
+@@ -50,6 +57,7 @@
      return response;
    };
    request.usedCopy = () => usedCopy;
@@ -35,16 +41,8 @@
    request.failureCode = () => failureCode;
    request.close = () => {closed = true;};
    return request;
-@@ -68,6 +75,7 @@
-     wantedPlaying = true;
-   };
-   const onPause = () => {if (ready) wantedPlaying = false;};
-+  const onRateChange = () => {rate = media.playbackRate || rate;};
-   function fallback() {
-     if (disposed || retried || !transport?.usedCopy() || transport.failureCode?.() === 'source-read') return false;
-     retried = true;
-@@ -85,7 +93,7 @@
-     controller?.();
+@@ -96,7 +104,7 @@
+     try {controller?.();} finally {internalPause = false;}
      position = target;
      origin = 0;
 -    transport = desktopCreateCodecFetch(force);
@@ -52,19 +50,8 @@
      const active = () => !disposed && epoch === ownEpoch;
      const wrapped = {...callbacks,
        onReady() {
-@@ -130,6 +138,7 @@
-   };
-   media.addEventListener('play', onPlay);
-   media.addEventListener('pause', onPause);
-+  media.addEventListener('ratechange', onRateChange);
-   media.addEventListener('error', onError, true);
-   media.addEventListener('timeupdate', rememberTime);
-   start(initialState?.forceH264 === true, position);
-@@ -140,9 +149,11 @@
-     transport?.close(); controller?.(); preparation?.dispose();
-     media.removeEventListener('play', onPlay);
-     media.removeEventListener('pause', onPause);
-+    media.removeEventListener('ratechange', onRateChange);
+@@ -164,7 +172,8 @@
+     if (media.pause === pause) {if (savedPause) Object.defineProperty(media, 'pause', savedPause); else delete media.pause;}
      media.removeEventListener('error', onError, true);
      media.removeEventListener('timeupdate', rememberTime);
 -  }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}}});

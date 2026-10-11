@@ -29,7 +29,7 @@ async function scenario(fault){
       if(init.method==='DELETE'){released++;return {ok:true,status:204}}
       if(url.endsWith('/capabilities'))body={nativePlayback:1};
       else if(url.endsWith('/mode')){selected=true;body={mode:'native'}}
-      else if(url.endsWith('/control'))body={revision:10};
+      else if(url.endsWith('/control')){if(fault==='hung-control')return new Promise(()=>{});body={revision:10};}
       else if(url.endsWith('/activate')){if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}activated=true;body={activated:true}}
       else if(url.endsWith('/status')){
         if(selected&&fault==='hung')return new Promise(()=>{});
@@ -54,6 +54,6 @@ async function scenario(fault){
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of ['visible','frame','revision','hung','success','copy-fallback','cancel-pending'])await scenario(fault);
+(async()=>{for(const fault of ['visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending'])await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exitCode=1});

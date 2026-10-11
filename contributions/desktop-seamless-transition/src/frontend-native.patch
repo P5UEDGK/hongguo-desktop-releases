@@ -47,7 +47,7 @@
        transfer, windowed, {forceH264, paused: state.paused});
    }
    async function failPreparation() {
-@@ -102,7 +112,7 @@
+@@ -102,21 +112,21 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -56,6 +56,22 @@
    }
    function queue(command) {
      if (disposed || !native || fallbackStarted) return;
+     Object.assign(pending, command);
+     if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
+   }
+-  async function flush() {
++  async function flush(deadline = null) {
+     controlTimer = null;
+     if (disposed || !id || !native || controlBusy || !Object.keys(pending).length) return;
+     controlBusy = true;
+     const command = pending; pending = {};
+     try {
+       const result = await request('/' + id + '/control', {method: 'POST',
+-        headers: {'content-type': 'application/json'}, body: JSON.stringify(command)});
++        headers: {'content-type': 'application/json'}, body: JSON.stringify(command)}, deadline === null ? 15000 : deadline-Date.now());
+       revision = result.revision;
+     } catch {if (!disposed) failPreparation();}
+     finally {
 @@ -151,13 +161,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
@@ -118,8 +134,8 @@
 +        layout();
 +        Object.assign(pending, {paused: false, rate: state.rate, volume: state.volume, muted: state.muted});
 +        clearTimeout(controlTimer); controlTimer = null;
-+        await flush();
 +        const untilVisible = Date.now() + 2000;
++        await flush(untilVisible);
 +        let confirmed = false;
 +        while (!disposed && Date.now() < untilVisible) {
 +          const shown = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;

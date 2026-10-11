@@ -13,20 +13,20 @@ class Video extends EventTarget {
 }
 async function scenario(native,fail=false,fault=null){
   const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0;
-  let confirmActivation,controllerId,now=0,expire;
+  let confirmActivation,controllerId="c".repeat(32),now=0,expire;
   const activated=new Promise(resolve=>confirmActivation=resolve);
   const current=new Video();current.volume=.3;current.playbackRate=3;current.paused=false;
   current.desktopSessionId=()=> 'a'.repeat(32);current.stage={append:v=>{v.stage=current.stage;children.push(v);}};
   const endpoint={origin:'http://127.0.0.1:23456',url:'http://127.0.0.1:23456/desktop/hls?series_id=1234567890123456&ep=2',key:'b'.repeat(64)};
   const context={URL,Event,Number,Math,Date:{now:()=>now},WeakMap,Proxy,Map,AbortController,window:{devicePixelRatio:1},
     w0:()=>endpoint,ik(){},desktopSupportsSource:async()=>true,
-    setTimeout(fn,ms){if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;const id=setTimeout(fn,1);timers.add(id);return id;},
+    setTimeout(fn,ms){if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;const id=setTimeout(()=>{if(fault==='no-frame'&&ms===100)now=90001;fn();},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id);},requestAnimationFrame:fn=>queueMicrotask(fn),
     document:{createElement:()=>new Video()},
     desktopCodecHls(video,url,start,callbacks,prep,windowed,state){
       callbacks={...callbacks}; // Production codec copies/enumerates callback keys.
       assert.equal(state.paused,true);assert(video.paused&&video.muted&&video.volume===0);
-      queueMicrotask(()=>{callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);callbacks.onReady();});
+      queueMicrotask(()=>{callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault!=='no-frame')callbacks.onReady();});
       return Object.assign(()=>{stopped++;},{seek:value=>{video.currentTime=value;},sessionId:()=>controllerId});
     },
     fetch:async(url,init={})=>{
@@ -57,7 +57,7 @@ async function scenario(native,fail=false,fault=null){
     for(const timer of timers)clearTimeout(timer);return;
   }
   const record=await prep.claimRecord(endpoint.url,0);
-  if(fail||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);for(const timer of timers)clearTimeout(timer);return;}
+  if(fail||fault==='no-frame'||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);for(const timer of timers)clearTimeout(timer);return;}
   assert(record);assert.equal(record.settings.volume,.3);assert.equal(record.settings.rate,3);
   const create=calls.find(c=>c.headers?.['x-desktop-prewarm-parent']);
   assert(create);assert.equal(create.headers['x-desktop-prewarm-parent'],'a'.repeat(32));
@@ -73,6 +73,7 @@ async function scenario(native,fail=false,fault=null){
     prep.retain(()=>started++);
     let timeline;
     if(fault==='replacement-id')controllerId='d'.repeat(32);
+    if(fault==='pending-id')controllerId=null;
     const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d},()=>{
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);
@@ -86,22 +87,25 @@ async function scenario(native,fail=false,fault=null){
     children[0].dispatchEvent(new Event('ended'));assert.equal(ended,1);
     dispose.seek(7);assert.equal(media.currentTime,7);
     await tick();assert.equal(media.paused,true);assert.equal(started,1,'retain old picture until activation is acknowledged');
-    if(fault==='replacement-id')assert(calls.some(c=>c.url.endsWith('/'+'d'.repeat(32)+'/activate')));
-    if(fault&&fault!=='replacement-id'){
+    if(fault==='replacement-id'||fault==='pending-id')assert(calls.some(c=>c.url.endsWith('/'+'d'.repeat(32)+'/activate')));
+    media.playbackRate=2;media.volume=.6;media.muted=true;
+    if(fault&&fault!=='replacement-id'&&fault!=='pending-id'){
       if(fault==='cancel')dispose();
       confirmActivation();await tick();
       assert.equal(errors,0);assert.equal(fallbacks,fault==='cancel'?0:1);
       assert.equal(stopped,1);assert.equal(released,1);assert(children[0].removed);
+      assert.equal(media.playbackRate,2);assert.equal(media.volume,.6);assert.equal(media.muted,true);
       const before=ended;children[0].dispatchEvent(new Event('ended'));assert.equal(ended,before);
       dispose();for(const timer of timers)clearTimeout(timer);return;
     }
     confirmActivation();await tick();assert.equal(media.paused,false);assert(started>=2);dispose();await tick();assert.equal(stopped,1);assert.equal(released,1);
     assert(children[0].removed);assert(!Object.hasOwn(media,'currentTime')||media.currentTime===0);
+    assert.equal(media.playbackRate,2);assert.equal(media.volume,.6);assert.equal(media.muted,true);
   }
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['activate','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id'])await scenario(false,false,fault);
+  for(const fault of ['activate','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

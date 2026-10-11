@@ -162,7 +162,7 @@ function desktopPrepareNext(url, currentMedia) {
         if (video.readyState >= 2 && video.videoWidth > 0 && known.onReady) break;
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      if (disposed || failed || video.readyState < 2) throw Error('Standby video timed out');
+      if (disposed || failed || video.readyState < 2 || video.videoWidth <= 0 || !known.onReady) throw Error('Standby video timed out');
       id = controller.sessionId?.() || id;
       return {id, mode, dispose:cleanup, adopt(media, handlers, onFailure) {
         if (disposed) return null;
@@ -192,12 +192,25 @@ function desktopPrepareNext(url, currentMedia) {
         media.dispatchEvent(new Event('loadedmetadata'));media.dispatchEvent(new Event('durationchange'));
         const restoreAdoption = () => {
           if (closed) return false;
+          const live = {playbackRate:video.playbackRate,volume:video.volume,muted:video.muted};
           closed=true;consumer=null;
           for(const [name,fn] of listeners)video.removeEventListener(name,fn);
           for(const [name,descriptor] of saved){if(descriptor)Object.defineProperty(media,name,descriptor);else delete media[name];}
+          Object.assign(media,live);
           return true;
         };
-        request('/'+(controller?.sessionId?.() || id)+'/activate',{method:'POST'}).then(() => {
+        (async () => {
+          let activeId;
+          const until = Math.min(deadline, Date.now()+2000);
+          do {
+            activeId = controller?.sessionId ? controller.sessionId() : id;
+            if (activeId) break;
+            if (disposed || closed || Date.now() >= until) throw Error('Replacement session unavailable');
+            await new Promise(resolve=>setTimeout(resolve,20));
+          } while (true);
+          if (disposed || closed) throw Error('Expired adoption');
+          await request('/'+activeId+'/activate',{method:'POST'});
+        })().then(() => {
           if (disposed) return;
           return video.play();
         }).then(() => {
