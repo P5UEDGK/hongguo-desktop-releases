@@ -11,6 +11,53 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_cache_hit_callbacks_recheck_cancellation(self):
+        cache=self.cache();cache.store(self.source,self.output)
+        for during_window in (False,True):
+            with self.subTest(during_window=during_window):
+                cancel=threading.Event();ready=[];restored=cache.restore;target=self.root/('callbacks-'+str(during_window))
+                def restore(*a,**kw):
+                    result=restored(*a,**kw)
+                    if not during_window:cancel.set()
+                    return result
+                def window(*_):cancel.set()
+                with patch.object(cache,'restore',restore):
+                    with self.assertRaises(EncodingCancelled):cache.encode(self.source,target,lambda:ready.append(True),cancelled=cancel.is_set,start_seconds=1,on_window=window)
+                self.assertEqual(ready,[])
+
+    def test_download_preflight_skips_changed_generation_and_shutdown(self):
+        from types import SimpleNamespace
+        for shutdown in (False,True):
+            calls=[];reported=[False];condition=threading.Condition()
+            value=SimpleNamespace(condition=condition,closed=False,generation=1,download_pending=[(1,2,'old')],download_active=None,sources={},download_completed=[],failed=[])
+            def report():
+                if not reported[0]:
+                    reported[0]=True
+                    with condition:
+                        if shutdown:value.closed=True
+                        else:value.generation=2;value.download_pending=[(2,3,'new')]
+                        condition.notify_all()
+            def load(vid):
+                calls.append(vid)
+                with condition:value.closed=True;condition.notify_all()
+                return 'source'
+            value._report=report;value.download_loader=load
+            worker=threading.Thread(target=EpisodePrefetcher._download,args=(value,),daemon=True);worker.start();worker.join(1)
+            self.assertFalse(worker.is_alive());self.assertEqual(calls,[] if shutdown else ['new'])
+
+    def test_profile_fingerprint_includes_names_lengths_and_empty_modules(self):
+        one=self.root/'policy-one.py';two=self.root/'policy-two.py';one.write_bytes(b'ab');two.write_bytes(b'c')
+        def profile(files):return PlayableEpisodeCache(self.root/'profile',encoder=encoder,profile_files=files).profile
+        before=profile([one,two]);one.write_bytes(b'a');two.write_bytes(b'bc');self.assertNotEqual(before,profile([one,two]))
+        empty=self.root/'optional.py';empty.write_bytes(b'');self.assertNotEqual(profile([one]),profile([one,empty]))
+        other=self.root/'renamed.py';other.write_bytes(one.read_bytes());self.assertNotEqual(profile([one]),profile([other]))
+
+    def test_complete_cache_rejects_parameterized_flag_tags(self):
+        path=self.output/'index.m3u8';original=path.read_text(encoding='utf8')
+        for tag in ('#EXT-X-GAP:YES','#EXT-X-I-FRAMES-ONLY:YES'):
+            path.write_text(original.replace('#EXTM3U\n','#EXTM3U\n'+tag+'\n',1),encoding='utf8')
+            with self.assertRaises(ValueError):self.cache().store(self.source,self.output)
+
     def test_prefetch_quota_keeps_current_and_nearer_episodes(self):
         for capacity in (1,2):
             with self.subTest(capacity=capacity):

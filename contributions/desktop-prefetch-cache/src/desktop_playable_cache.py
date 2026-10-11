@@ -48,9 +48,12 @@ class PlayableEpisodeCache:
         profile_files = tuple(profile_files) if profile_files is not None else (
             module / name for name in ("desktop_hls.py", "desktop_hls_budget.py", "desktop_codec.py")
             if name != "desktop_codec.py" or (module / name).is_file())
-        self.profile = hashlib.sha256(b"playable-hls-full-v1" + b"".join(
-            Path(path).read_bytes() for path in profile_files
-        )).hexdigest()
+        digest = hashlib.sha256(b"playable-hls-full-v2")
+        for path in profile_files:
+            path = Path(path);name = path.name.encode("utf8");data = path.read_bytes()
+            digest.update(len(name).to_bytes(4,"big"));digest.update(name)
+            digest.update(len(data).to_bytes(8,"big"));digest.update(data)
+        self.profile = digest.hexdigest()
 
     def _identity(self, source, video_mode="h264", cancelled=lambda: False):
         if cancelled():
@@ -170,7 +173,7 @@ class PlayableEpisodeCache:
                 raise ValueError("Unsupported local artifact timeline")
             if line.startswith('#EXT-X-MEDIA-SEQUENCE') and segments:
                 raise ValueError("Late artifact media sequence")
-            if line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
+            if line.startswith(("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY")) or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
                 raise ValueError("Unsupported local artifact HLS tag")
             if line.startswith("#EXT-X-MAP:"):
                 if line != '#EXT-X-MAP:URI="init.mp4"':
@@ -448,7 +451,9 @@ class PlayableEpisodeCache:
         except Exception:
             if os.path.lexists(directory):raise
         if restored:
+            if cancelled():raise EncodingCancelled()
             if start_seconds: on_window(0, None)  # Full artifact; host keeps its source duration.
+            if cancelled():raise EncodingCancelled()
             on_ready()
             return True
         if start_seconds:
