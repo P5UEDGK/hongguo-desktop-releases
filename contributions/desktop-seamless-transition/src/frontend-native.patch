@@ -1,10 +1,12 @@
 --- a/frontend/frontend-native.js
 +++ b/frontend/frontend-native.js
-@@ -6,7 +6,7 @@
+@@ -5,8 +5,8 @@
+   let disposed = false, delegated = null, id = null, native = false, restored = false;
    let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
    let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
-   let style = null, resize = null, lastRect = '', generation = 0, seekPending = null;
+-  let style = null, resize = null, lastRect = '', generation = 0, seekPending = null;
 -  let reportedSeek = false, fallbackStarted = false;
++  let resize = null, lastRect = '', generation = 0, seekPending = null;
 +  let reportedSeek = false, fallbackStarted = false, batchingControls = false;
    let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
      rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
@@ -38,7 +40,12 @@
    }
    async function release(identifier) {
      if (!identifier) return true;
-@@ -71,7 +81,7 @@
+@@ -66,12 +76,11 @@
+     document.removeEventListener('fullscreenchange', layout);
+     document.removeEventListener('visibilitychange', layout);
+     stage?.classList.remove('desktop-native-playback');
+-    style?.remove();
+     for (const [key, descriptor] of saved) {
        if (descriptor) Object.defineProperty(media, key, descriptor);
        else delete media[key];
      }
@@ -47,7 +54,7 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -98,7 +108,7 @@
+@@ -98,7 +107,7 @@
        transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
                    dispose() {if (!claimed) {claimed = true; release(old);}}};
      }
@@ -56,7 +63,7 @@
        transfer, windowed, {forceH264, paused: state.paused});
    }
    async function failPreparation() {
-@@ -107,21 +117,21 @@
+@@ -107,21 +116,21 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -83,7 +90,7 @@
        revision = result.revision;
      } catch {if (!disposed) failPreparation();}
      finally {
-@@ -135,7 +145,7 @@
+@@ -135,7 +144,7 @@
      // Keep the existing timeline, volume, speed and fullscreen buttons above
      // the native surface; the reserved band is part of the current stage.
      const bar = Math.min(84, Math.max(0, rect.height - 1));
@@ -92,7 +99,7 @@
        Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
      const visible = !document.hidden && rect.width > 0 && rect.height > 0;
      const signature = JSON.stringify([bounds, visible]);
-@@ -156,13 +166,13 @@
+@@ -156,13 +165,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -108,7 +115,18 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -220,6 +230,7 @@
+@@ -189,9 +198,7 @@
+       const wasPaused = state.paused; state.paused = true;
+       queue({paused: true}); if (!wasPaused && ready) event('pause');
+     }});
+-    style = document.createElement('style');
+-    style.textContent = '.desktop-native-playback .player-chrome{opacity:1!important;pointer-events:auto!important}';
+-    document.head.append(style); stage?.classList.add('desktop-native-playback');
++    stage?.classList.add('desktop-native-playback');
+     resize = new ResizeObserver(layout); resize.observe(media);
+     document.addEventListener('fullscreenchange', layout);
+     document.addEventListener('visibilitychange', layout);
+@@ -220,6 +227,7 @@
          callbacks.onComplete?.(!progressive || result.sourceProgress.complete || value.state === 'ended');
          event('progress');
          const applied = value.revision >= revision && !controlBusy && !Object.keys(pending).length;
@@ -116,7 +134,7 @@
          if (seekPending === null || applied) state.time = value.time;
          if (!ready) {
            ready = true;
-@@ -249,26 +260,38 @@
+@@ -249,26 +257,40 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -129,6 +147,7 @@
 -      const capability = await request('/capabilities');
 +      const standby = await preparation?.claimRecord?.(url, initialPosition);
 +      if (disposed) {standby?.dispose(); return;}
++      if (!standby && preparation?.resumeFailed) {delegate(false);return;}
 +      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
 +      if (standby?.mode !== 'native' && standby?.adopt) {
 +        delegated = standby.adopt(media, callbacks, () => {
@@ -136,6 +155,7 @@
 +          preparation?.cancelClaim?.(true);
 +          delegate(false);
 +        });
++        if (state.paused) media.pause();
 +        return;
 +      }
 +      const preparedNative = standby?.mode === 'native';
@@ -162,7 +182,7 @@
          const result = await request('/' + id + '/status');
          if (result.state === 'failed') throw Error('Source preparation failed');
          if (result.source) {
-@@ -281,7 +304,7 @@
+@@ -281,7 +303,7 @@
        // Source download/transport failure says nothing about decoder support.
        if (!metadata) {failPreparation(); return;}
        if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
@@ -171,7 +191,7 @@
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
            body: JSON.stringify({mode: 'native'})});
        } catch (error) {
-@@ -290,15 +313,63 @@
+@@ -290,15 +312,63 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegate(false, true); return;
        }
@@ -201,7 +221,7 @@
 +        // Apply geometry, speed and audio in the same activation command.
 +        // The backend refuses activation until a decoded output frame exists.
 +        layout();
-+        Object.assign(pending, {paused: false, rate: state.rate, volume: state.volume, muted: state.muted});
++        Object.assign(pending, {paused: state.paused, rate: state.rate, volume: state.volume, muted: state.muted});
 +        batchingControls = false;
 +        clearTimeout(controlTimer); controlTimer = null;
 +        const untilVisible = Date.now() + 2000;

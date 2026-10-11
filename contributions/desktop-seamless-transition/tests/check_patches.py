@@ -32,6 +32,7 @@ with tempfile.TemporaryDirectory() as temp:
         output.write('\n(async()=>{const vm=require("node:vm"),fs=require("node:fs"),assert=require("node:assert/strict");const c={URL,Headers,fetch:async()=>({ok:true,clone(){return this},json:async()=>({videoMode:"h264"})})};vm.createContext(c);vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"../src/frontend-codec.js"),"utf8"),c);const f=c.desktopCreateCodecFetch();assert.equal(f.sessionId(),null);await f("http://127.0.0.1/desktop/hls/"+"e".repeat(32)+"/status");assert.equal(f.sessionId(),"e".repeat(32));console.log("PASS: claimed standby transport learns ID without POST");})().catch(e=>{console.error(e);process.exitCode=1});\n')
     subprocess.run(['node',str(root/'tests/test_frontend.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_frontend.cjs')],check=True)
+    subprocess.run(['node',str(package/'tests/test_resume_standby.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_surface_geometry.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_picture_hold.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_activation.cjs'),str(root/'src/frontend-native.js')],check=True)

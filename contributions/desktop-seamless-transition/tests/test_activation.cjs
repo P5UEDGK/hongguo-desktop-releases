@@ -4,14 +4,14 @@ const tick=async()=>{for(let n=0;n<30;n++)await new Promise(setImmediate)};
 async function scenario(fault){
   let now=0,errors=0,released=0,finished=0,cancelled=0,selected=true,activated=false,modeAck=false,registrationPolls=0,pauseInjected=false;
   const timers=new Set(),scheduled=[],commands=[];
-  const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.4,muted:false,
+  const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.4,muted:false,paused:false,pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();},
     closest:()=>({classList:{add(){},remove(){}},querySelector:()=>({getBoundingClientRect:()=>({top:536,height:64})})}),
     getBoundingClientRect:()=>({left:0,top:0,width:800,height:600})});
-  const prep={claimRecord:async()=>fault==='cold-registration'?null:fault==='copy-fallback'?{mode:'copy',settings:{rate:3,volume:.2,muted:true},
+  const prep={resumeFailed:fault==='resume-seek-fallback',resumePosition:30,claimRecord:async()=>(fault==='pause-during-claim'&&(pauseInjected=true,media.pause()),fault==='cold-registration'||fault==='resume-seek-fallback'?null:fault==='copy-fallback'?{mode:'copy',settings:{rate:3,volume:.2,muted:true},
       adopt(target,handlers,onFailure){
         assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);
         queueMicrotask(onFailure);return ()=>{};
-      }}:{id:'a'.repeat(32),mode:'native',source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},dispose(){}},dispose(){},
+      }}:{id:'a'.repeat(32),mode:'native',source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},dispose(){}}),dispose(){},
     finishRetained(){if(fault==='success')assert(activated,'old picture retained until activate ACK');finished++},cancelClaim(){cancelled++}};
   const context={URL,Event,Number,Math,Map,AbortController,window:{devicePixelRatio:1},
     Date:{now:()=>now},ResizeObserver:class{observe(){}disconnect(){}},
@@ -19,9 +19,11 @@ async function scenario(fault){
     setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000||(fault==='cancel-pending'&&delay>10000))return 999;const id=setTimeout(()=>{now+=250;fn()},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id)},
     w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
-    desktopCodecHls(target){
-      assert.equal(fault,'copy-fallback');assert.equal(target.playbackRate,3);
-      assert.equal(target.volume,.2);assert.equal(target.muted,true);activated=true;
+    desktopCodecHls(target,url,position,handlers,preparation){
+      assert(['copy-fallback','resume-seek-fallback'].includes(fault));
+      if(fault==='copy-fallback'){assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);}
+      else {assert.equal(position,30);assert.equal(preparation,prep);}
+      activated=true;
       return ()=>{};
     },
     fetch:async(url,init={})=>{
@@ -45,7 +47,7 @@ async function scenario(fault){
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../src/frontend-seamless.js'),'utf8'),context);
   vm.runInContext(source,context);
-  const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',0,{onReady(){if(fault==='success')assert(activated,'ready is announced after the activation ACK');if(fault==='cold-registration')activated=true;},onError(){errors++}},prep);
+  const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',fault==='resume-seek-fallback'?30:0,{onReady(){if(fault==='success')assert(activated,'ready is announced after the activation ACK');if(fault==='cold-registration')activated=true;},onError(){errors++}},prep);
   for(let n=0;n<80&&!errors&&!activated;n++){await tick();await new Promise(r=>setTimeout(r,1))}
   if(fault==='cancel-pending'){dispose();await tick();assert.equal(errors,0);assert(finished>0,'cancelled adoption releases retained old picture');assert.equal(released,1);}
   else if(fault==='success'){
@@ -58,13 +60,13 @@ async function scenario(fault){
     await new Promise(r=>setTimeout(r,5));await tick();
     assert(!scheduled.includes(40),'paused tail must retain normal polling rate');
   }
-  else if(fault==='copy-fallback'){assert(activated);assert.equal(errors,0);assert.equal(released,0)}
+  else if(fault==='copy-fallback'||fault==='resume-seek-fallback'){assert(activated);assert.equal(errors,0);assert.equal(released,0)}
   else if(fault.startsWith('pause-during-')){assert(activated,'pause race must still activate');assert(pauseInjected);assert.equal(errors,0);assert.equal(media.paused,true);assert.equal(commands.at(-1).paused,true);}
   else if(fault==='cold-registration'){await new Promise(r=>setTimeout(r,5));await tick();assert(activated);assert.equal(errors,0);assert(registrationPolls>=2);assert(commands.length>0);assert(finished>0,'cold native readiness releases retained old picture');}
   else {assert.equal(errors,1,fault+' must report bounded activation failure');
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of ['visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status'])await scenario(fault);
+(async()=>{for(const fault of ['visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','resume-seek-fallback'])await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exitCode=1});

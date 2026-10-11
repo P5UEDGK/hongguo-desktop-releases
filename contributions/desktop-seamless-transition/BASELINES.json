@@ -4,12 +4,12 @@
     {
       "path": "frontend/frontend-native.js",
       "baseSha256": "c034f11882b2eed4a30cf17cbb7c90c85a3366201002e21c6a92add3a80c3a91",
-      "patchedSha256": "c4eded9b0de7909422f823bb230572df68cf1473663f1251d86fd5e3e37a3347"
+      "patchedSha256": "d4ab437f77bbd6ab1095d4e9fb4365a413acedf61ddde47c6221b661cd07e8f2"
     },
     {
       "path": "frontend/frontend-codec.js",
       "baseSha256": "1d0bf1e2053c50fc7102d02c4fd32f513142e61078cf246f989396344bf8012f",
-      "patchedSha256": "c5ddc1e6500e02122c9b8e7f9ae224155d4334fca167bf822eb9d9faf042325a"
+      "patchedSha256": "ba65d552f13b2c1703d6e995a858038cab6cff5112bed77465e3050620ea2e95"
     }
   ],
   "controlsPolicy": {

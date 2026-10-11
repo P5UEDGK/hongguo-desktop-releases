@@ -44,6 +44,21 @@ if (desktopControlsShouldReveal(event, media, {
 node contributions/desktop-seamless-transition/tests/test_controls_visibility.cjs
 ```
 
+## 中途续播复用
+
+后台仍从0准备下一集，保持隐藏、暂停、静音，播放位置最多0.05秒；可继续下载和缓冲。codec会阻止备用视频的legacy自动play，直到activate明确完成。超过0.05秒的续播目标不再直接丢弃备用：仅在正式claim后，先在隐藏静音暂停状态跳到该位置，再确认目标帧和回执，随后交接。原生校验revision、outputReady、seeking和目标时间；HLS等待目标视频帧或seeked，并校验完整时间轴位置。不会识别或跳过片源黑帧。
+
+定位等待最多2秒，受原90秒备用寿命限制。无效位置、身份不匹配和过期备用不接管；跳转失败则释放备用，保留旧画面到普通兼容加载ready，并按原目标续播。该次原生跳转失败走普通HLS协商，避免立刻再次加载刚失败的原生路径；不永久禁用原生或修改格式支持判断。preparation提供resumePosition和resumeFailed供现有桥接使用，取消仍释放所有资源。定位期间新增的用户暂停意图也必须保留。
+
+接入时还须修改两个既有HLS控制器的“初始续播距结尾不足3秒则回零”分支：仅当callbacks.preserveResumePosition不为true时才执行回零。补丁后的codec只对本次备用接管失败留下的明确续播目标设置该标记；其他场景保留原规则。窗口HLS的restart(0)条件与整集HLS计算初始target的回零条件都需增加此判断，例如：
+
+```js
+if (!explicitSeek && initialPosition > 0 && initialPosition >= duration - 3 &&
+    !callbacks.preserveResumePosition) restart(0);
+```
+
+这是现有宿主HLS owner的接线要求，两个bridge补丁不包含宿主控制器源码；漏接会让片尾续播的失败回退重新从头播放。本机融合候选已修改这两处并做真实窗口HLS回退验收。原生补丁同时移除旧的强制控制栏opacity样式，与跨集隐藏策略一致。
+
 ## 验证与回滚
 
 ```pwsh
@@ -63,3 +78,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 本轮控制栏回归：策略18项及完整公开前端回归通过；候选Tauri无预热原生14项/HLS12项、安装后原生Tauri14项通过。后续并行更新保留相同控制栏owner；当前安装资源隔离Edge/HLS11项通过，切集时未展开且opacity为0。覆盖自动切集、显示/隐藏、手动选集、慢解析、暂停、鼠标事件、焦点与末集。当前整包Tauri/HLS因其他运行实例占用未重启验收，不干扰该实例。
 
 修复8720cb7回执：原生激活等待控制队列清空并确认最新revision，提前刷新新增暂停；HLS接管补发准备阶段记录的onAcceptanceHlsTransition及原参数。两个失败回归修改前失败、修改后通过，完整公开Node/补丁及控制栏18项通过；隔离Edge+真实libmpv原生13项、HLS11项通过，资源槽归零。当前软件仍运行，本批只完成候选，未安装；此前进度条继承修复已安装。
+
+本轮中途续播：本轮公开补丁/Node全部通过，新增32个续播边界用例；最新版候选隔离真实媒体原生/HLS续播、失败回退和控制栏共69项通过，关闭后资源槽归零。预热保持暂停静音隐藏，停在开头0.05秒以内；正式切集时再定位该集续播目标，成功复用会话。定位失败保留旧画面及目标，转普通HLS加载；宿主两个末3秒回零分支须接入preserveResumePosition。软件仍运行，未安装本轮候选；候选Tauri、安装后验证及正常片源画面验收待完成。

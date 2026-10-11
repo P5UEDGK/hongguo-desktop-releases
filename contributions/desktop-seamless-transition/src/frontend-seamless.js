@@ -78,7 +78,7 @@ function desktopPrepareNext(url, currentMedia) {
   previous?.dispose();
   let disposed = false, claimed = false, id = null, controller = null, video = null;
   let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null;
-  let known = {}, failed = false;
+  let known = {}, failed = false, resumePosition = null, resumeFailed = false;
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
   const abort = new AbortController();
@@ -125,8 +125,52 @@ function desktopPrepareNext(url, currentMedia) {
     disposed = true; abort.abort(); controller?.(); video?.remove(); release();
     if (!retainPicture) finishRetained();
   }
+  async function seekToResume(result, position) {
+    const duration = result.mode === 'native' ? result.duration : known.onTimeline?.[0] || video.duration;
+    if (!Number.isFinite(duration) || position >= duration) throw Error('Invalid standby resume position');
+    const until = Math.min(deadline, Date.now() + 2000);
+    if (result.mode === 'native') {
+      const applied = await request('/' + id + '/control', {method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({seek:position,visible:false,paused:true,muted:true})}, until-Date.now());
+      while (!disposed && !failed && Date.now() < until) {
+        const status = await request('/' + id + '/status', {}, until-Date.now());
+        const frame = status.native;
+        if (status.state === 'failed' || frame?.state === 'failed') break;
+        if (frame?.revision >= applied.revision && frame.outputReady && !frame.seeking &&
+            frame.paused && frame.muted && !frame.visible && Math.abs(frame.time-position) <= .05) return;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    } else {
+      let targetFrame = false, frameRequest = null;
+      const origin = () => known.onWindowOrigin?.[0] || 0;
+      const seeked = () => {if (!video.requestVideoFrameCallback) targetFrame = true;};
+      const onFrame = (_, metadata) => {
+        targetFrame = Math.abs(metadata.mediaTime + origin() - position) <= .05;
+        if (!targetFrame && !disposed && Date.now() < until)
+          frameRequest = video.requestVideoFrameCallback(onFrame);
+      };
+      video.addEventListener('seeked',seeked);
+      try {
+        if (video.requestVideoFrameCallback) frameRequest = video.requestVideoFrameCallback(onFrame);
+        delete known.onReady;
+        controller.seek(position);
+        while (!disposed && !failed && Date.now() < until) {
+          if (targetFrame && known.onReady && !video.seeking && video.paused && video.readyState >= 2 &&
+              Math.abs(video.currentTime + origin() - position) <= .05) return;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      } finally {
+        video.removeEventListener('seeked',seeked);
+        if (frameRequest !== null) video.cancelVideoFrameCallback?.(frameRequest);
+      }
+    }
+    throw Error('Standby resume frame timed out');
+  }
   const preparation = {
     get failed() {return failed;},
+    get resumePosition() {return resumePosition;},
+    get resumeFailed() {return resumeFailed;},
     dispose() {if (!claimed) cleanup();},
     retain(fn) {
       retained.push(fn);
@@ -136,11 +180,17 @@ function desktopPrepareNext(url, currentMedia) {
     finishRetained,
     cancelClaim: cleanup,
     claim: async () => null,
-    async claimRecord(wanted, position) {
-      if (disposed || claimed || Date.now() >= deadline || wanted !== url || position > .05) {preparation.dispose(); return null;}
+    async claimRecord(wanted, position = 0) {
+      if (disposed || claimed || Date.now() >= deadline || wanted !== url ||
+          !Number.isFinite(position) || position < 0 || position > 86400) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
+      resumePosition = position;
       const result = await prepared;
       if (!result || disposed) {cleanup(); return null;}
+      if (position > .05) {
+        try {await seekToResume(result,position);} catch {resumeFailed = true;cleanup(true);return null;}
+        if (disposed) return null;
+      }
       return {...result, settings:{rate:currentMedia.playbackRate || 1,
         volume:currentMedia.volume,muted:currentMedia.muted}};
     }
@@ -184,8 +234,11 @@ function desktopPrepareNext(url, currentMedia) {
               body:JSON.stringify({rect:desktopNativeSurfaceRect(currentMedia),
                 visible:false,paused:true,muted:true,rate:currentMedia.playbackRate || 1})})).revision;
           }
-          if (value.native?.outputReady && placement !== null && value.native.revision >= placement)
-            return {id, mode, source:value.source, dispose:cleanup};
+          if (value.native?.outputReady && placement !== null && value.native.revision >= placement) {
+            if (value.native.time > .05 || value.native.paused === false || value.native.muted === false || value.native.visible === true)
+              throw Error('Standby advanced beyond its opening frame');
+            return {id, mode, source:value.source, duration:value.native.duration || value.duration, dispose:cleanup};
+          }
           await new Promise(resolve => setTimeout(resolve, 100));
         }
         throw Error('Standby frame timed out');
@@ -201,7 +254,8 @@ function desktopPrepareNext(url, currentMedia) {
         if (video.readyState >= 2 && video.videoWidth > 0 && known.onReady) break;
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      if (disposed || failed || video.readyState < 2 || video.videoWidth <= 0 || !known.onReady) throw Error('Standby video timed out');
+      if (disposed || failed || video.readyState < 2 || video.videoWidth <= 0 || !known.onReady ||
+          !video.paused || video.currentTime > .05) throw Error('Standby video timed out');
       id = controller.sessionId?.() || id;
       return {id, mode, dispose:cleanup, adopt(media, handlers, onFailure) {
         if (disposed) return null;
