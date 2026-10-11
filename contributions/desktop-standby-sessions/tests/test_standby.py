@@ -20,6 +20,32 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_promotion_callback_failure_does_not_detach_parent(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='h264'
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='h264'
+        def failed(*_):raise RuntimeError('promotion failed')
+        jobs.on_activate=failed
+        with self.assertRaisesRegex(RuntimeError,'promotion failed'):jobs.activate(child)
+        self.assertEqual(child.prewarm_parent,parent.id)
+
+    def test_control_ack_wait_does_not_block_async_event_loop(self):
+        jobs,_=self.jobs();job=jobs.create('1234567890123456',1);job.video_mode='native';job.ready.set()
+        entered=threading.Event();release=threading.Event()
+        def blocking(*_):entered.set();release.wait(1);return 1
+        jobs.native=SimpleNamespace(available=True,control=blocking,release=lambda _:None)
+        endpoint=next(route.endpoint for route in make_router(jobs,lambda _:True).routes if route.path.endswith('/control'))
+        async def body():return {'visible':False,'paused':True}
+        async def exercise():
+            task=asyncio.create_task(endpoint(job.id,SimpleNamespace(json=body)))
+            try:
+                for _ in range(200):
+                    if entered.is_set() or task.done():break
+                    await asyncio.sleep(.005)
+                self.assertTrue(entered.is_set(),'control worker must enter the native call')
+                self.assertFalse(task.done(),'event loop must stay schedulable during native ACK wait')
+            finally:release.set();await task
+        asyncio.run(exercise())
+
     def test_repeated_visible_handoff_keeps_pause_ownership_and_latest_intent(self):
         for later in (None, True, False):
             for reject in (False, True):

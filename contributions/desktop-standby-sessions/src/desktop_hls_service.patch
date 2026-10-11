@@ -1,6 +1,14 @@
 --- a/backend/desktop_hls_service.py
 +++ b/backend/desktop_hls_service.py
-@@ -46,11 +46,17 @@
+@@ -12,6 +12,7 @@
+ import time
+ import uuid
+ import queue
++import asyncio
+ from desktop_codec import describe_streams
+ from desktop_stream import ProgressiveSource, SourceReadError, open_media, source_progress
+ 
+@@ -46,11 +47,17 @@
      source_description: dict | None = None
      video_mode: str = "h264"
      mode_selected: threading.Event = field(default_factory=threading.Event)
@@ -19,7 +27,7 @@
          self.root = Path(root).resolve(strict=True)
          if not self.root.is_dir() or self.root.is_symlink():
              raise ValueError("Desktop work directory is unavailable")
-@@ -62,6 +68,9 @@
+@@ -62,6 +69,9 @@
          self.full_cache_ready = full_cache_ready
          self.negotiation_seconds = negotiation_seconds
          self.native = native
@@ -29,7 +37,7 @@
          self.encoder_slots = threading.BoundedSemaphore(max_workers)
          self.closed = threading.Event()
          self.reaper_stop = threading.Event()
-@@ -119,7 +128,7 @@
+@@ -119,7 +129,7 @@
              if time.monotonic() - job.touched > self.idle_seconds:
                  self.release(job.id)
  
@@ -38,7 +46,7 @@
          if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
              raise HTTPException(400, "Invalid episode identity")
          if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
-@@ -129,19 +138,36 @@
+@@ -129,19 +139,36 @@
              self._expire()
              if self.closed.is_set():
                  raise HTTPException(503, "Desktop sessions are closed")
@@ -77,7 +85,7 @@
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
                  job.failed = True
-@@ -158,7 +184,9 @@
+@@ -158,7 +185,9 @@
          source = None
          encoder_acquired = False
          try:
@@ -88,7 +96,7 @@
              job.source = source if isinstance(source, ProgressiveSource) else Path(source)
              if job.cancelled.is_set():
                  raise EncodingCancelled()
-@@ -278,6 +306,9 @@
+@@ -278,6 +307,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -98,7 +106,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -290,6 +321,39 @@
+@@ -290,6 +322,36 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -123,10 +131,7 @@
 +                        or value.get("revision", -1) < job.activation_revision):
 +                    raise HTTPException(409, "Standby activation not applied")
 +            if self.on_activate:
-+                try:
-+                    accepted = self.on_activate(job, job.series_id, job.episode)
-+                except Exception:
-+                    accepted = None  # Optional queue refresh cannot stop presentation.
++                accepted = self.on_activate(job, job.series_id, job.episode)
 +                if accepted is False:
 +                    raise HTTPException(409, "Standby generation expired")
 +                if callable(accepted):
@@ -138,7 +143,7 @@
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -387,7 +451,7 @@
+@@ -387,7 +449,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -147,7 +152,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -398,7 +462,11 @@
+@@ -398,7 +460,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -160,7 +165,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -496,6 +564,7 @@
+@@ -496,6 +562,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -168,7 +173,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -509,17 +578,32 @@
+@@ -509,17 +576,35 @@
  
      @router.post("/{identifier}/control")
      async def control(identifier: str, request: Request):
@@ -178,17 +183,20 @@
          try:
              body = await request.json()
 -            revision = jobs.native.control(identifier, body)
-+            with jobs.guard:
-+                job = jobs.get(identifier)
-+                if (job.video_mode != "native" or not jobs.native or job.failed
-+                        or not job.ready.is_set()):
-+                    raise HTTPException(409, "Native session unavailable")
-+                if (body.get("visible") is True and job.prewarm_parent and
-+                        job.prefetch_generation != jobs.foreground_generation):
-+                    raise HTTPException(409, "Standby generation expired")
-+                revision = jobs.native.control(identifier, body)
-+                if body.get("visible") is True:
-+                    job.activation_revision = max(job.activation_revision or 0, revision)
++            def apply_control():
++                with jobs.guard:
++                    job = jobs.get(identifier)
++                    if (job.video_mode != "native" or not jobs.native or job.failed
++                            or not job.ready.is_set()):
++                        raise HTTPException(409, "Native session unavailable")
++                    if (body.get("visible") is True and job.prewarm_parent and
++                            job.prefetch_generation != jobs.foreground_generation):
++                        raise HTTPException(409, "Standby generation expired")
++                    revision = jobs.native.control(identifier, body)
++                    if body.get("visible") is True:
++                        job.activation_revision = max(job.activation_revision or 0, revision)
++                return revision
++            revision = await asyncio.to_thread(apply_control)
          except (ValueError, TypeError, OverflowError):
              raise HTTPException(400, "Invalid native control")
          except queue.Full:
