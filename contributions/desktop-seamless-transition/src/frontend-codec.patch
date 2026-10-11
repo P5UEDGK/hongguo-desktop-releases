@@ -47,7 +47,7 @@
    let disposed = false, retried = false, epoch = 0, controller, transport;
 +  let standbyParent = initialState?.standbyParent;
    let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
-   let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false;
+   let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false, internalPlay = false;
    const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
 @@ -102,7 +111,7 @@
      try {controller?.();} finally {internalPause = false;}
@@ -58,7 +58,7 @@
      const active = () => !disposed && epoch === ownEpoch;
      const wrapped = {...callbacks,
        onReady() {
-@@ -171,7 +180,9 @@
+@@ -174,7 +183,9 @@
      if (media.play === play) {if (savedPlay) Object.defineProperty(media, 'play', savedPlay); else delete media.play;}
      media.removeEventListener('error', onError, true);
      media.removeEventListener('timeupdate', rememberTime);
