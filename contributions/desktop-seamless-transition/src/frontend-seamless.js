@@ -78,7 +78,7 @@ function desktopPrepareNext(url, currentMedia) {
   previous?.dispose();
   let disposed = false, claimed = false, id = null, controller = null, video = null;
   let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null;
-  let known = {}, failed = false, resumePosition = null, resumeFailed = false;
+  let known = {}, failed = false, resumePosition = null, resumeFailed = false, resumeInvalid = false;
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
   const abort = new AbortController();
@@ -172,6 +172,7 @@ function desktopPrepareNext(url, currentMedia) {
     get settings() {return {rate:currentMedia.playbackRate || 1, volume:currentMedia.volume, muted:currentMedia.muted};},
     get resumePosition() {return resumePosition;},
     get resumeFailed() {return resumeFailed;},
+    get resumeInvalid() {return resumeInvalid;},
     dispose() {if (!claimed) cleanup();},
     retain(fn) {
       retained.push(fn);
@@ -182,12 +183,18 @@ function desktopPrepareNext(url, currentMedia) {
     cancelClaim: cleanup,
     claim: async () => null,
     async claimRecord(wanted, position = 0) {
-      if (disposed || claimed || Date.now() >= deadline || wanted !== url ||
-          !Number.isFinite(position) || position < 0 || position > 86400) {preparation.dispose(); return null;}
+      if (disposed || claimed || Date.now() >= deadline || wanted !== url) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
       resumePosition = position;
+      if (!Number.isFinite(position) || position < 0 || position > 86400) {
+        resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
+      }
       const result = await prepared;
-      if (!result || disposed) {cleanup(); return null;}
+      if (!result || disposed) {cleanup(true); return null;}
+      const duration = result.mode === 'native' ? result.duration : known.onTimeline?.[0] || video.duration;
+      if (Number.isFinite(duration) && duration > 0 && position >= duration) {
+        resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
+      }
       if (position > .05) {
         try {await seekToResume(result,position);} catch {resumeFailed = true;cleanup(true);return null;}
         if (disposed) return null;
@@ -273,7 +280,7 @@ function desktopPrepareNext(url, currentMedia) {
         property('play',{value:()=>{wantsPlayback=true;return activationComplete ? video.play() : Promise.resolve();}});
         property('pause',{value:()=>{wantsPlayback=false;video.pause();}});
         property('desktopDisplayMedia',{value:video});
-        property('desktopSessionId',{value:()=>controller?.sessionId?.() || id});
+        property('desktopSessionId',{value:()=>controller?.sessionId?.() ?? null});
         for (const name of ['play','playing','pause','ended','timeupdate','waiting','seeking','seeked','progress','volumechange','ratechange','error','loadedmetadata','durationchange']) {
           const forward=()=>{if(!closed)media.dispatchEvent(new Event(name));};
           video.addEventListener(name,forward);listeners.push([name,forward]);
@@ -317,7 +324,8 @@ function desktopPrepareNext(url, currentMedia) {
           try {await video.play();} catch (error) {if (wantsPlayback) throw error;}
         }).then(() => {
           if (disposed) return;
-          if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(finishRetained);
+          if (!wantsPlayback) finishRetained();
+          else if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(finishRetained);
           else requestAnimationFrame(finishRetained);
         }).catch(()=>{
           if (closed || disposed) return;
@@ -326,7 +334,7 @@ function desktopPrepareNext(url, currentMedia) {
         });
         return Object.assign(() => {
           if(restoreAdoption())cleanup();
-        },{seek:value=>controller?.seek(value),sessionId:()=>controller?.sessionId?.() || id});
+        },{seek:value=>controller?.seek(value),sessionId:()=>controller?.sessionId?.() ?? null});
       }};
     } catch {
       failed = true; if (!claimed) cleanup(); else {release();video?.remove();}

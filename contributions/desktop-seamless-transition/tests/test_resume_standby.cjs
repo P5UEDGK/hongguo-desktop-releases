@@ -64,7 +64,13 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     if(fault||!Number.isFinite(position)||position<0||position>=90){
       assert.equal(record,null,'unsafe/failed reuse must fall back');
       if(['timeout','seek-error'].includes(fault)){assert.equal(prep.resumeFailed,true);assert.equal(prep.resumePosition,position);assert.equal(prep.settings.rate,2);assert.equal(prep.settings.volume,.4);assert.equal(prep.settings.muted,true);assert.equal(retired,0,'seek failure preserves old picture for ordinary loading');prep.finishRetained();assert.equal(retired,1);}
-      else prep.cancelClaim();
+      else {
+        if(!fault && (!Number.isFinite(position)||position<0||position>=90)){
+          assert.equal(prep.resumeInvalid,true,'invalid saved progress is distinguished from a seek failure');
+          assert.equal(prep.resumePosition,0,'cold fallback restarts invalid progress');
+        }
+        prep.cancelClaim();
+      }
     }else{
       assert(record,'valid resume reuses the prepared session');assert.equal(plays,0);
       assert.equal(record.id,'b'.repeat(32));assert.equal(record.settings.rate,2);
