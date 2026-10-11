@@ -1,26 +1,18 @@
 --- a/backend/desktop_native.py
 +++ b/backend/desktop_native.py
-@@ -201,10 +201,15 @@
-         with self.guard:
-             if job.cancelled.is_set():
-                 raise RuntimeError("Native job cancelled")
--            for identifier, previous in list(self.sessions.items()):
--                if previous.close() is False:
--                    raise RuntimeError("Previous native session is stopping")
--                self.sessions.pop(identifier, None)
-+            parent = getattr(job, "prewarm_parent", None)
-+            if parent:
-+                if (self.sessions and parent not in self.sessions) or len(self.sessions) >= 2:
-+                    raise RuntimeError("Standby parent unavailable")
-+            else:
-+                for identifier, previous in list(self.sessions.items()):
-+                    if previous.close() is False:
-+                        raise RuntimeError("Previous native session is stopping")
-+                    self.sessions.pop(identifier, None)
-             session = NativeSession(self, job, self.parent_window())
-             self.sessions[job.id] = session
-             try:
-@@ -227,7 +232,37 @@
+@@ -250,6 +250,11 @@
+                 if self.closed.is_set() or job.cancelled.is_set():
+                     raise RuntimeError("Native job cancelled")
+                 with self.guard:
++                    parent = getattr(job, "prewarm_parent", None)
++                    if parent:
++                        if (self.sessions and parent not in self.sessions) or len(self.sessions) >= 2:
++                            raise RuntimeError("Standby parent unavailable")
++                        break  # The active parent must survive standby preparation.
+                     previous_sessions = list(self.sessions.items())
+                 if not previous_sessions:
+                     break
+@@ -291,7 +296,37 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -56,10 +48,10 @@
 +                    except Exception:
 +                        pass  # Preserve the original control failure.
 +                raise
-
+ 
      def release(self, identifier):
          with self.guard:
-@@ -368,7 +403,8 @@
+@@ -432,7 +467,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -69,7 +61,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -544,6 +580,7 @@
+@@ -615,6 +651,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

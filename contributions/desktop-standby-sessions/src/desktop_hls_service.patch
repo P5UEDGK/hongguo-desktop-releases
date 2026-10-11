@@ -1,6 +1,6 @@
 --- a/backend/desktop_hls_service.py
 +++ b/backend/desktop_hls_service.py
-@@ -45,11 +45,17 @@
+@@ -46,11 +46,17 @@
      source_description: dict | None = None
      video_mode: str = "h264"
      mode_selected: threading.Event = field(default_factory=threading.Event)
@@ -9,8 +9,8 @@
 +    prewarm_parent: str | None = None
 +    activation_revision: int | None = None
 +    prefetch_generation: int | None = None
-
-
+ 
+ 
  class HlsJobs:
      def __init__(self, root, source_loader, *, encoder=encode_hls, max_jobs=4, max_workers=2, idle_seconds=300,
 -                 on_start=None, before_work=None, on_finish=None, full_cache_ready=None, negotiation_seconds=12, native=None):
@@ -19,7 +19,7 @@
          self.root = Path(root).resolve(strict=True)
          if not self.root.is_dir() or self.root.is_symlink():
              raise ValueError("Desktop work directory is unavailable")
-@@ -61,6 +67,7 @@
+@@ -62,6 +68,7 @@
          self.full_cache_ready = full_cache_ready
          self.negotiation_seconds = negotiation_seconds
          self.native = native
@@ -27,16 +27,16 @@
          self.encoder_slots = threading.BoundedSemaphore(max_workers)
          self.closed = threading.Event()
          self.reaper_stop = threading.Event()
-@@ -118,7 +125,7 @@
+@@ -119,7 +126,7 @@
              if time.monotonic() - job.touched > self.idle_seconds:
                  self.release(job.id)
-
+ 
 -    def create(self, series_id, episode, *, start_seconds=0, negotiate_codec=False):
 +    def create(self, series_id, episode, *, start_seconds=0, negotiate_codec=False, prewarm_parent=None):
          if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
              raise HTTPException(400, "Invalid episode identity")
          if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
-@@ -128,18 +135,28 @@
+@@ -129,18 +136,28 @@
              self._expire()
              if self.closed.is_set():
                  raise HTTPException(503, "Desktop sessions are closed")
@@ -67,7 +67,7 @@
                      self.on_start(job, series_id, episode)
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
-@@ -275,6 +292,9 @@
+@@ -276,6 +293,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -77,7 +77,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -287,6 +307,35 @@
+@@ -288,6 +308,35 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -110,19 +110,19 @@
 +            job.prewarm_parent = None
 +        if after_detach:
 +            after_detach()
-
+ 
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -384,7 +433,7 @@
+@@ -385,7 +434,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
 -                "codecNegotiation": 1, "nativePlayback": 1 if jobs.native and jobs.native.available else 0}
 +                "codecNegotiation": 1, "standbyPlayback": 1, "nativePlayback": 1 if jobs.native and jobs.native.available else 0}
-
+ 
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -395,7 +444,11 @@
+@@ -396,7 +445,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -135,7 +135,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -486,6 +539,7 @@
+@@ -494,6 +547,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -143,7 +143,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -509,7 +563,20 @@
+@@ -517,7 +571,20 @@
              raise HTTPException(400, "Invalid native control")
          except queue.Full:
              raise HTTPException(429, "Native control queue is busy")
@@ -161,6 +161,6 @@
 +            raise HTTPException(409, "Standby not ready")
 +        jobs.activate(job)
 +        return {"activated": True}
-
+ 
      @router.delete("/{identifier}")
      def release(identifier: str):

@@ -19,6 +19,20 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_prepare_standby_retains_parent_and_uses_bound_requesting_window(self):
+        host=NativeHost(dll_path=Path('missing-owned-fixture.dll'));host.available=True
+        old=SimpleNamespace(close=lambda:self.fail('standby preparation must retain the active parent'))
+        host.sessions={'parent':old}
+        job=SimpleNamespace(id='child',prewarm_parent='parent',native_parent=123,cancelled=threading.Event())
+        with patch.object(host,'parent_window',return_value=123) as parent,patch('desktop_native.NativeSession') as session:
+            host.prepare(job)
+            parent.assert_called_once_with(job)
+            session.assert_called_once_with(host,job,123)
+            session.return_value.thread.start.assert_called_once()
+        self.assertIs(host.sessions['parent'],old)
+        self.assertEqual(set(host.sessions),{'parent','child'})
+        self.assertEqual(host.preparing,set())
+
     def test_fast_metadata_starts_after_parent_detach_and_finishes_bookkeeping(self):
         observed=[]
         source=self.root/'prepared.mp4';source.write_bytes(b'prepared')
@@ -294,8 +308,8 @@ class StandbyTests(unittest.TestCase):
             def close(self):self.closed=True;self.stop.set()
             def snapshot(self):return self.data
             def submit(self,body):self.data.update(body,revision=self.data['revision']+1);return self.data['revision']
-        host=object.__new__(NativeHost);host.available=True;host.guard=threading.RLock();host.sessions={}
-        host.parent_window=lambda:1
+        host=NativeHost(dll_path=Path('missing-owned-fixture.dll'));host.available=True
+        host.parent_window=lambda job=None:1
         parent=SimpleNamespace(id='a'*32,cancelled=threading.Event(),prewarm_parent=None)
         child=SimpleNamespace(id='b'*32,cancelled=threading.Event(),prewarm_parent=parent.id)
         with patch('desktop_native.NativeSession',Session):
