@@ -33,6 +33,25 @@ class StandbyTests(unittest.TestCase):
         self.enterContext(patch('desktop_hls_service.describe_streams',return_value={'copyEligible':True}))
         return jobs,prefetch
 
+    def test_stale_cold_source_is_closed_but_borrowed_source_is_not(self):
+        from desktop_hls import EncodingCancelled
+        for borrowed in (False,True):
+            with self.subTest(borrowed=borrowed):
+                closed=[];source=SimpleNamespace(close=lambda:closed.append(True))
+                job=SimpleNamespace(id='warm',prewarm_parent='parent',prefetch_generation=1,cancelled=threading.Event())
+                def load(_):prefetch.generation=2;return source
+                prefetch=EpisodePrefetcher(load,lambda _:({},[{'index':2,'vid':'123456780002'}]),
+                    self.root/('borrowed' if borrowed else 'new'),encoder=lambda *_:None)
+                prefetch.generation=1
+                if borrowed:
+                    class Sources(dict):
+                        def get(self,key):prefetch.generation=2;return source
+                    prefetch.sources=Sources()
+                try:
+                    with self.assertRaises(EncodingCancelled):prefetch.load_standby_source(job,'series',2)
+                    self.assertEqual(closed,[] if borrowed else [True])
+                finally:prefetch.close()
+
     def test_cold_standby_loads_without_becoming_current_episode(self):
         def encode(source,directory,on_ready,**kwargs):
             directory.mkdir(exist_ok=True);(directory/'complete.marker').write_text('complete');on_ready()

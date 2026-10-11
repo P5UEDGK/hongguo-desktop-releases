@@ -5,10 +5,10 @@
          self.generation = 0
          self.foreground = {}
 +        self.warm_jobs = {}
+         self.foreground_directories = {}
+         self.cache_results = {}
          self.busy = None
-         self.pending = []
-         self.active = None
-@@ -56,10 +57,17 @@
+@@ -58,10 +59,17 @@
                  by_index.setdefault(index, vid)
          return sorted(by_index.items())
  
@@ -25,10 +25,10 @@
              self.generation += 1
              self.foreground[job.id] = self.generation
 +            job.prefetch_generation = self.generation
+             if getattr(job, "directory", None) is not None:
+                 self.foreground_directories[job.id] = Path(job.directory)
              self.pending = []
-             self.download_pending = []
-             self.sources = {}
-@@ -73,15 +81,26 @@
+@@ -77,15 +85,26 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
@@ -54,9 +54,9 @@
 +                        key != job.id and generation == self.generation
 +                        for key, generation in self.foreground.items())):
                      self.busy = job.id
-                     return
-                 self.condition.wait(0.1)
-@@ -94,7 +113,7 @@
+                     if getattr(job, "directory", None) is not None:
+                         self.foreground_directories[job.id] = Path(job.directory)
+@@ -100,7 +119,7 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
@@ -65,7 +65,7 @@
          with self.condition:
              generation = self.generation
          _, metadata = self.episode_loader(series_id)
-@@ -106,7 +125,7 @@
+@@ -112,7 +131,7 @@
              if (generation != self.generation or self.closed
                      or self.current != {"seriesId": str(series_id), "episode": episode}):
                  raise EncodingCancelled()
@@ -74,7 +74,7 @@
          with self.condition:
              if (generation == self.generation and not self.closed
                      and self.current == {"seriesId": str(series_id), "episode": episode}):
-@@ -131,6 +150,74 @@
+@@ -137,6 +156,81 @@
          self._report()
          return source
  
@@ -92,9 +92,16 @@
 +        current_generation()
 +        with self.condition:
 +            source = self.sources.get(vid)
-+        if source is None:
++        created = source is None
++        if created:
 +            source = self.source_loader(vid)
-+        current_generation()
++        try:
++            current_generation()
++        except EncodingCancelled:
++            if created and callable(getattr(source, "close", None)):
++                try: source.close()
++                except Exception: pass
++            raise
 +        return source
 +
 +    def promote(self, job, series_id, episode):
@@ -149,16 +156,16 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -155,6 +242,8 @@
+@@ -161,6 +255,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
 +            self.warm_jobs.pop(job.id, None)
 +            job._prefetch_work_finished = True
              expected = self.foreground.get(job.id)
-         mode = getattr(job, "video_mode", "h264")
-         # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
-@@ -169,6 +258,9 @@
+             cached_result = self.cache_results.pop(job.id, None)
+             self.foreground_directories.pop(job.id, None)
+@@ -177,6 +273,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -168,7 +175,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -304,6 +396,7 @@
+@@ -317,6 +416,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

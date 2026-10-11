@@ -79,7 +79,7 @@
              job.source = source if isinstance(source, ProgressiveSource) else Path(source)
              if job.cancelled.is_set():
                  raise EncodingCancelled()
-@@ -276,6 +296,9 @@
+@@ -278,6 +298,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -89,7 +89,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -288,6 +311,35 @@
+@@ -290,6 +313,35 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -125,7 +125,7 @@
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -385,7 +437,7 @@
+@@ -387,7 +439,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -134,7 +134,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -396,7 +448,11 @@
+@@ -398,7 +450,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -147,7 +147,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -494,6 +550,7 @@
+@@ -496,6 +552,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -155,7 +155,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -507,17 +564,29 @@
+@@ -509,17 +566,29 @@
  
      @router.post("/{identifier}/control")
      async def control(identifier: str, request: Request):

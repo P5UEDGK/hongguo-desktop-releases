@@ -41,3 +41,8 @@ pwsh -NoProfile -Command "python -I contributions/desktop-standby-sessions/tests
 HlsJobs新增可选standby_source_loader=prefetch.load_standby_source。该入口按job的父代际和取消状态检查冷源，不要求current为子集，也不提前提升；旧README接线的冷备用回放失败。推进新前台代际时取消正在编码的warm owner，让编码器按既有cancelled回调退出，实际退出后再释放busy。两个旧回放失败，当前174项全部通过（含自有HEVC）。当前原生依赖为 c7bfbc2ea269af4013ab971467d9ef68dc207b9a，prefetch依赖见BASELINES.json。
 
 本机候选与安装仍待完成。
+
+
+本轮审查回归（2026-10-12，第四批）：4242307145：过期冷待机下载在返回前释放本次新建source，借用缓存source不关闭。
+
+修改后公共回归、待机组合180项、Chrome87项和真实libmpv字幕检查通过。暂停预加载实测触及8MiB硬上限并稳定，2x/3x恢复及释放通过。本机候选融合与安装尚未完成，上游PR尚未合并；公共测试通过不等于安装验收通过。
