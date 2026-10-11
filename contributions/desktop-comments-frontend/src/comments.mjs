@@ -257,8 +257,12 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     try {
       const params = {comment_id:item.id, cursor};
       const result = await (store ? store.read('replies', params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
-      if (own.current === request && !request.abort.signal.aborted) setPage(previous => ({...result, has_more: result.has_more && result.cursor !== cursor,
-        items: cursor && previous ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : result.items}));
+      if (own.current === request && !request.abort.signal.aborted) setPage(previous => {
+        const keepLater = !cursor && previous && previous.items.some(row => !result.items.some(item => item.id === row.id));
+        return {...result, cursor: keepLater ? previous.cursor : result.cursor,
+          has_more: keepLater ? previous.has_more : result.has_more && result.cursor !== cursor,
+          items: previous ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : result.items};
+      });
     } catch (e) {if (!request.abort.signal.aborted) setError('回复加载失败，请重试');}
     finally {request.busy = false; if (!request.abort.signal.aborted) setBusy(false);}
   }
