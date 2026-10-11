@@ -1,6 +1,6 @@
 --- a/backend/desktop_prefetch.py
 +++ b/backend/desktop_prefetch.py
-@@ -57,10 +57,13 @@
+@@ -56,10 +56,13 @@
                  by_index.setdefault(index, vid)
          return sorted(by_index.items())
  
@@ -16,7 +16,7 @@
              self.pending = []
              self.download_pending = []
              self.sources = {}
-@@ -75,15 +78,25 @@
+@@ -73,15 +76,25 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
@@ -43,7 +43,7 @@
                      self.busy = job.id
                      return
                  self.condition.wait(0.1)
-@@ -96,7 +109,7 @@
+@@ -94,7 +107,7 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
@@ -52,16 +52,16 @@
          with self.condition:
              generation = self.generation
          _, metadata = self.episode_loader(series_id)
-@@ -108,7 +121,7 @@
+@@ -106,7 +119,7 @@
              if (generation != self.generation or self.closed
                      or self.current != {"seriesId": str(series_id), "episode": episode}):
                  raise EncodingCancelled()
 -        source = self.source_loader(vid)
 +        source = prepared_source if prepared_source is not None else self.source_loader(vid)
-         source_complete = self._source_complete(source)
          with self.condition:
              if (generation == self.generation and not self.closed
-@@ -135,6 +148,55 @@
+                     and self.current == {"seriesId": str(series_id), "episode": episode}):
+@@ -131,6 +144,55 @@
          self._report()
          return source
  
@@ -117,7 +117,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -159,6 +221,7 @@
+@@ -155,6 +217,7 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -125,7 +125,7 @@
              expected = self.foreground.get(job.id)
          mode = getattr(job, "video_mode", "h264")
          # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
-@@ -173,6 +236,9 @@
+@@ -169,6 +232,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -135,7 +135,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -302,6 +368,7 @@
+@@ -304,6 +370,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

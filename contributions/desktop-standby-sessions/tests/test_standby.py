@@ -19,6 +19,36 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_control_submit_and_revision_are_atomic_against_delete(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        child.video_mode='native';child.ready.set()
+        entered=threading.Event();leave=threading.Event();delete_attempt=threading.Event();deleted=threading.Event()
+        outcome=[];failures=[]
+        def submit(*_):
+            entered.set()
+            if not leave.wait(2):raise AssertionError('test did not release submit')
+            return 7
+        jobs.native=SimpleNamespace(available=True,control=submit,release=lambda _:None)
+        control=next(route.endpoint for route in make_router(jobs,lambda _:True).routes if route.path.endswith('/control'))
+        async def body():return {'visible':True,'paused':False}
+        def request():
+            try:outcome.append(asyncio.run(control(child.id,SimpleNamespace(json=body))))
+            except Exception as e:failures.append(e)
+        def delete():
+            delete_attempt.set();jobs.release(child.id);deleted.set()
+        sender=threading.Thread(target=request);deleter=threading.Thread(target=delete)
+        sender.start();self.assertTrue(entered.wait(2));deleter.start()
+        try:
+            self.assertTrue(delete_attempt.wait(2))
+            self.assertFalse(deleted.wait(.15),'DELETE must not cancel an in-flight accepted native control')
+            self.assertFalse(child.cancelled.is_set())
+        finally:
+            leave.set();sender.join(3);deleter.join(3)
+        self.assertFalse(sender.is_alive());self.assertFalse(deleter.is_alive())
+        self.assertEqual(failures,[]);self.assertEqual(outcome,[{'revision':7}])
+        self.assertEqual(child.activation_revision,7);self.assertTrue(deleted.is_set())
+
     def test_prepare_standby_retains_parent_and_uses_bound_requesting_window(self):
         host=NativeHost(dll_path=Path('missing-owned-fixture.dll'));host.available=True
         old=SimpleNamespace(close=lambda:self.fail('standby preparation must retain the active parent'))

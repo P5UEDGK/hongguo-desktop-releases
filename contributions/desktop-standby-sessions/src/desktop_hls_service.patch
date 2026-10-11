@@ -143,15 +143,28 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -517,7 +571,20 @@
+@@ -507,17 +561,29 @@
+ 
+     @router.post("/{identifier}/control")
+     async def control(identifier: str, request: Request):
+-        job = jobs.get(identifier)
+-        if job.video_mode != "native" or not jobs.native or job.failed:
+-            raise HTTPException(409, "Native session unavailable")
+         try:
+             body = await request.json()
+-            revision = jobs.native.control(identifier, body)
++            with jobs.guard:
++                job = jobs.get(identifier)
++                if (job.video_mode != "native" or not jobs.native or job.failed
++                        or not job.ready.is_set()):
++                    raise HTTPException(409, "Native session unavailable")
++                revision = jobs.native.control(identifier, body)
++                if body.get("visible") is True:
++                    job.activation_revision = max(job.activation_revision or 0, revision)
+         except (ValueError, TypeError, OverflowError):
              raise HTTPException(400, "Invalid native control")
          except queue.Full:
              raise HTTPException(429, "Native control queue is busy")
-+        if body.get("visible") is True:
-+            with jobs.guard:
-+                if job.cancelled.is_set():
-+                    raise HTTPException(404, "Desktop session is unavailable")
-+                job.activation_revision = max(job.activation_revision or 0, revision)
          return {"revision": revision}
 +
 +    @router.post("/{identifier}/activate")

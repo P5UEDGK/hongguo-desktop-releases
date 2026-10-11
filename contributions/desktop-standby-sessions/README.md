@@ -27,3 +27,10 @@ pwsh -NoProfile -Command "python -I contributions/desktop-standby-sessions/tests
 补丁基线已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee及#187的8f28b71bd9c59a6a47e31413f7be3f486d81ab0b，保留异步诊断writer和原生源一致性修复。新增立即完成元数据的确定性回归，证明先解除父关系再完成foreground清理；旧实现失败，当前组合通过。
 
 备用会话补丁同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516 与prefetch 6b78af10c856f1327ef7f16f9242e6754057b8f4。保留元数据返回后的代际重查；预热在可取消准备锁内保留父会话，使用job绑定的请求窗口。组合167项全部通过，含自有HEVC夹具、新窗口归属及全部prefetch回归。本机安装待完成。
+
+
+## 本轮二次反馈修复
+
+原生 control 在读取请求体后，将会话有效性检查、提交及 activation revision 更新置于同一 jobs.guard 临界区，避免 DELETE 在父会话已暂停后抢先取消。预缓存依赖同步本轮前台状态与后台 stage 清理修复；保留 promote 的解除父关系后启动行为。确定性双线程回归在旧实现失败。
+
+本机完整候选、安装回读与反馈观察期仍待完成。
