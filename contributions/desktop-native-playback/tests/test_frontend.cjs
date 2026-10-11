@@ -59,6 +59,16 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     [...timers.values()].find(t=>t.delay===8000).fn();
     assert.equal(controllers.length,2,'audio-only success must fall back');end();
   }
+  controllers=[];
+  const preparingEvents={};let loadingPauses=0;
+  const loading={currentTime:0,playbackRate:1,videoWidth:100,
+    pause(){loadingPauses++;preparingEvents.pause?.()},
+    addEventListener(n,f){preparingEvents[n]=f},removeEventListener(n){delete preparingEvents[n]}};
+  const loadingDispose=c.desktopCodecHls(loading,'http://127.0.0.1',0,{onReady(){},onError(){}},null);
+  loading.pause();loading.playbackRate=3;preparingEvents.ratechange();
+  controllers[0].callbacks.onReady();await flush();
+  assert(loadingPauses>=2,'pause during source preparation survives autoplay');
+  assert.equal(loading.playbackRate,3,'preparation keeps latest speed');loadingDispose();
   console.log('PASS: codec detection, negotiation, position/rate/pause, one retry, stale callbacks and missing video');
   // HLS audio copy restrictions must not prevent native HEVC selection.
   const nativeCalls=[],nativeTimers=new Map();let delegated=0,nativeTid=0;

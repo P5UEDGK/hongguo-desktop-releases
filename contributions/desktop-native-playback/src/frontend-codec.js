@@ -58,7 +58,13 @@ function desktopCreateCodecFetch(forceH264 = false) {
 function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
   let disposed = false, retried = false, epoch = 0, controller, transport;
   let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
-  let rate = media.playbackRate || 1, watchdog, pauseUntil = 0;
+  let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false;
+  const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
+  const pause = function(...args) {
+    if (!internalPause) wantedPlaying = false;
+    return originalPause.apply(media, args);
+  };
+  Object.defineProperty(media, "pause", {configurable:true, writable:true, value:pause});
   const rememberTime = () => {
     if (ready && Number.isFinite(media.currentTime)) position = media.currentTime + origin;
   };
@@ -67,7 +73,8 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (Date.now() < pauseUntil) {media.pause(); return;}
     wantedPlaying = true;
   };
-  const onPause = () => {if (ready) wantedPlaying = false;};
+  const onPause = () => {if (!internalPause) wantedPlaying = false;};
+  const onRateChange = () => {rate = media.playbackRate || rate;};
   function fallback() {
     if (disposed || retried || !transport?.usedCopy() || transport.failureCode?.() === 'source-read') return false;
     retried = true;
@@ -107,7 +114,10 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
       onAcceptanceHlsTransition(event) {
         if (!active()) return;
         if (['controllerFailPause', 'controllerSeekPause', 'controllerWaitResumePause',
-             'controllerWaitDurationPause'].includes(event.kind)) {rememberTime(); ready = false;}
+             'controllerWaitDurationPause'].includes(event.kind)) {
+          rememberTime(); ready = false; internalPause = true;
+          queueMicrotask(() => {internalPause = false;});
+        }
         callbacks.onAcceptanceHlsTransition?.(event);
       },
       onError() {if (active() && !fallback()) callbacks.onError();}
@@ -130,6 +140,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   };
   media.addEventListener('play', onPlay);
   media.addEventListener('pause', onPause);
+  media.addEventListener('ratechange', onRateChange);
   media.addEventListener('error', onError, true);
   media.addEventListener('timeupdate', rememberTime);
   start(initialState?.forceH264 === true, position);
@@ -140,6 +151,8 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     transport?.close(); controller?.(); preparation?.dispose();
     media.removeEventListener('play', onPlay);
     media.removeEventListener('pause', onPause);
+    media.removeEventListener('ratechange', onRateChange);
+    if (media.pause === pause) {if (savedPause) Object.defineProperty(media, 'pause', savedPause); else delete media.pause;}
     media.removeEventListener('error', onError, true);
     media.removeEventListener('timeupdate', rememberTime);
   }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}}});

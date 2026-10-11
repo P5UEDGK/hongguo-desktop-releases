@@ -87,6 +87,12 @@ class Mpv:
             self.handle = None
 
 
+def audio_output_ready(description, player):
+    """Video-only sources need no AO; expected audio must decode and open output."""
+    return not (description or {}).get("audio") or (
+        player.get("current-ao") == "wasapi" and player.get("audio-params") not in (None, "", "null"))
+
+
 class NativeHost:
     def __init__(self, *, parent_pid=None, dll_path=None, hardware=True):
         self.hardware = hardware
@@ -269,6 +275,7 @@ class NativeSession:
         self.thread = (pool.task(self) if pool else
                        threading.Thread(target=self.run, name="desktop-native-player", daemon=True))
         self.input_hooks = {}
+        self.queued_state = {"paused": True, "rate": 1, "volume": 1, "muted": False}
 
     def forward_input(self, container):
         """Forward native input to the existing WebView, preserving its trusted
@@ -321,11 +328,17 @@ class NativeSession:
         with self.guard:
             return dict(self.data)
 
+    def desired_state(self):
+        with self.guard:
+            return dict(self.queued_state)
+
     def submit(self, command):
         with self.guard:
             revision = self.revision + 1
             self.commands.put_nowait((revision, command))
             self.revision = revision
+            self.queued_state.update({key: value for key, value in command.items()
+                                      if key in self.queued_state})
             return revision
 
     def close(self):
@@ -475,7 +488,7 @@ class NativeSession:
                 paused = player.get("pause") == "yes"
                 seeking = player.get("seeking") == "yes"
                 eof = player.get("eof-reached") == "yes"
-                output_ready = frame_ready and width > 0 and height > 0 and player.get("current-vo") == "gpu" and player.get("video-out-params") is not None
+                output_ready = frame_ready and width > 0 and height > 0 and player.get("current-vo") == "gpu" and player.get("video-out-params") is not None and audio_output_ready(getattr(self.job, "source_description", None), player)
                 if output_ready and not self.input_hooks:
                     # Native renderer must not cover the existing trusted UI
                     # input surface without restoring click/key forwarding.

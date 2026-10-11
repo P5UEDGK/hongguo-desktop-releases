@@ -22,6 +22,27 @@ from desktop_prefetch import EpisodePrefetcher
 
 
 class NativeTests(unittest.TestCase):
+    def test_expected_audio_requires_decoded_track_and_wasapi_output(self):
+        from desktop_native import audio_output_ready
+        values = {}
+        player = SimpleNamespace(get=values.get)
+        self.assertTrue(audio_output_ready({"audio":[]}, player))
+        self.assertFalse(audio_output_ready({"audio":[{}]}, player))
+        values["audio-params"] = "decoded"
+        self.assertFalse(audio_output_ready({"audio":[{}]}, player))
+        values["current-ao"] = "wasapi"
+        self.assertTrue(audio_output_ready({"audio":[{}]}, player))
+
+    def test_queued_state_retains_accepted_pause_before_output_ack(self):
+        import queue
+        session=object.__new__(NativeSession)
+        session.guard=threading.RLock();session.commands=queue.Queue(maxsize=1)
+        session.revision=0;session.queued_state={"paused":False}
+        session.submit({"paused":True})
+        self.assertEqual(session.desired_state(),{"paused":True})
+        with self.assertRaises(queue.Full):session.submit({"paused":False})
+        self.assertEqual(session.desired_state(),{"paused":True})
+
     def test_sustained_output_or_decoder_frame_loss_is_detected_with_moving_clock(self):
         for decoder in (False,True):
             watch=FrameDropWatch();values=[]
