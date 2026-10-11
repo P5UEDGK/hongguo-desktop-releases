@@ -13,17 +13,20 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   const negotiationMethods = new Map();
   const negotiationPause = () => {if (!native) state.paused = true;};
   const negotiationPlay = () => {if (!native) state.paused = false;};
-  media.addEventListener?.('pause', negotiationPause);
-  media.addEventListener?.('play', negotiationPlay);
-  for (const [name, paused] of [['pause', true], ['play', false]]) {
-    const original = media[name];
-    if (typeof original !== 'function') continue;
-    negotiationMethods.set(name, Object.getOwnPropertyDescriptor(media, name));
-    Object.defineProperty(media, name, {configurable:true, value:function(...args) {
-      if (!native && !disposed) state.paused = paused;
-      return original.apply(this, args);
-    }});
+  function trackNegotiation() {
+    media.addEventListener?.('pause', negotiationPause);
+    media.addEventListener?.('play', negotiationPlay);
+    for (const [name, paused] of [['pause', true], ['play', false]]) {
+      const original = media[name];
+      if (typeof original !== 'function') continue;
+      negotiationMethods.set(name, Object.getOwnPropertyDescriptor(media, name));
+      Object.defineProperty(media, name, {configurable:true, value:function(...args) {
+        if (!native && !disposed) state.paused = paused;
+        return original.apply(this, args);
+      }});
+    }
   }
+  trackNegotiation();
   function finishNegotiation() {
     media.removeEventListener?.('pause', negotiationPause);
     media.removeEventListener?.('play', negotiationPlay);
@@ -55,9 +58,9 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     return false;
   }
   function restore() {
+    finishNegotiation();
     if (restored) return;
     restored = true;
-    finishNegotiation();
     clearTimeout(timer); clearTimeout(controlTimer);
     resize?.disconnect();
     document.removeEventListener('fullscreenchange', layout);
@@ -82,8 +85,10 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     fallbackStarted = true; generation++;
     const old = id; id = null;
     restore();
+    trackNegotiation();
     // Stop the native audio before the HLS element is allowed to autoplay.
     const stopped = committedHls || await release(old);
+    finishNegotiation();
     if (disposed) return;
     if (!stopped) {callbacks.onComplete?.(false);callbacks.onError?.();return;}
     let transfer = forceH264 ? null : preparation;

@@ -71,6 +71,17 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   controllers[0].callbacks.onReady();await flush();
   assert(loadingPauses>=2,'pause during source preparation survives autoplay');
   assert.equal(loading.playbackRate,3,'preparation keeps latest speed');loadingDispose();
+  controllers=[];timers.clear();let explicitPauses=0;
+  const explicitEvents={};
+  const explicit={currentTime:0,playbackRate:1,videoWidth:100,
+    pause(){explicitPauses++;explicitEvents.pause?.()},play(){explicitEvents.play?.();return Promise.resolve()},
+    addEventListener(n,f){explicitEvents[n]=f},removeEventListener(n){delete explicitEvents[n]}};
+  const explicitPlay=explicit.play;
+  const closeExplicit=c.desktopCodecHls(explicit,'http://127.0.0.1',0,{onReady(){},onError(){}},null);
+  explicit.pause();await explicit.play();const beforeReadyPauses=explicitPauses;
+  controllers[0].callbacks.onReady();await flush();
+  assert.equal(explicitPauses,beforeReadyPauses,'latest explicit play while preparing wins over old pause');
+  closeExplicit();assert.equal(explicit.play,explicitPlay);
   console.log('PASS: codec detection, negotiation, position/rate/pause, one retry, stale callbacks and missing video');
   // HLS audio copy restrictions must not prevent native HEVC selection.
   const nativeCalls=[],nativeTimers=new Map();let delegated=0,nativeTid=0;
@@ -191,6 +202,26 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     }
     end();await flush();delete nativeMedia.pause;delete nativeMedia.play;delete nativeMedia.paused;
   }
+  nativeCalls.length=0;nativeTimers.clear();let teardownSelected=false,teardownDeletes=0,teardownSeed;
+  nativeMedia.pause=function(){};nativeMedia.play=function(){return Promise.resolve()};
+  nc.desktopCodecHls=(...args)=>{teardownSeed=args[6];return ()=>{}};
+  nc.fetch=async(url,init={})=>{
+    url=String(url);let body;
+    if(url.endsWith('/capabilities'))body={nativePlayback:1};
+    else if(init.method==='DELETE'){
+      teardownDeletes++;nativeMedia.pause();
+      return teardownDeletes===1?{ok:true,status:202,json:async()=>({released:false})}:{ok:true,status:204};
+    } else if(url.endsWith('/mode')){teardownSelected=true;body={mode:'native'}}
+    else if(init.method==='POST')body={id:'e'.repeat(32)};
+    else body={state:'complete',source:desc,native:teardownSelected?{state:'failed'}:null};
+    return {ok:true,status:200,json:async()=>body};
+  };
+  const closeTeardown=nc.desktopNativePlayback(nativeMedia,'http://127.0.0.1',0,{onReady(){}},null);
+  await flush();
+  for(const [key,entry] of [...nativeTimers])if(entry.delay===100){nativeTimers.delete(key);await entry.fn()}
+  await flush();assert.equal(teardownDeletes,2);assert.equal(teardownSeed.paused,true,'pause during 202 teardown is inherited by HLS');
+  closeTeardown();delete nativeMedia.pause;delete nativeMedia.play;
+  console.log('PASS: explicit preparing play and pause during native teardown preserve latest intent');
   controllers=[];timers.clear();let sourceErrors=0;
   const sourceMedia={currentTime:0,playbackRate:1,videoWidth:1920,pause(){},addEventListener(){},removeEventListener(){}};
   const closeSource=c.desktopCodecHls(sourceMedia,'http://127.0.0.1',0,{onReady(){},onError(){sourceErrors++}},null);

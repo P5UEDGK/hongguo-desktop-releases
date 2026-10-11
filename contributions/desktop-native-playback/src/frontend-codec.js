@@ -60,6 +60,12 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
   let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false;
   const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
+  const savedPlay = Object.getOwnPropertyDescriptor(media, "play"), originalPlay = media.play;
+  const play = function(...args) {
+    if (!ready && !internalPause) {wantedPlaying = true; pauseUntil = 0;}
+    return originalPlay.apply(media, args);
+  };
+  if (typeof originalPlay === "function") Object.defineProperty(media, "play", {configurable:true, writable:true, value:play});
   const pause = function(...args) {
     if (!internalPause) wantedPlaying = false;
     return originalPause.apply(media, args);
@@ -162,6 +168,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     media.removeEventListener('playing', onPreparingPlaying);
     media.removeEventListener('ratechange', onRateChange);
     if (media.pause === pause) {if (savedPause) Object.defineProperty(media, 'pause', savedPause); else delete media.pause;}
+    if (media.play === play) {if (savedPlay) Object.defineProperty(media, 'play', savedPlay); else delete media.play;}
     media.removeEventListener('error', onError, true);
     media.removeEventListener('timeupdate', rememberTime);
   }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}}});

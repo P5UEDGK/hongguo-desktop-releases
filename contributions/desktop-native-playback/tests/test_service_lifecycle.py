@@ -119,7 +119,7 @@ class LifecycleTests(unittest.TestCase):
     def test_expiry_runs_without_new_requests_and_close_stops_reaper(self):
         releases = []
         native = SimpleNamespace(prepare=lambda job: job.directory.mkdir(), release=releases.append)
-        jobs = self.jobs(native=native, idle_seconds=.25)
+        jobs = self.jobs(native=native, idle_seconds=30)
         job = jobs.create('1234567890123456', 1, negotiate_codec=True)
         eventually(lambda: job.source_description is not None)
         with jobs.guard:
@@ -127,6 +127,9 @@ class LifecycleTests(unittest.TestCase):
             job.mode_selected.set()
         self.assertTrue(job.done.wait(1))
         (job.directory / 'partial').write_bytes(b'partial')
+        with jobs.guard:
+            jobs.idle_seconds = .25
+            job.touched = time.monotonic() - 1
         eventually(lambda: job.id not in jobs.jobs)
         self.assertIn(job.id, releases)
         self.assertFalse(job.directory.exists())
