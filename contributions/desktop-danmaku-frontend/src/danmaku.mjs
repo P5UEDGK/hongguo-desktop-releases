@@ -93,7 +93,7 @@ function DesktopDanmakuSettings({media, sessionKey}) {
         !rows.length&&b.jsx('p',{children:enabled?'暂未加载到弹幕':'开启弹幕后加载列表'})]})]})]});
 }
 
-function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous = [], viewportWidth = 1000) {
+function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous = [], viewportWidth = 1000, notBefore = 0) {
   const unique = new Map();
   for (const item of items) if (item.id && item.text && Number.isInteger(item.offset_ms)) unique.set(item.id, item);
   const kept = new Map(previous.filter(row => unique.has(row.id) && row.lane < settings.lanes).map(row=>[row.id,row]));
@@ -110,6 +110,9 @@ function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous
   for (const row of kept.values()) lanes[row.lane].push(row);
   return [...unique.values()].sort((a, b) => a.offset_ms - b.offset_ms || a.id.localeCompare(b.id)).flatMap(item => {
     if (kept.has(item.id)) return [kept.get(item.id)];
+    // Already-started new rows would first appear mid-flight. Keep them in the
+    // raw list, but admit only future arrivals to the DOM and native timelines.
+    if (item.offset_ms < notBefore) return [];
     const lane = lanes.findIndex(intervals => intervals.every(row => separated(item,row)));
     if (lane < 0) return [];
     lanes[lane].push(item);
@@ -137,7 +140,9 @@ function desktopStartDanmaku(media, endpoint, status) {
     if (event.detail.settings) settings = desktopDanmakuSettings(event.detail.settings);
     if (typeof event.detail.danmaku === 'boolean' && enabled !== event.detail.danmaku) {
       enabled = event.detail.danmaku; reset();
-    } else if (event.detail.settings) {rows = desktopDanmakuRows(raw, settings, [], viewport()); publish();}
+    } else if (event.detail.settings) {
+      rows = desktopDanmakuRows(raw, settings, rows, viewport(), Math.max(0, media.currentTime || 0) * 1000); publish();
+    }
     if (enabled) load();
   };
   const viewport = () => (media.clientWidth || 1000)/Math.max(.3,(media.clientHeight-84 || 562)/562);
@@ -156,9 +161,10 @@ function desktopStartDanmaku(media, endpoint, status) {
     try {
       const page = await desktopSocialRead(endpoint, 'danmaku', {offset_ms: offset, cursor: ownCursor}, request.signal);
       if (stopped || own !== generation) return;
-      raw = raw.filter(item => item.offset_ms >= time - 24000).concat(page.items).slice(-600);
+      const receivedAt = Math.max(0, media.currentTime || 0) * 1000;
+      raw = raw.filter(item => item.offset_ms >= receivedAt - 24000).concat(page.items).slice(-600);
       raw = [...new Map(raw.map(item=>[item.id,item])).values()];
-      rows = desktopDanmakuRows(raw, settings, rows, viewport()); publish();
+      rows = desktopDanmakuRows(raw, settings, rows, viewport(), receivedAt); publish();
       const advance = page.next_offset_ms > offset;
       if (advance) {next = page.next_offset_ms; cursor = page.cursor;}
       else if (page.has_more && page.cursor && page.cursor !== ownCursor) cursor = page.cursor;
