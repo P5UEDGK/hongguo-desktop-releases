@@ -306,9 +306,15 @@ class NativeHost:
 
 class OutputLossWatch:
     """Only a continuous, unbuffered output loss can trigger decoder retry."""
-    def __init__(self): self.since = None
+    def __init__(self):
+        self.since = None
+        self.ever_ready = False
+
+    def buffering(self, cache_paused, reading, ready):
+        return cache_paused or (not self.ever_ready and not ready and reading)
 
     def observe(self, now, ready, buffering):
+        if ready: self.ever_ready = True
         if ready or buffering:
             self.since = None
             return False
@@ -453,6 +459,7 @@ class NativeSession:
             retried = True
             frame_ready = False
             output_watch.since = None
+            output_watch.ever_ready = False
             position = requested_position if no_frame else player.number("time-pos", self.job.start_seconds)
             drop_watch.samples.clear();drop_watch.growth=None
             player.command("set", "hwdec", "no")
@@ -589,8 +596,8 @@ class NativeSession:
                     retry_software(no_frame=True)
                     continue
                 avsync = player.number("avsync")
-                buffering = progressive and (player.get("paused-for-cache") == "yes"
-                                             or not output_ready and self.job.source.reading.is_set())
+                buffering = progressive and output_watch.buffering(
+                    player.get("paused-for-cache") == "yes", self.job.source.reading.is_set(), output_ready)
                 buffer_start, buffer_end = 0.0, self.job.duration or 0.0
                 if progressive:
                     buffer_start = position

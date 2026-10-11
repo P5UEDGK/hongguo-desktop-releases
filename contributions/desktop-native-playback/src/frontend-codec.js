@@ -1,4 +1,13 @@
 // Inserted into the recovered bundle; original HLS controllers keep their lifecycle.
+function desktopAcceptWindowOrigin(status, start) {
+  const {windowOrigin:origin,duration,playableRange:range}=status;
+  if (!Number.isFinite(origin) || origin<0 || !Number.isFinite(start) || start<0 ||
+      (duration!=null && (!Number.isFinite(duration) || duration<0)) ||
+      (duration>0 && origin>=duration)) return false;
+  return origin>=start || (origin===0 && duration>0 && status.state==='complete' && status.playlistReady===true &&
+    Array.isArray(range) && range.length===2 && range[0]===0 && range[1]===duration);
+}
+
 async function desktopSupportsSource(source) {
   try {
     if (!source?.copyEligible || !source.video || !Array.isArray(source.audio) || source.audio.length > 1) return false;
@@ -11,7 +20,7 @@ async function desktopSupportsSource(source) {
       navigator.mediaCapabilities.decodingInfo(config),
       new Promise(resolve => setTimeout(() => resolve({supported: false}), 2000))
     ]);
-    return info?.supported === true;
+    return info?.supported === true && info?.smooth === true;
   } catch { return false; }
 }
 

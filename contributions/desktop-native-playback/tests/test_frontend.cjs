@@ -2,10 +2,10 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync(require('node:path').join(__dirname,'../src/frontend-codec.js'),'utf8');
 const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
 (async()=>{
-  let supported=true,calls=[],controllers=[],timers=new Map(),tid=0;
+  let supported=true,smooth=true,calls=[],controllers=[],timers=new Map(),tid=0;
   const c={URL,Headers,Number,Math,Date,queueMicrotask,
     setTimeout:(fn,delay)=>{timers.set(++tid,{fn,delay});return tid},clearTimeout:id=>timers.delete(id),
-    MediaSource:{isTypeSupported:()=>supported},navigator:{mediaCapabilities:{decodingInfo:async()=>({supported})}},
+    MediaSource:{isTypeSupported:()=>supported},navigator:{mediaCapabilities:{decodingInfo:async()=>({supported,smooth})}},
     fetch:async(url,init={})=>{
       calls.push([url,init]);
       if(url.endsWith('/mode'))return {ok:true,json:async()=>JSON.parse(init.body)};
@@ -27,6 +27,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   assert.equal(await c.desktopSupportsSource(desc),true);
   assert.equal(await c.desktopSupportsSource({...desc,copyEligible:false,audio:[{codec:'aac',profile:'HE-AACv2'}]}),false);
   supported=false;assert.equal(await c.desktopSupportsSource(desc),false);supported=true;
+  smooth=false;assert.equal(await c.desktopSupportsSource(desc),false,'non-smooth HEVC must use H264');smooth=true;
   const fetcher=c.desktopCreateCodecFetch();
   await fetcher('http://127.0.0.1:4567/desktop/hls',{method:'POST'});
   assert.equal(calls.at(-1)[1].headers.get('x-desktop-codec-negotiation'),'1');

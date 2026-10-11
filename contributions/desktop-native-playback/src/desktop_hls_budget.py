@@ -10,8 +10,8 @@ class EncodingBudgetExceeded(ValueError):
 
 
 class _BudgetFile:
-    def __init__(self, budget, file):
-        self.budget, self.file = budget, file
+    def __init__(self, budget, file, path):
+        self.budget, self.file, self.path = budget, file, path
         self.extent = 0
 
     def __getattr__(self, name):
@@ -21,14 +21,14 @@ class _BudgetFile:
         with self.budget.guard:
             self.budget.check()
             end = self.file.tell() + len(data)
-            charge = max(len(data), end - self.extent)
+            charge = max(0, end - self.extent)
             if charge > self.budget.remaining:
                 self.budget.exceeded = True
                 raise EncodingBudgetExceeded("Desktop output budget exceeded")
-            # Count rewrites too. This conservative ceiling includes bytes
-            # buffered by the muxer and its close/trailer path.
+            # Reserve actual extent growth before the unbuffered disk write.
             self.budget.remaining -= charge
             self.extent = max(self.extent,end)
+            self.budget.extents[self.path] = self.extent
             return self.file.write(data)
 
 
@@ -39,6 +39,7 @@ class OutputBudget:
             raise EncodingBudgetExceeded("Desktop output budget exceeded")
         self.directory = Path(directory).resolve(strict=True)
         self.remaining = max_output_bytes - len(b"desktop-hls-v1\n")
+        self.extents = {}
         self.cancelled = cancelled
         self.exceeded = False
         self.guard = threading.Lock()
@@ -59,7 +60,21 @@ class OutputBudget:
         if path.parent != self.directory or not re.fullmatch(r"(?:index\.m3u8|init\.mp4|seg[0-9]{6}\.m4s)(?:\.tmp)?", path.name):
             raise ValueError("Invalid desktop output path")
         if flags & 2:  # AVIO_FLAG_WRITE
-            return _BudgetFile(self, path.open("w+b", buffering=0))
+            with self.guard:
+                self.check()
+                # FFmpeg renames .tmp to the final path outside this callback.
+                # Reconcile just this logical pair; segment accounting stays O(1).
+                final = path.with_suffix('') if path.name.endswith('.tmp') else path
+                temporary = final.with_name(final.name+'.tmp')
+                for sibling in (final,temporary):
+                    actual = sibling.stat().st_size if sibling.exists() else 0
+                    self.remaining += self.extents.get(sibling,0) - actual
+                    self.extents[sibling] = actual
+                previous = self.extents[path]
+                file = path.open("w+b", buffering=0)
+                self.remaining += previous  # Opening truncated this path.
+                self.extents[path] = 0
+                return _BudgetFile(self, file, path)
         return path.open("rb", buffering=0)
 
 
