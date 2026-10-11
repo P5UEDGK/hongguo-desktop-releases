@@ -1,5 +1,5 @@
 {
-  "nativeHead": "4a6ce346323eecce415dd9866cdcf6f6034ac39f",
+  "nativeHead": "41f1fb64e7346c7b5569c17926564d83863496a4",
   "files": [
     {
       "path": "backend/desktop_stream.py",
@@ -13,8 +13,8 @@
     },
     {
       "path": "backend/desktop_native.py",
-      "baseSha256": "7a37aa2c073c2928555174a9bf5dc02116b538bf406f8ba1504eecff6f5eb167",
-      "patchedSha256": "4a4816697e074beead065b89ecad070e1ed1f27b798aa2be46e533b95a595148"
+      "baseSha256": "ec5ad0fa54f685d39bcf183575807a64b51c5d76fd453b2b94fca2ae1372620d",
+      "patchedSha256": "1df710b835cbd82da27493648a579ad6bc92545e006cd288b25891ea393ecda8"
     }
   ]
 }
