@@ -101,3 +101,10 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 claim 携带原准备 expiresAt；隐藏表面等待与交接沿用这一期限，不重新获得90秒。旧实现的原期限回归失败；修改后的完整前端补丁及原有交接测试通过。
 
 本机完整候选、安装回读与反馈观察期仍待完成。
+
+
+## 本轮三次反馈修复
+
+准备会话的control flush失败后立即停止交接，不再请求null会话状态或重复终止回调；隐藏等待和二次flush也使用相同终止门禁。旧回放失败，当前完整交接与前端补丁测试通过。基础原生同步未知时长/失败续播归零和过期窗口绑定回退，原准备expiry、目标帧、音频意图与ACK要求保持。
+
+本机候选与安装仍待完成。

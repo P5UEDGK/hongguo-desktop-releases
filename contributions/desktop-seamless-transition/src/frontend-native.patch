@@ -146,7 +146,7 @@
        if (disposed) return;
        if (capability.nativePlayback !== 1) {delegate(false); return;}
        const sourceUrl = new URL(endpoint.url);
-@@ -303,11 +335,11 @@
+@@ -303,9 +335,9 @@
          if (disposed) {await release(identifier); return null;}
          return identifier;
        }
@@ -154,15 +154,22 @@
 +      id = standby?.id || await createSession();
        if (disposed) return;
 -      const deadline = Date.now() + 90000;
++      const deadline = Math.min(Date.now() + 90000, standby?.expiresAt ?? Infinity);
+       async function resetSavedPosition() {
+         const invalid = id; id = null;
+         if (!await release(invalid)) throw Error('Invalid resume session release failed');
+@@ -314,8 +346,8 @@
+         sourceUrl.searchParams.delete('start_seconds');
+         id = await createSession();
+       }
 -      let metadata;
 -      while (!disposed && Date.now() < deadline) {
-+      const deadline = Math.min(Date.now() + 90000, standby?.expiresAt ?? Infinity);
 +      let metadata = preparedNative ? standby.source : null;
 +      while (!metadata && !disposed && Date.now() < deadline) {
          const result = await request('/' + id + '/status');
-         if (result.state === 'failed') throw Error('Source preparation failed');
-         if (result.source) {
-@@ -331,7 +363,7 @@
+         if (result.state === 'failed' && result.failureCode === 'start-position' && requestedStart > 0) {
+           await resetSavedPosition();
+@@ -339,7 +371,7 @@
        // Source download/transport failure says nothing about decoder support.
        if (!metadata) {failPreparation(); return;}
        if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
@@ -171,7 +178,7 @@
          const context = await desktopNativeWindowContext();
          if (disposed) return;
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
-@@ -342,29 +374,96 @@
+@@ -351,29 +383,98 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegateCommittedHls(latest); return;
        }
@@ -212,6 +219,7 @@
 +          if (Object.keys(pending).length) {
 +            pending.paused = true;
 +            await flush(Math.min(deadline, Date.now() + 2000));
++            if (disposed || fallbackStarted || !id || !native) return;
 +          }
 +          await new Promise(resolve => setTimeout(resolve, 100));
 +        }
@@ -236,12 +244,13 @@
 +        clearTimeout(controlTimer); controlTimer = null;
 +        const untilVisible = Math.min(deadline, Date.now() + 2000);
 +        await flush(untilVisible);
++        if (disposed || fallbackStarted || !id || !native) return;
 +        let confirmed = false;
 +        while (!disposed && Date.now() < untilVisible) {
 +          if (!controlBusy && Object.keys(pending).length) {
 +            clearTimeout(controlTimer); controlTimer = null;
 +            await flush(untilVisible);
-+            if (disposed) break;
++            if (disposed || fallbackStarted || !id || !native) return;
 +          }
 +          const shown = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
 +          if (shown?.visible && shown.outputReady && shown.revision >= revision && !controlBusy && !Object.keys(pending).length) {
@@ -253,7 +262,7 @@
 +                clearTimeout(controlTimer); controlTimer = null;
 +                await flush(untilVisible);
 +              }
-+              if (disposed || fallbackStarted) break;
++              if (disposed || fallbackStarted || !id || !native) return;
 +              const latest = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
 +              if (latest?.visible && latest.outputReady && latest.revision >= revision && !controlBusy && !Object.keys(pending).length) {
 +                confirmed = true; preparation?.finishRetained?.(); break;
@@ -264,7 +273,7 @@
 +          }
 +          await new Promise(resolve => setTimeout(resolve, 20));
 +        }
-+        if (!disposed && !confirmed) throw Error('Standby activation timed out');
++        if (!disposed && !fallbackStarted && !confirmed) throw Error('Standby activation timed out');
 +      }
 +      if (!disposed) poll(generation);
      } catch {if (!disposed) failPreparation();}

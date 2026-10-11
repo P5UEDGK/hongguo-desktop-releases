@@ -3,7 +3,7 @@ const source=fs.readFileSync(process.argv[2],'utf8');
 const tick=async()=>{for(let n=0;n<30;n++)await new Promise(setImmediate)};
 async function scenario(fault){
   let now=0,errors=0,released=0,finished=0,cancelled=0,selected=true,activated=false,modeAck=false,registrationPolls=0,pauseInjected=false;
-  const timers=new Set(),scheduled=[],commands=[];
+  const timers=new Set(),scheduled=[],commands=[],requests=[];
   const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.4,muted:false,paused:false,pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();},
     closest:()=>({classList:{add(){},remove(){}},querySelector:()=>({getBoundingClientRect:()=>({top:536,height:64})})}),
     getBoundingClientRect:()=>({left:0,top:0,width:800,height:600})});
@@ -30,10 +30,11 @@ async function scenario(fault){
     },
     fetch:async(url,init={})=>{
       let body={};url=String(url);
+      requests.push(url);
       if(init.method==='DELETE'){released++;return {ok:true,status:204}}
       if(url.endsWith('/capabilities')){assert.notEqual(fault,'success','prepared session must not renegotiate capabilities');body={nativePlayback:fault==='cold-hls-error'?0:1};}
       else if(url.endsWith('/mode')){assert.notEqual(fault,'success','prepared mode is already committed');selected=true;modeAck=true;body={mode:'native'}}
-      else if(url.endsWith('/control')){if(fault==='cold-registration')assert(registrationPolls>=2,'no controls before native registration');commands.push(JSON.parse(init.body));if(fault==='hung-control')return new Promise(()=>{});if(fault==='pause-during-flush'&&!pauseInjected){pauseInjected=true;media.pause();}body={revision:10+commands.length};}
+      else if(url.endsWith('/control')){if(fault==='cold-registration')assert(registrationPolls>=2,'no controls before native registration');commands.push(JSON.parse(init.body));if(fault==='rejected-control')return {ok:false,status:429};if(fault==='hung-control')return new Promise(()=>{});if(fault==='pause-during-flush'&&!pauseInjected){pauseInjected=true;media.pause();}body={revision:10+commands.length};}
       else if(url.endsWith('/activate')){if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}if(fault==='pause-during-activate'){pauseInjected=true;media.pause();}else if(fault.startsWith('pause-during-'))assert.equal(commands.at(-1).paused,true,'queued pause must be applied before activation');activated=true;body={activated:true}}
       else if(url.endsWith('/status')){
         if(fault==='pause-during-status'&&commands.length&&!pauseInjected){pauseInjected=true;media.pause();}
@@ -69,8 +70,9 @@ async function scenario(fault){
   else {assert.equal(errors,1,fault+' must report bounded activation failure');
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
   if(fault==='original-expiry')assert(now<=1250,'claim cannot renew the original preparation deadline');
+  if(fault==='rejected-control'){await tick();assert(!requests.some(url=>url.includes('/null/')),'terminal flush failure must not poll a null session');assert.equal(errors,1);assert.equal(activated,false);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['original-expiry','hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
+(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['rejected-control','original-expiry','hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exitCode=1});
