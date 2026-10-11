@@ -48,7 +48,16 @@ function desktopSocialStore(endpoint) {
       if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).cancelled = true; entries.get(oldest).abort.abort(); entries.delete(oldest);}
       entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set(), pages:new Map()}; entries.set(key, entry);
     }
-    const requested = () => pageOnly ? entry.pages.get(cursor) : entry.value;
+    const requested = () => {
+      if (pageOnly === 'replyThread') {
+        const firstIds = new Set(entry.pages.get('')?.items.map(row => row.id) || []);
+        const laterIds = new Set();
+        for (const [key, page] of entry.pages) if (key)
+          for (const row of page.items) if (!firstIds.has(row.id)) laterIds.add(row.id);
+        return {value:entry.value, page:entry.pages.get(cursor), laterIds};
+      }
+      return pageOnly ? entry.pages.get(cursor) : entry.value;
+    };
     const pendingResult = () => pageOnly ? entry.pending.then(requested) : entry.pending;
     if (entry.pending) {
       if (entry.pendingCursor === cursor) return pendingResult();
@@ -79,7 +88,7 @@ function desktopSocialStore(endpoint) {
     }).finally(() => {clearTimeout(timer); entry.pending = null;});
     return pendingResult();
   }
-  return {read, readPage:(resource,params,deadline) => read(resource,params,deadline,true), clear, dispose:() => clear()};
+  return {read, readReplyThread:(params,deadline) => read('replies',params,deadline,'replyThread'), readPage:(resource,params,deadline) => read(resource,params,deadline,true), clear, dispose:() => clear()};
 }
 
 function desktopSocialPreference(name, fallback) {
@@ -261,12 +270,16 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     request.busy = true; request.cursor = cursor; failedCursor.current = cursor; setBusy(true); setError('');
     try {
       const params = {comment_id:item.id, cursor};
-      const result = await (store ? (store.readPage || store.read).call(store,'replies',params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
+      const cached = store?.readReplyThread ? await store.readReplyThread(params) : null;
+      const result = cached ? cached.value : await (store ? (store.readPage || store.read).call(store,'replies',params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
       if (own.current === request && !request.abort.signal.aborted) setPage(previous => {
         detachedCursor.current = null;
-        const freshIds = new Set(result.items.map(row => row.id));
-        if (cursor) for (const row of result.items) laterIds.current.add(row.id);
-        const later = previous?.items.filter(row => laterIds.current.has(row.id) && !freshIds.has(row.id)) || [];
+        const freshIds = new Set((cached?.page || result).items.map(row => row.id));
+        if (cursor) for (const id of freshIds) laterIds.current.add(id);
+        else for (const id of freshIds) laterIds.current.delete(id);
+        if (cached) for (const id of cached.laterIds) laterIds.current.add(id);
+        const resultIds = new Set(result.items.map(row => row.id));
+        const later = previous?.items.filter(row => laterIds.current.has(row.id) && !resultIds.has(row.id)) || [];
         const keepLater = !cursor && later.length > 0;
         return {...result, cursor: keepLater ? previous.cursor : result.cursor,
           has_more: keepLater ? previous.has_more : result.has_more && result.cursor !== cursor,
