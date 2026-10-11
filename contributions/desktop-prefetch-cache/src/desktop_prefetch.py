@@ -26,6 +26,8 @@ class EpisodePrefetcher:
         self.reporter = None
         self.generation = 0
         self.foreground = {}
+        self.foreground_directories = {}
+        self.cache_results = {}
         self.busy = None
         self.pending = []
         self.active = None
@@ -60,6 +62,8 @@ class EpisodePrefetcher:
         with self.condition:
             self.generation += 1
             self.foreground[job.id] = self.generation
+            if getattr(job, "directory", None) is not None:
+                self.foreground_directories[job.id] = Path(job.directory)
             self.pending = []
             self.download_pending = []
             self.sources = {}
@@ -83,6 +87,8 @@ class EpisodePrefetcher:
                     raise EncodingCancelled()
                 if self.busy is None:
                     self.busy = job.id
+                    if getattr(job, "directory", None) is not None:
+                        self.foreground_directories[job.id] = Path(job.directory)
                     return
                 self.condition.wait(0.1)
 
@@ -156,6 +162,8 @@ class EpisodePrefetcher:
     def finish(self, job, series_id, episode, source):
         with self.condition:
             expected = self.foreground.get(job.id)
+            cached_result = self.cache_results.pop(job.id, None)
+            self.foreground_directories.pop(job.id, None)
         mode = getattr(job, "video_mode", "h264")
         # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
         def cancelled():
@@ -164,7 +172,7 @@ class EpisodePrefetcher:
         current_complete = False
         try:
             if expected is not None and source is not None and mode != "native" and not job.failed and not cancelled():
-                current_complete = self.cache.contains(source, mode, cancelled=cancelled)
+                current_complete = cached_result if cached_result is not None else self.cache.contains(source, mode, cancelled=cancelled)
         except Exception:
             pass  # Completion bookkeeping still releases the old foreground slot.
         with self.condition:
@@ -277,7 +285,12 @@ class EpisodePrefetcher:
 
     def encode(self, *args, **kwargs):
         cancelled = kwargs.pop("cancelled", lambda: False)
-        return self.cache.encode(*args, cancelled=lambda: self.closed or cancelled(), **kwargs)
+        result = self.cache.encode(*args, cancelled=lambda: self.closed or cancelled(), **kwargs)
+        directory = Path(args[1] if len(args)>1 else kwargs['directory'])
+        with self.condition:
+            for identifier, target in self.foreground_directories.items():
+                if target == directory: self.cache_results[identifier] = result
+        return result
 
     def snapshot(self):
         with self.condition:
@@ -309,7 +322,7 @@ class EpisodePrefetcher:
             return
         with self.condition:
             self.report_revision += 1
-            if self.reporter is None:
+            if self.reporter is None or not self.reporter.is_alive():
                 self.reporter = threading.Thread(target=self._write_reports, name="desktop-prefetch-report", daemon=True)
                 try:
                     self.reporter.start()
@@ -339,6 +352,7 @@ class EpisodePrefetcher:
             handled = revision
             with self.condition:
                 if self.closed and handled == self.report_revision:
+                    self.reporter = None
                     return
 
     def wait_idle(self, timeout=30):
@@ -359,5 +373,6 @@ class EpisodePrefetcher:
             self.worker.join(timeout=2)
         if self.downloader and self.downloader is not threading.current_thread():
             self.downloader.join(timeout=2)
-        if self.reporter and self.reporter is not threading.current_thread():
-            self.reporter.join(timeout=2)
+        reporter = self.reporter
+        if reporter and reporter is not threading.current_thread():
+            reporter.join(timeout=2)

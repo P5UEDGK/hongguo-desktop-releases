@@ -400,27 +400,27 @@ class PlayableEpisodeCache:
 
     def encode(self, source, directory, on_ready=lambda: None, *, cancelled=lambda: False,
                start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264"):
-        if not start_seconds:
-            restored = False
-            try:
-                restored = self.restore(source, directory, cancelled, video_mode=video_mode)
-            except EncodingCancelled:
-                raise
-            except Exception:
-                pass
-            if restored:
-                on_ready()
-                return
+        restored = False
+        try:
+            restored = self.restore(source, directory, cancelled, video_mode=video_mode)
+        except EncodingCancelled:
+            raise
+        except Exception:
+            pass
+        if restored:
+            if start_seconds: on_window(0, None)  # Full artifact; host keeps its source duration.
+            on_ready()
+            return True
         if start_seconds:
             extra = {"video_mode": "copy"} if video_mode == "copy" else {}
             self.encoder(source, directory, on_ready, cancelled=cancelled,
                          start_seconds=start_seconds, on_window=on_window, **extra)
-        else:
-            extra = {"video_mode": "copy"} if video_mode == "copy" else {}
-            self.encoder(source, directory, on_ready, cancelled=cancelled, **extra)
-            try:
-                self.store(source, directory, cancelled, video_mode=video_mode)
-            except EncodingCancelled:
-                raise
-            except Exception:
-                pass
+            return False
+        extra = {"video_mode": "copy"} if video_mode == "copy" else {}
+        self.encoder(source, directory, on_ready, cancelled=cancelled, **extra)
+        try:
+            return self.store(source, directory, cancelled, video_mode=video_mode) is not None
+        except EncodingCancelled:
+            raise
+        except Exception:
+            return False

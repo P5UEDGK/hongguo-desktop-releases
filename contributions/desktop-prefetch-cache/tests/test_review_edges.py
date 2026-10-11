@@ -11,6 +11,33 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_resumed_full_cache_restores_without_encoder(self):
+        cache=self.cache();cache.store(self.source,self.output);windows=[];ready=[]
+        cache.encoder=lambda *a,**kw:self.fail('cache hit must not encode a seek window')
+        self.assertTrue(cache.encode(self.source,self.root/'resumed',lambda:ready.append(True),start_seconds=1,on_window=lambda *v:windows.append(v)))
+        self.assertEqual(windows,[(0,None)]);self.assertEqual(ready,[True])
+        self.assertEqual((self.root/'resumed/index.m3u8').read_bytes(),(self.output/'index.m3u8').read_bytes())
+
+    def test_finish_reuses_foreground_cache_validation(self):
+        value=EpisodePrefetcher(lambda _:self.source,lambda _:({},[{'index':1,'vid':'10000001'}]),
+            self.root/'reuse-cache',encoder=encoder,ahead=0,profile_files=PROFILE_FILES)
+        self.addCleanup(value.close);job=Job('owned',self.root/'foreground');value.begin(job,'series',1)
+        source=value.load_source('series',1);value.before_work(job);value.encode(source,job.directory)
+        with patch.object(value.cache,'contains',side_effect=AssertionError('duplicate full source/artifact hash')) as contains:
+            value.finish(job,'series',1,source);contains.assert_not_called()
+        self.assertTrue(value.current_complete);self.assertIsNone(value.busy);self.assertEqual(value.foreground,{})
+
+    def test_closed_report_restarts_a_terminated_writer(self):
+        value=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'report-cache',encoder=encoder,profile_files=PROFILE_FILES)
+        value.status_path=self.root/'writer-status.json';dead=threading.Thread(target=lambda:None);dead.start();dead.join();value.reporter=dead
+        value.close();until=time.monotonic()+2
+        while time.monotonic()<until:
+            try:
+                if json.loads(value.status_path.read_text())['state']=='closed':break
+            except (OSError,ValueError):pass
+            time.sleep(.01)
+        self.assertEqual(json.loads(value.status_path.read_text())['state'],'closed')
+
     def test_optional_source_status_never_blocks_foreground_load(self):
         for reporting in (False,True):
             with self.subTest(reporting=reporting):
