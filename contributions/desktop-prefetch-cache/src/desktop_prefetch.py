@@ -104,6 +104,10 @@ class EpisodePrefetcher:
         vid = next((vid for index, vid in items if index == episode), None)
         if vid is None:
             raise ValueError("Episode media identity unavailable")
+        with self.condition:
+            if (generation != self.generation or self.closed
+                    or self.current != {"seriesId": str(series_id), "episode": episode}):
+                raise EncodingCancelled()
         source = self.source_loader(vid)
         source_complete = self._source_complete(source)
         with self.condition:

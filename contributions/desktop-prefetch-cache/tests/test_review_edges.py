@@ -11,6 +11,32 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_stale_metadata_never_starts_media_loading(self):
+        for closed in (False,True):
+            with self.subTest(closed=closed):
+                loaded=[];value=None
+                def metadata(_):
+                    if closed:value.close()
+                    else:value.begin(Job(uuid.uuid4().hex,self.root/uuid.uuid4().hex),'12345678',2)
+                    return {},[{'index':1,'vid':'10000001'}]
+                value=EpisodePrefetcher(loaded.append,metadata,self.root/'cache',encoder=encoder,profile_files=PROFILE_FILES)
+                value.begin(Job(uuid.uuid4().hex,self.root/uuid.uuid4().hex),'12345678',1)
+                try:
+                    with self.assertRaises(EncodingCancelled):value.load_source('12345678',1)
+                    self.assertEqual(loaded,[])
+                finally:value.close()
+
+    def test_new_stage_marker_failure_leaves_no_partial_directory(self):
+        cache=self.cache();original=Path.write_text
+        def no_marker(path,data,*args,**kwargs):
+            if path.name=='owner.marker':
+                original(path,'partial',encoding='ascii')
+                raise OSError('fixture disk full')
+            return original(path,data,*args,**kwargs)
+        with patch.object(Path,'write_text',no_marker):
+            with self.assertRaises(OSError):cache.store(self.source,self.output)
+        self.assertEqual(list(cache.root.glob('stage-*')),[])
+
     def test_numbered_fragment_gap_cannot_enter_complete_cache(self):
         cache=self.cache();playlist=self.output/'index.m3u8'
         (self.output/'seg000002.m4s').write_bytes(b'later')

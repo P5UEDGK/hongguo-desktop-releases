@@ -338,7 +338,16 @@ class PlayableEpisodeCache:
             stage = directory if adopt else self.root / ("stage-" + uuid.uuid4().hex)
             if not adopt:
                 stage.mkdir()
-                (stage / "owner.marker").write_text(OWNER, encoding="ascii")
+                try:
+                    (stage / "owner.marker").write_text(OWNER, encoding="ascii")
+                except OSError:
+                    # Only this fresh directory and its partial marker are ours.
+                    # Never recurse into unexpected content without ownership proof.
+                    owner = stage / "owner.marker"
+                    if plain(owner) and owner.is_file():
+                        owner.unlink()
+                    stage.rmdir()
+                    raise
             try:
                 files = {}
                 for name in names:
