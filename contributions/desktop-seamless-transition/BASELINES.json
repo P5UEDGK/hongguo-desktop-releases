@@ -4,7 +4,7 @@
     {
       "path": "frontend/frontend-native.js",
       "baseSha256": "c034f11882b2eed4a30cf17cbb7c90c85a3366201002e21c6a92add3a80c3a91",
-      "patchedSha256": "d4ab437f77bbd6ab1095d4e9fb4365a413acedf61ddde47c6221b661cd07e8f2"
+      "patchedSha256": "e8d4cb04d888f5a8a94859fb37b85e07f85fc395efb05795df21a3805d6e43bc"
     },
     {
       "path": "frontend/frontend-codec.js",

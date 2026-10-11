@@ -169,6 +169,7 @@ function desktopPrepareNext(url, currentMedia) {
   }
   const preparation = {
     get failed() {return failed;},
+    get settings() {return {rate:currentMedia.playbackRate || 1, volume:currentMedia.volume, muted:currentMedia.muted};},
     get resumePosition() {return resumePosition;},
     get resumeFailed() {return resumeFailed;},
     dispose() {if (!claimed) cleanup();},
@@ -191,8 +192,7 @@ function desktopPrepareNext(url, currentMedia) {
         try {await seekToResume(result,position);} catch {resumeFailed = true;cleanup(true);return null;}
         if (disposed) return null;
       }
-      return {...result, settings:{rate:currentMedia.playbackRate || 1,
-        volume:currentMedia.volume,muted:currentMedia.muted}};
+      return {...result, settings:preparation.settings};
     }
   };
   expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup();}}, 90000);

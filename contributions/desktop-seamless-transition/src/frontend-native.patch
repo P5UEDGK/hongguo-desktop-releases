@@ -134,7 +134,7 @@
          if (seekPending === null || applied) state.time = value.time;
          if (!ready) {
            ready = true;
-@@ -249,26 +257,40 @@
+@@ -249,26 +257,44 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -147,7 +147,11 @@
 -      const capability = await request('/capabilities');
 +      const standby = await preparation?.claimRecord?.(url, initialPosition);
 +      if (disposed) {standby?.dispose(); return;}
-+      if (!standby && preparation?.resumeFailed) {delegate(false);return;}
++      if (!standby && preparation?.resumeFailed) {
++        const settings = preparation.settings;
++        if (settings) {media.playbackRate = settings.rate; media.volume = settings.volume; media.muted = settings.muted;}
++        delegate(false); return;
++      }
 +      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
 +      if (standby?.mode !== 'native' && standby?.adopt) {
 +        delegated = standby.adopt(media, callbacks, () => {
@@ -182,7 +186,7 @@
          const result = await request('/' + id + '/status');
          if (result.state === 'failed') throw Error('Source preparation failed');
          if (result.source) {
-@@ -281,7 +303,7 @@
+@@ -281,7 +307,7 @@
        // Source download/transport failure says nothing about decoder support.
        if (!metadata) {failPreparation(); return;}
        if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
@@ -191,7 +195,7 @@
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
            body: JSON.stringify({mode: 'native'})});
        } catch (error) {
-@@ -290,15 +312,63 @@
+@@ -290,15 +316,63 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegate(false, true); return;
        }

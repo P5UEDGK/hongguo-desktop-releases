@@ -7,7 +7,8 @@ async function scenario(fault){
   const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.4,muted:false,paused:false,pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();},
     closest:()=>({classList:{add(){},remove(){}},querySelector:()=>({getBoundingClientRect:()=>({top:536,height:64})})}),
     getBoundingClientRect:()=>({left:0,top:0,width:800,height:600})});
-  const prep={resumeFailed:fault==='resume-seek-fallback',resumePosition:30,claimRecord:async()=>(fault==='pause-during-claim'&&(pauseInjected=true,media.pause()),fault==='cold-registration'||fault==='resume-seek-fallback'?null:fault==='copy-fallback'?{mode:'copy',settings:{rate:3,volume:.2,muted:true},
+  if(fault==='resume-seek-fallback')Object.assign(media,{playbackRate:1,volume:1,muted:false});
+  const prep={settings:{rate:3,volume:.2,muted:true},resumeFailed:fault==='resume-seek-fallback',resumePosition:30,claimRecord:async()=>(fault==='pause-during-claim'&&(pauseInjected=true,media.pause()),fault==='cold-registration'||fault==='resume-seek-fallback'?null:fault==='copy-fallback'?{mode:'copy',settings:{rate:3,volume:.2,muted:true},
       adopt(target,handlers,onFailure){
         assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);
         queueMicrotask(onFailure);return ()=>{};
@@ -22,7 +23,7 @@ async function scenario(fault){
     desktopCodecHls(target,url,position,handlers,preparation){
       assert(['copy-fallback','resume-seek-fallback'].includes(fault));
       if(fault==='copy-fallback'){assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);}
-      else {assert.equal(position,30);assert.equal(preparation,prep);}
+      else {assert.equal(position,30);assert.equal(preparation,prep);assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);}
       activated=true;
       return ()=>{};
     },
