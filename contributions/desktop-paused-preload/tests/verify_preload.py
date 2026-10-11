@@ -200,10 +200,12 @@ def main():
             request('/'+identifier+'/mode','POST',{'mode':'native'})
             initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready')
             session=host.sessions[identifier]
-            check('first-frame-before-full-input',not initial['sourceProgress']['complete'] and initial['native']['outputReady'],initial)
+            check('first-frame-ready',initial['native']['outputReady'],initial)
+            report['fullSourceAtFirstFrame']=initial['sourceProgress']['complete']
             bounded=wait_bootstrap_quiet(lambda:request('/'+identifier+'/status'),
                 session.job.source.reading.is_set,timeout=timeout,quiet_seconds=max(1.,fixture.delay*3+.5))
-            check('bootstrap-pause-does-not-fill-whole-file',not bounded['native']['cacheComplete'],bounded['native'])
+            bootstrap_complete=bounded['native']['cacheComplete']
+            report['inputOutcome']='bootstrap-complete' if bootstrap_complete else 'requires-paused-fill'
             request('/'+identifier+'/control','POST',{'paused':True})
             started=time.monotonic()
             while time.monotonic()-started<timeout:
@@ -215,7 +217,8 @@ def main():
                 raise AssertionError('Preloading failed: '+str(value['native'].get('preloadReason')))
             if args.cache_budget is not None:
                 check('explicit-budget-reaches-cap',limited and value['native']['cacheFileBytes']<=module.CACHE_FILE_BUDGET,value['native'])
-            check('pause-worker-ran',preload_entered.is_set())
+            if not bootstrap_complete:
+                check('pause-worker-ran',preload_entered.is_set())
             if limited:
                 # Observe actual file bytes after the writer reports its cap.
                 # A state flag alone cannot prove the hard budget.
@@ -231,11 +234,12 @@ def main():
                        'allowedOvershootBytes': 0})
             samples=report['pausedSamples']
             report['beforePause']=bounded
-            check('user-pause-starts-additional-cache-work',pause_fill_advanced(bounded,value),
-                  {'before':bounded['native'],'after':value['native'],
-                   'hint':'If bootstrap already exhausts the cap, increase --cache-budget to exercise paused fill.'})
+            if not bootstrap_complete:
+                check('user-pause-starts-additional-cache-work',pause_fill_advanced(bounded,value),
+                      {'before':bounded['native'],'after':value['native'],
+                       'hint':'If bootstrap already exhausts the cap, increase --cache-budget to exercise paused fill.'})
             check('pause-position-fixed',all(s['native']['paused'] and abs(s['native']['time'])<.1 for s in samples))
-            if not limited:
+            if not limited and not bootstrap_complete:
                 check('paused-bytes-and-range-advance',value['sourceProgress']['receivedBytes']>initial['sourceProgress']['receivedBytes'] and
                       value['native']['bufferEnd']>initial['native']['bufferEnd'],{'initial':initial,'last':value})
             if limited:

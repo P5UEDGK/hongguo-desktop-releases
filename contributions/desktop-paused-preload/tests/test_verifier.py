@@ -14,6 +14,22 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_actual_scenario_accepts_bootstrap_eof_without_claiming_pause_fill(self):
+        tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
+        body=next(n for n in scenario.body if isinstance(n,ast.Try)).body
+        start=next(i for i,n in enumerate(body) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='initial' for t in n.targets))
+        stop=next(i for i,n in enumerate(body) if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='rate')
+        value={'duration':5,'sourceProgress':{'complete':True,'receivedBytes':100},'native':{'outputReady':True,'cacheComplete':True,'cacheFileBytes':100,'bufferEnd':5,'preloadLimited':False,'paused':True,'time':0}}
+        checks=[];report={'pausedSamples':[]}
+        def check(name,condition,evidence=None):checks.append((name,condition));self.assertTrue(condition,name)
+        source=SimpleNamespace(reading=threading.Event());host=SimpleNamespace(sessions={'owned':SimpleNamespace(job=SimpleNamespace(source=source))})
+        scope=dict(vars(probe),identifier='owned',wait=lambda *a,**k:value,request=lambda *a,**k:value,host=host,
+            wait_bootstrap_quiet=lambda *a,**k:value,timeout=1,fixture=SimpleNamespace(delay=0),args=SimpleNamespace(cache_budget=None),
+            report=report,preload_entered=threading.Event(),check=check,encodes=[],module=SimpleNamespace(CACHE_FILE_BUDGET=1000),ProgressiveSource=SimpleNamespace(block_size=64))
+        exec(compile(ast.fix_missing_locations(ast.Module(body=body[start:stop],type_ignores=[])),'<actual-bootstrap-eof-scenario>','exec'),scope)
+        self.assertEqual(report['inputOutcome'],'bootstrap-complete')
+        self.assertNotIn('pause-worker-ran',[name for name,_ in checks]);self.assertNotIn('user-pause-starts-additional-cache-work',[name for name,_ in checks])
+
     def test_budget_validation_uses_actual_served_fixture_after_remux(self):
         tree=ast.parse(inspect.getsource(probe));main=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='main')
         selected=[]
