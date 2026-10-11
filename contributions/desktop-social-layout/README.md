@@ -12,9 +12,9 @@ bootstrap.mjs 导出 createSocialUI({React,jsxRuntime,resolveEndpoint})，返回
 
 ```js
 const {Drawer,Controls,Selection}=createSocialUI({React,jsxRuntime,resolveEndpoint:trustedEndpoint});
-// 原 header: <Selection media={mediaRef}/>
+// 原 header: <Selection media={mediaRef} sessionKey={session.streamUrl}/>
 // 原 .player-toolbar: <Controls media={mediaRef} sessionKey={session.streamUrl}/>
-// 原 aside（保留选集正文）: <Drawer session={session} media={mediaRef}/>
+// 原 aside: 先渲染 <Drawer session={session} media={mediaRef}/>，再渲染原选集正文
 ```
 
 宿主保留 .app-shell、.desktop-player、header、.desktop-player-layout、.player-stage、.player-toolbar、aside、.window-controls、.window-pin、.player-mini-toggle 类。外框尺寸由现有窗口 owner 固定，layout 使用剩余空间的 grid、min-height:0/min-width:0；不得按评论内容重算窗口大小。抽屉开时右列占空间，视频缩窄；关时恢复。CSS只装一次。
@@ -42,6 +42,7 @@ npm --prefix contributions/desktop-social-layout ci
 node contributions/desktop-social-layout/tests/run.mjs --channel chrome
 # 按依赖顺序应用原生补丁后：
 node contributions/desktop-social-layout/tests/test_native_layout.cjs contributions/desktop-native-playback/src/frontend-native.js
+python contributions/desktop-social-layout/tests/test_native_control.py contributions/desktop-native-playback/src/desktop_native.py
 ```
 
 公开测试为人工构造输入，不连接上游。新导出模块已经独立验证；跨包 Chrome 用例由布局包统一维护。此前本机安装还完成53项窗口功能与21项原生像素检查，快/中/慢档（8/14/24秒）实测为161.25/92.5/53.75物理像素/视频秒；这些属于当时本机接线证据，不是本公开包在所有设备或上游发布后的保证。
@@ -51,3 +52,5 @@ node contributions/desktop-social-layout/tests/test_native_layout.cjs contributi
 ## 首轮审查修复
 
 迷你模式恢复单列视频、隐藏已经展开的 aside；ResizeObserver 也观察迷你按钮本身。新增无需窗口 resize 的按钮变宽测试及迷你模式回归。本轮补充抽屉关闭、无标题布局、播放按钮对齐和单击暂停/继续的组合回归；原生桥接测试覆盖实际控制栏高度、DPI、resize、暂停/继续命令和监听清理。
+
+本轮74项Chrome组合检查通过，覆盖长选集滚动、导航先于正文的键盘顺序、选集开关可访问状态、窄剧场、迷你置顶避让及设置长文换行。Selection按sessionKey重新连接媒体，动态测量控制栏并给DOM弹幕提供可用高度；监听面板移除与控制栏显隐，隐藏时回收底部空间。原生事件补丁共用#204的desktopNativeSurfaceRect，不另写几何算法。原生occlusion已由dict(body)保留，新增执行当前校验函数的回归证明，不增加重复赋值。

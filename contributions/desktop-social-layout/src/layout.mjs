@@ -1,7 +1,7 @@
 export function installSocialStyles() {
   if (document.getElementById('desktop-social-style')) return;
     const style = document.createElement('style'); style.id = 'desktop-social-style';
-    style.textContent = `.desktop-social{border-top:1px solid #ffffff20;padding:12px 0;color:inherit;font-size:13px;min-height:0}.desktop-social-toolbar,.desktop-social-tabs{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.desktop-social-toolbar small{color:#aeb5bf}.desktop-social button{padding:5px 9px;border:1px solid #ffffff25;border-radius:6px;background:#ffffff09;color:inherit;cursor:pointer}.desktop-social button:disabled{opacity:.5;cursor:default}.desktop-social-tabs{margin:10px 0}.desktop-social-tabs button[aria-selected=true]{background:#f45a4440;color:#ffab9d}.desktop-social-list{max-height:250px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.desktop-social-item{padding:10px 2px;border-bottom:1px solid #ffffff12;overflow-wrap:anywhere}.desktop-social-item p{margin:5px 0;white-space:pre-wrap;line-height:1.6}.desktop-social-item small,.desktop-social-status{color:#aeb5bf}.desktop-social-replies{margin:8px 0 0 12px;padding-left:10px;border-left:2px solid #ffffff20}.desktop-social-error{color:#ffb4a7}.desktop-danmaku{position:absolute;inset:0 0 84px;overflow:hidden;pointer-events:none;z-index:4}.desktop-danmaku span{position:absolute;left:0;top:0;white-space:nowrap;font:600 22px sans-serif;color:#fff;text-shadow:1px 1px 2px #000,-1px -1px 2px #000;will-change:transform}.desktop-player.mini .desktop-social{display:none}`;
+    style.textContent = `.desktop-social{border-top:1px solid #ffffff20;padding:12px 0;color:inherit;font-size:13px;min-height:0}.desktop-social-toolbar,.desktop-social-tabs{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.desktop-social-toolbar small{color:#aeb5bf}.desktop-social button{padding:5px 9px;border:1px solid #ffffff25;border-radius:6px;background:#ffffff09;color:inherit;cursor:pointer}.desktop-social button:disabled{opacity:.5;cursor:default}.desktop-social-tabs{margin:10px 0}.desktop-social-tabs button[aria-selected=true]{background:#f45a4440;color:#ffab9d}.desktop-social-list{max-height:250px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.desktop-social-item{padding:10px 2px;border-bottom:1px solid #ffffff12;overflow-wrap:anywhere}.desktop-social-item p{margin:5px 0;white-space:pre-wrap;line-height:1.6}.desktop-social-item small,.desktop-social-status{color:#aeb5bf}.desktop-social-replies{margin:8px 0 0 12px;padding-left:10px;border-left:2px solid #ffffff20}.desktop-social-error{color:#ffb4a7}.desktop-danmaku{position:absolute;inset:0 0 var(--desktop-control-band,84px);overflow:hidden;pointer-events:none;z-index:4}.desktop-danmaku span{position:absolute;left:0;top:0;white-space:nowrap;font:600 22px sans-serif;color:#fff;text-shadow:1px 1px 2px #000,-1px -1px 2px #000;will-change:transform}.desktop-player.mini .desktop-social{display:none}`;
     style.textContent += `
       .desktop-emoji{display:inline-block;width:1.3em;height:1.3em;vertical-align:-.25em;object-fit:contain;border:0;pointer-events:none}
       .desktop-danmaku span{font-weight:400}
@@ -13,7 +13,7 @@ export function installSocialStyles() {
       .desktop-player .player-toolbar > button > svg{display:block;flex:none}
       .desktop-danmaku-control{display:inline-flex;align-items:center;gap:0}
       .player-stage:has(.desktop-danmaku-panel) .player-chrome{opacity:1!important;pointer-events:auto!important}
-      .desktop-danmaku-panel{position:fixed;z-index:1000;box-sizing:border-box;width:320px;overflow-y:auto;background:#272832;color:#e7e7ee;border:1px solid #ffffff14;border-radius:16px;padding:18px;box-shadow:0 8px 28px #0005;font:13px sans-serif;cursor:default;text-align:left;user-select:none;color-scheme:dark;scrollbar-width:thin;scrollbar-color:#51525c transparent}
+      .desktop-danmaku-panel{white-space:normal;position:fixed;z-index:1000;box-sizing:border-box;width:320px;overflow-y:auto;background:#272832;color:#e7e7ee;border:1px solid #ffffff14;border-radius:16px;padding:18px;box-shadow:0 8px 28px #0005;font:13px sans-serif;cursor:default;text-align:left;user-select:none;color-scheme:dark;scrollbar-width:thin;scrollbar-color:#51525c transparent}
       .desktop-danmaku-heading{display:flex;align-items:center;gap:8px;padding-bottom:14px;border-bottom:1px solid #ffffff18}
       .desktop-danmaku-heading strong{font-size:16px;margin-right:auto;white-space:nowrap}
       .player-toolbar .desktop-social-controls .desktop-danmaku-panel button{display:inline-block;min-width:0;min-height:0;width:auto;height:auto;font-size:12px;background:transparent;border:0;color:#c6c6d1;padding:3px;white-space:nowrap}
@@ -28,16 +28,16 @@ export function installSocialStyles() {
       .player-toolbar .desktop-social-controls button{font-size:12px;min-width:44px;padding:5px 8px;height:30px;border:1px solid #ffffff28;border-radius:7px;color:#bbb}
       .player-toolbar .desktop-social-controls button[aria-pressed=true],.player-toolbar .desktop-social-controls button[aria-expanded=true]{color:#ffacc4;background:#fb72991e;border-color:#fb729970}
       /* Include the pin in the measured controls row; the original absolute pin sits outside its group. */
-      .app-shell:has(.desktop-player:not(.mini)) .window-controls.dark .window-pin{position:static}
+      .app-shell:has(.desktop-player) .window-controls.dark .window-pin{position:static}
       .desktop-player header .desktop-selection-open{margin-left:auto;border:1px solid #ffffff25;border-radius:7px;background:#ffffff08;color:#eee;padding:6px 12px;cursor:pointer}
       .desktop-player header .desktop-selection-open{position:absolute;top:8px;right:190px;height:32px}
       .desktop-player-layout:not(.desktop-social-enabled){grid-template-columns:minmax(0,1fr)}
       .desktop-player-layout:not(.desktop-social-enabled) aside{display:none}
       .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) clamp(320px,29vw,420px)}
-      .desktop-player-layout.desktop-social-enabled aside{display:flex;overflow:hidden;padding:0;background:#1c1d22;animation:desktopDrawerIn .18s ease-out}
+      .desktop-player-layout.desktop-social-enabled aside{display:flex;overflow-y:auto;padding:0;background:#1c1d22;animation:desktopDrawerIn .18s ease-out}
       .desktop-player-layout aside > :not(.desktop-social){margin-left:18px;margin-right:18px}
       .desktop-player-layout aside:has(.desktop-social:not([data-tab=episodes])) > :not(.desktop-social){display:none!important}
-      .desktop-social{order:-1;display:flex;flex:1;flex-direction:column;min-height:0;border:0;padding:0}
+      .desktop-social{display:flex;flex:1;flex-direction:column;min-height:0;border:0;padding:0}
       .desktop-social[hidden]{display:none!important}
       .desktop-social[data-tab=episodes]{flex:none}
       .desktop-social-navigation{display:flex;align-items:center;gap:8px;padding:10px 18px;border-bottom:1px solid #ffffff14;flex-shrink:0}
@@ -61,7 +61,7 @@ export function installSocialStyles() {
       .desktop-player.theater .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) clamp(320px,29vw,420px)}
       .desktop-player.theater .desktop-player-layout.desktop-social-enabled aside{display:flex}
       @keyframes desktopDrawerIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
-      @media(max-width:800px){.desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) min(44vw,340px)}.desktop-social-navigation,.desktop-social-toolbar{padding-left:12px;padding-right:12px}.desktop-social-list{padding-left:12px;padding-right:12px}.player-toolbar .desktop-social-controls{gap:2px}.player-toolbar .desktop-social-controls button{min-width:34px;padding:4px}}
+      @media(max-width:800px){.desktop-player-layout.desktop-social-enabled,.desktop-player.theater .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) min(44vw,340px)}.desktop-social-navigation,.desktop-social-toolbar{padding-left:12px;padding-right:12px}.desktop-social-list{padding-left:12px;padding-right:12px}.player-toolbar .desktop-social-controls{gap:2px}.player-toolbar .desktop-social-controls button{min-width:34px;padding:4px}}
       @container desktop-video (max-width:650px){
         .desktop-player .player-toolbar{gap:4px}
         .desktop-player .player-toolbar > button{flex-basis:28px;width:28px;height:28px}
@@ -91,8 +91,36 @@ export function installSocialStyles() {
 }
 
 export function createSelection({React: O, jsxRuntime: b, set: desktopSocialSet}) {
-function DesktopSocialSelection({media}) {
+function DesktopSocialSelection({media, sessionKey}) {
   const button = O.useRef(null);
+  const [drawerState, setDrawerState] = O.useState({expanded:false, closing:false});
+  O.useEffect(() => {
+    const video = media.current, layout = video?.closest('.desktop-player-layout');
+    const stage = video?.closest('.player-stage'), chrome = stage?.querySelector('.player-chrome');
+    const drawer = layout?.querySelector('.desktop-social');
+    const refresh = () => {
+      const expanded = !!drawer && !drawer.hidden;
+      const closing = expanded && drawer.dataset.tab === 'episodes';
+      setDrawerState(previous => previous.expanded === expanded && previous.closing === closing ? previous : {expanded,closing});
+      if (!stage || !video) return;
+      const rect = video.getBoundingClientRect(), controls = chrome?.getBoundingClientRect();
+      const style = chrome && getComputedStyle(chrome);
+      const hidden = chrome?.hidden || style?.display === 'none' || style?.visibility === 'hidden' || style?.opacity === '0';
+      const reserved = hidden ? 0 : controls?.height > 0 ? rect.top + rect.height - controls.top : 84;
+      const value = Math.min(Math.max(0,reserved), Math.max(0,rect.height)) + 'px';
+      if (stage.style.getPropertyValue('--desktop-control-band') !== value) stage.style.setProperty('--desktop-control-band',value);
+    };
+    const resized = new ResizeObserver(refresh), changed = new MutationObserver(refresh);
+    if (video) resized.observe(video);
+    if (chrome) {resized.observe(chrome);changed.observe(chrome,{attributes:true,childList:true,subtree:true,attributeFilter:['class','style','hidden']});}
+    if (drawer) changed.observe(drawer,{attributes:true,attributeFilter:['hidden','data-tab']});
+    const player = video?.closest('.desktop-player');
+    if (player) changed.observe(player,{attributes:true,attributeFilter:['class','style']});
+    if (stage) changed.observe(stage,{attributes:true,attributeFilter:['class']});
+    stage?.addEventListener('transitionend',refresh);
+    refresh();
+    return () => {resized.disconnect();changed.disconnect();stage?.removeEventListener('transitionend',refresh);stage?.style.removeProperty('--desktop-control-band');};
+  }, [sessionKey]);
   O.useLayoutEffect(() => {
     const header = button.current?.closest('header');
     if (!header) return;
@@ -116,8 +144,10 @@ function DesktopSocialSelection({media}) {
     if (mini) observer.observe(mini);
     window.addEventListener('resize', layout);
     return () => {observer.disconnect(); window.removeEventListener('resize', layout);};
-  }, []);
-  return b.jsx('button', {ref:button, className: 'desktop-selection-open', 'aria-label': '打开选集',
+  }, [sessionKey]);
+  return b.jsx('button', {ref:button, className: 'desktop-selection-open',
+    'aria-label': drawerState.closing ? '关闭选集' : '打开选集',
+    'aria-expanded': drawerState.expanded, 'aria-controls':'desktop-social-drawer',
     'data-tauri-drag-region': 'false', onClick: () => {
       const drawer = media.current?.closest('.desktop-player-layout')?.querySelector('.desktop-social');
       const open = !drawer || drawer.hidden || drawer.dataset.tab !== 'episodes';

@@ -1,14 +1,14 @@
 --- a/contributions/desktop-native-playback/src/frontend-native.js
 +++ b/contributions/desktop-native-playback/src/frontend-native.js
-@@ -61,6 +61,7 @@
+@@ -79,6 +79,7 @@
      clearTimeout(timer); clearTimeout(controlTimer);
      resize?.disconnect();
      media.removeEventListener('desktopdanmaku', updateDanmaku);
 +    media.removeEventListener('desktopsociallayout', updateSocialLayout);
+     chromeChanges?.disconnect();
+     stage?.removeEventListener?.('transitionend', layout);
      document.removeEventListener('fullscreenchange', layout);
-     document.removeEventListener('visibilitychange', layout);
-     stage?.classList.remove('desktop-native-playback');
-@@ -122,7 +123,7 @@
+@@ -149,7 +150,7 @@
      } catch {if (!disposed) failPreparation();}
      finally {
        controlBusy = false;
@@ -17,26 +17,19 @@
      }
    }
    function updateDanmaku() {
-@@ -134,12 +135,28 @@
+@@ -161,8 +162,22 @@
      const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
-     // Keep the existing timeline, volume, speed and fullscreen buttons above
-     // the native surface; the reserved band is part of the current stage.
--    const bar = Math.min(84, Math.max(0, rect.height - 1));
-+    const chrome = stage.querySelector?.('.player-chrome')?.getBoundingClientRect();
-+    const reserved = chrome?.height > 0 ? rect.top + rect.height - chrome.top : 84;
-+    const bar = Math.min(Math.max(0, reserved), Math.max(0, rect.height - 1));
-     const bounds = [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
-       Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
+     const bounds = desktopNativeSurfaceRect(media);
      const visible = !document.hidden && rect.width > 0 && rect.height > 0;
 -    const signature = JSON.stringify([bounds, visible]);
 -    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible});}
-+    const panel = stage?.querySelector?.('.desktop-danmaku-panel')?.getBoundingClientRect();
-+    const right = Math.min(rect.right ?? rect.left + rect.width, panel?.right ?? 0);
-+    const bottom = Math.min(rect.top + rect.height - bar, panel?.bottom ?? 0);
-+    const left = Math.max(rect.left, panel?.left ?? 0), top = Math.max(rect.top, panel?.top ?? 0);
-+    const occlusion = panel && right > left && bottom > top ? [
-+      Math.max(0,Math.floor((left-rect.left)*scale)), Math.max(0,Math.floor((top-rect.top)*scale)),
-+      Math.ceil((right-left)*scale), Math.ceil((bottom-top)*scale)] : [];
++    const panel = stage.querySelector?.('.desktop-danmaku-panel')?.getBoundingClientRect();
++    const left = Math.max(bounds[0], Math.floor((panel?.left ?? 0) * scale));
++    const top = Math.max(bounds[1], Math.floor((panel?.top ?? 0) * scale));
++    const right = Math.min(bounds[0] + bounds[2], Math.ceil((panel?.right ?? 0) * scale));
++    const bottom = Math.min(bounds[1] + bounds[3], Math.ceil((panel?.bottom ?? 0) * scale));
++    const occlusion = panel && right > left && bottom > top ?
++      [left - bounds[0], top - bounds[1], right - left, bottom - top] : [];
 +    const signature = JSON.stringify([bounds, visible, occlusion]);
 +    if (signature !== lastRect) {
 +      lastRect = signature; queue({rect: bounds, visible, occlusion});
@@ -49,11 +42,7 @@
    }
    function seek(value) {
      if (disposed || !Number.isFinite(value)) return;
-@@ -193,8 +210,11 @@
-     stage?.classList.add('desktop-native-playback');
-     resize = new ResizeObserver(layout); resize.observe(media);
-+    const chrome = stage?.querySelector?.('.player-chrome');
-+    if (chrome) resize.observe(chrome);
+@@ -224,6 +239,7 @@
      document.addEventListener('fullscreenchange', layout);
      document.addEventListener('visibilitychange', layout);
      media.addEventListener('desktopdanmaku', updateDanmaku);
