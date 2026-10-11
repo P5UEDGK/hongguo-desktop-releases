@@ -2,7 +2,7 @@
 
 原生播放器暂停后约12秒就停止预读，灰条随之停止。本补丁在暂停时顺序读取当前集的原片 Range 块，恢复播放和 seek 复用已存块；没有缓存时继续正常网络读取。只影响当前原生会话，后三集预取仍由 #187 负责。
 
-依赖 #204 的 `d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee`，各文件 LF 规范化后的补丁前后 SHA256 见 `BASELINES.json`。这是公开接入材料，合并不代表发行版已经修复；不包含 EXE、第三方 DLL、真实视频或账号数据。
+依赖 #204 的 `c7bfbc2ea269af4013ab971467d9ef68dc207b9a`，各文件 LF 规范化后的补丁前后 SHA256 见 `BASELINES.json`。这是公开接入材料，合并不代表发行版已经修复；不包含 EXE、第三方 DLL、真实视频或账号数据。
 
 ## 缓存与生命周期
 
@@ -48,3 +48,10 @@ pwsh -NoProfile -Command "python -I contributions/desktop-paused-preload/tests/v
 公开验证器在 release、jobs.close 或 prefetch.close 抛错时仍尝试其余清理，记录失败，并在最外层 finally 通知主线程退出。回归执行实际 scenario 的 finally；旧实现失败，当前8项验证器测试通过。
 
 本机完整候选、安装回读与反馈观察期仍待完成。
+
+
+## 本轮三次反馈修复
+
+接入依赖以 BASELINES.json 为准，当前 #204 为 c7bfbc2ea269af4013ab971467d9ef68dc207b9a。本轮原生仅改前端，三个后端基线文件摘要未变；上轮84项暂停组合证据可复用。
+
+本机候选与安装仍待完成。
