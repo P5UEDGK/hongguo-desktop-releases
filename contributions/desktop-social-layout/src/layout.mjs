@@ -7,7 +7,8 @@ export function installSocialStyles() {
       .desktop-danmaku span{font-weight:400}
       .desktop-social-controls{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
       .desktop-player-layout{height:100%;overflow:hidden;contain:size}
-      .desktop-player .player-toolbar{flex-wrap:wrap;height:auto;min-height:32px}
+      .desktop-player .player-stage{container-type:inline-size;container-name:desktop-video}
+      .desktop-player .player-toolbar{flex-wrap:nowrap;height:32px;min-width:0;white-space:nowrap}
       .desktop-player .player-toolbar > button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 32px;box-sizing:border-box;width:32px;height:32px;padding:0;line-height:1}
       .desktop-player .player-toolbar > button > svg{display:block;flex:none}
       .desktop-danmaku-control{display:inline-flex;align-items:center;gap:0}
@@ -61,6 +62,27 @@ export function installSocialStyles() {
       .desktop-player.theater .desktop-player-layout.desktop-social-enabled aside{display:flex}
       @keyframes desktopDrawerIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
       @media(max-width:800px){.desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) min(44vw,340px)}.desktop-social-navigation,.desktop-social-toolbar{padding-left:12px;padding-right:12px}.desktop-social-list{padding-left:12px;padding-right:12px}.player-toolbar .desktop-social-controls{gap:2px}.player-toolbar .desktop-social-controls button{min-width:34px;padding:4px}}
+      @container desktop-video (max-width:650px){
+        .desktop-player .player-toolbar{gap:4px}
+        .desktop-player .player-toolbar > button{flex-basis:28px;width:28px;height:28px}
+        .desktop-player .player-clock{font-size:12px;flex-shrink:0}
+        .desktop-player .player-toolbar-spacer{min-width:0}
+        .desktop-player .player-toolbar > select{width:52px;min-width:0;padding:3px;flex-shrink:0}
+        .desktop-player .player-toolbar > input[type=range]{width:40px;min-width:24px;flex-shrink:1}
+        .desktop-player .player-toolbar .desktop-social-controls{gap:2px}
+        .desktop-player .player-toolbar .desktop-social-controls > button,.desktop-player .player-toolbar .desktop-danmaku-control > button{min-width:34px;padding:4px;height:28px}
+      }
+      @container desktop-video (max-width:420px){
+        .desktop-player .player-chrome{padding-left:8px;padding-right:8px}
+        .desktop-player .player-toolbar{gap:1px}
+        .desktop-player .player-toolbar > button{flex-basis:20px;width:20px;height:24px}
+        .desktop-player .player-toolbar > button > svg{width:18px;height:18px}
+        .desktop-player .player-clock{font-size:11px}
+        .desktop-player .player-toolbar > select{width:40px;font-size:11px;padding:1px}
+        .desktop-player .player-toolbar > input[type=range]{width:24px;min-width:16px}
+        .desktop-player .player-toolbar .desktop-social-controls{gap:1px}
+        .desktop-player .player-toolbar .desktop-social-controls > button,.desktop-player .player-toolbar .desktop-danmaku-control > button{min-width:28px;padding:3px 1px;height:26px;font-size:11px}
+      }
       .desktop-player.mini .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr)}
       .desktop-player.mini .desktop-player-layout.desktop-social-enabled aside{display:none}
       @media(prefers-reduced-motion:reduce){.desktop-player-layout.desktop-social-enabled aside{animation:none}}
@@ -98,7 +120,8 @@ function DesktopSocialSelection({media}) {
   return b.jsx('button', {ref:button, className: 'desktop-selection-open', 'aria-label': '打开选集',
     'data-tauri-drag-region': 'false', onClick: () => {
       const drawer = media.current?.closest('.desktop-player-layout')?.querySelector('.desktop-social');
-      desktopSocialSet(media.current, {social: !drawer || drawer.hidden || drawer.dataset.tab !== 'episodes', tab: 'episodes'});
+      const open = !drawer || drawer.hidden || drawer.dataset.tab !== 'episodes';
+      desktopSocialSet(media.current, {social: open, ...(!open ? {comments:false} : {}), tab: 'episodes'});
     }, children: '选集'});
 }
 

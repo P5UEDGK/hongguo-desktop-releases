@@ -17,7 +17,7 @@ const html=`<!doctype html><meta charset="utf-8"><style>
 .desktop-player{height:600px;display:flex;flex-direction:column}.desktop-player header{position:relative;height:60px;flex-shrink:0;padding:8px}
 .desktop-player-layout{display:grid;flex:1;min-height:0;grid-template-columns:minmax(0,1fr) 360px}
 .player-stage{position:relative;min-width:0;min-height:0;background:black}video{width:100%;height:100%;display:block}
-.player-chrome{position:absolute;bottom:0;left:0;right:0;padding:30px 16px 10px}.player-toolbar{display:flex;gap:8px;align-items:center;height:40px}
+.player-chrome{position:absolute;bottom:0;left:0;right:0;padding:30px 16px 10px}.player-toolbar{display:flex;gap:8px;align-items:center;height:40px}.player-clock{font-size:13px}.player-toolbar-spacer{flex:1}.player-toolbar select{width:62px}.player-toolbar>input{width:64px}
 .desktop-player button{padding:8px 12px;border:1px solid transparent;border-radius:4px;background:#303236;color:inherit}
 .desktop-player .player-toolbar button{border:0;border-radius:4px;background:transparent;display:grid;place-items:center;padding:6px}
 .desktop-player button:hover:not(:disabled){color:#fb7299;background:#3a3c40}
@@ -65,7 +65,7 @@ function App(){
  b.jsxs('div',{className:'window-controls dark compact',children:['置顶','最小化','最大化','关闭'].map((label,i)=>b.jsx('button',{className:i===0?'window-pin':'','aria-label':label,children:label},label))}),
  b.jsxs('div',{className:'desktop-player',children:[
  b.jsxs('header',{children:[b.jsx('button',{className:'return-button',children:'返回片单'}),b.jsx(Selection,{media}),b.jsx('button',{className:'player-mini-toggle','aria-label':'迷你窗口',children:'小窗'})]}),
- b.jsxs('main',{className:'desktop-player-layout',children:[b.jsxs('div',{className:'player-stage',children:[b.jsx('video',{ref:media}),b.jsx('div',{className:'player-chrome',children:b.jsxs('div',{className:'player-toolbar',children:[b.jsx('button',{'aria-label':'播放或暂停',onClick:()=>window.fixtureToggle(),children:b.jsx('svg',{width:22,height:22,viewBox:'0 0 24 24',children:b.jsx('path',{d:'M5 3L21 12L5 21Z',fill:'currentColor'})})}),b.jsx(social.Controls,{media,sessionKey:session.streamUrl})]})})]}),
+ b.jsxs('main',{className:'desktop-player-layout',children:[b.jsxs('div',{className:'player-stage',children:[b.jsx('video',{ref:media}),b.jsx('div',{className:'player-chrome',children:b.jsxs('div',{className:'player-toolbar',children:[b.jsx('button',{'aria-label':'播放或暂停',onClick:()=>window.fixtureToggle(),children:b.jsx('svg',{width:22,height:22,viewBox:'0 0 24 24',children:b.jsx('path',{d:'M5 3L21 12L5 21Z',fill:'currentColor'})})}),...['上一集','下一集'].map(label=>b.jsx('button',{'aria-label':label,children:b.jsx('svg',{width:22,height:22})},label)),b.jsx('span',{className:'player-clock',children:'00:27 / 01:36'}),b.jsx('span',{className:'player-toolbar-spacer'}),b.jsx(social.Controls,{media,sessionKey:session.streamUrl}),b.jsx('select',{'aria-label':'播放速度',children:b.jsx('option',{children:'2x'})}),b.jsx('button',{'aria-label':'静音',children:b.jsx('svg',{width:22,height:22})}),b.jsx('input',{type:'range','aria-label':'音量'}),...['剧场模式','全屏'].map(label=>b.jsx('button',{'aria-label':label,children:b.jsx('svg',{width:22,height:22})},label))]})})]}),
  b.jsxs('aside',{children:[b.jsx('div',{className:'episode-fixture',children:'剧集信息 · 1 2 3'}),b.jsx(social.Drawer,{session,media})]})]})]})]});
 }
 ReactDOM.createRoot(document.getElementById('root')).render(b.jsx(App,{}));
@@ -94,7 +94,7 @@ try{
  await page.getByRole('tab',{name:'选集',exact:true}).waitFor({timeout:5000}).catch(async e=>{console.error('PAGE ERRORS',errors,'BODY',await page.locator('body').innerText());throw e;});
  const socialCalls=()=>page.evaluate(()=>calls.filter(c=>/comments|metrics|replies/.test(c.path)));
  check((await socialCalls()).length===0,'remembered open drawer starts on episodes without comments/metrics/replies');
- check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集|本集评论|整剧剧评'),'selection tab is first');
+ check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集'),'comments disabled initially exposes selection alone');
  check(await page.locator('.desktop-social-header,.desktop-social-toolbar').count()===0,'selection hides title and all statistics');
  check(await page.getByRole('button',{name:'关闭右侧抽屉',exact:true}).isVisible(),'selection retains a close button');
  await page.locator('video').click({position:{x:80,y:80}});
@@ -103,19 +103,21 @@ try{
  check(await page.locator('video').evaluate(v=>!v.paused)&&await page.evaluate(()=>toggleCount===2),'second picture click resumes exactly once');
  await page.getByRole('button',{name:'播放或暂停',exact:true}).click();
  check(await page.evaluate(()=>toggleCount===3),'toolbar click does not toggle twice through the stage');
- const playBox=await page.getByRole('button',{name:'播放或暂停',exact:true}).boundingBox(), iconBox=await page.locator('.player-toolbar > button > svg').boundingBox();
+ const playBox=await page.getByRole('button',{name:'播放或暂停',exact:true}).boundingBox(), iconBox=await page.getByRole('button',{name:'播放或暂停',exact:true}).locator('svg').boundingBox();
  check(Math.abs(iconBox.x+iconBox.width/2-playBox.x-playBox.width/2)<.5&&Math.abs(iconBox.y+iconBox.height/2-playBox.y-playBox.height/2)<.5,'play icon and hover background share a center under host button styles');
- const wrapped=await page.evaluate(()=>{
-   const toolbar=document.querySelector('.player-toolbar'),chrome=document.querySelector('.player-chrome');
-   const original=toolbar.style.cssText,before=chrome.getBoundingClientRect().height;
-   toolbar.style.width='220px';const extra=[];
-   for(let i=0;i<6;i++){const button=toolbar.firstElementChild.cloneNode(true);button.dataset.wrapFixture='true';toolbar.append(button);extra.push(button);}
-   const rect=toolbar.getBoundingClientRect(),height=chrome.getBoundingClientRect().height;
-   const contained=[...toolbar.children].every(n=>{const r=n.getBoundingClientRect();return r.left>=rect.left-.5&&r.right<=rect.right+.5&&r.bottom<=rect.bottom+.5;});
-   extra.forEach(n=>n.remove());toolbar.style.cssText=original;
-   return {contained,grows:height>before};
- });
- check(wrapped.contained&&wrapped.grows,'narrow toolbar wraps all controls within the video and grows its reserved band');
+ async function singleRow(width){
+  await page.setViewportSize({width,height:720});
+  await page.waitForTimeout(80);
+  const result=await page.locator('.player-toolbar').evaluate(toolbar=>{
+   const stage=toolbar.closest('.player-stage').getBoundingClientRect();
+   const controls=[...toolbar.children].map(n=>n.getBoundingClientRect());
+   const centers=controls.filter(r=>r.width>0&&r.height>0).map(r=>r.top+r.height/2);
+   return {contained:controls.every(r=>r.left>=stage.left-.5&&r.right<=stage.right+.5),single:Math.max(...centers)-Math.min(...centers)<1};
+  });
+  check(result.contained&&result.single,'all full host controls stay on one row at '+width+'px with drawer open');
+ }
+ for(const width of [1280,850,640])await singleRow(width);
+ await page.setViewportSize({width:1280,height:720});
  const initial=await page.locator('.desktop-player').boundingBox();
  await page.getByRole('button',{name:'打开选集',exact:true}).click();
  const wide=await page.locator('video').boundingBox();
@@ -127,7 +129,7 @@ try{
  check(await page.locator('aside').isHidden(),'mini mode hides an already enabled drawer');
  check(Math.abs((await page.locator('video').boundingBox()).width-wide.width)<1,'mini mode restores a single full-width video column');
  await page.evaluate(()=>document.querySelector('.desktop-player').classList.remove('mini'));
- await page.getByRole('tab',{name:'本集评论',exact:true}).click();
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
  await page.getByText('整剧收藏 18',{exact:true}).waitFor();
  check((await socialCalls()).some(c=>c.path.endsWith('/comments')),'comments load on explicit request');
  check(await page.locator('.desktop-social-header,h3').count()===0,'comment tab has no redundant title row');
@@ -137,7 +139,8 @@ try{
  check(await page.locator('aside').isVisible(),'comment toggle retains the right drawer');
  check(Math.abs((await page.locator('video').boundingBox()).width-narrow.width)<1,'closing comments preserves video width');
  check(await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'comment toggle returns to selection');
- await page.getByRole('tab',{name:'本集评论',exact:true}).click();
+ check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集'),'bottom toggle removes both comment tabs');
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
  await page.getByText('整剧收藏 18',{exact:true}).waitFor();
  await page.getByRole('button',{name:'关闭评论页面',exact:true}).click();
  check(await page.locator('aside').isVisible()&&await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'episode comment close returns to selection and retains drawer');
@@ -167,9 +170,17 @@ try{
  await page.getByRole('tab',{name:'整剧剧评',exact:true}).click();
  await page.getByText('series fixture',{exact:true}).waitFor();
  check(await page.getByRole('button',{name:'查看 1 条回复',exact:true}).count()===0,'series review does not expose episode reply controls');
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
+ check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集')&&await page.locator('aside').isVisible(),'bottom toggle from series review removes both comment tabs and keeps selection');
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
+ await page.getByRole('tab',{name:'整剧剧评',exact:true}).click();
+ await page.getByText('series fixture',{exact:true}).waitFor();
  await page.getByRole('button',{name:'关闭评论页面',exact:true}).click();
  check(await page.locator('aside').isVisible()&&await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'series review close returns to selection and retains drawer');
  check(Math.abs((await page.locator('video').boundingBox()).width-narrow.width)<1,'series review close preserves video width');
+ check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-expanded')==='true','comment tabs stay enabled after returning to selection');
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
+ check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集'),'bottom toggle on selection removes both enabled comment tabs');
  await page.getByRole('button',{name:'评论与互动',exact:true}).click();
  await page.evaluate(()=>changeEpisode());
  await page.getByRole('tab',{name:'选集',selected:true}).waitFor();
@@ -177,7 +188,7 @@ try{
  await page.waitForTimeout(100);
  check((await socialCalls()).length===before,'new episode resets to selection and makes no social fetch');
  await page.evaluate(()=>{hold=true});
- await page.getByRole('tab',{name:'本集评论',exact:true}).click();
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
  await page.waitForFunction(()=>calls.filter(c=>/comments|metrics/.test(c.path)).length>0);
  await page.getByRole('tab',{name:'选集',exact:true}).click();
  await page.waitForFunction(()=>aborted>=2);
@@ -190,6 +201,11 @@ try{
  const afterCommentClose=(await socialCalls()).length;
  await page.waitForTimeout(100);
  check((await socialCalls()).length===afterCommentClose,'closed comment page stops all comment and metric requests');
+ const abortBeforeToggle=await page.evaluate(()=>aborted);
+ await page.getByRole('tab',{name:'整剧剧评',exact:true}).click();
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
+ await page.waitForFunction(n=>aborted>=n+2,abortBeforeToggle);
+ check(await page.getByRole('tab').allTextContents().then(x=>x.join('|')==='选集')&&await page.locator('aside').isVisible(),'bottom toggle while loading cancels both requests and removes both comment tabs');
  await page.evaluate(()=>{hold=false;failComments=true});
  await page.getByRole('button',{name:'评论与互动',exact:true}).click();
  await page.getByText('评论加载失败，请重试',{exact:false}).waitFor();
@@ -205,7 +221,7 @@ try{
  await page.mouse.move(0,0);
  await page.getByRole('button',{name:'弹幕',exact:true}).focus();
  await page.getByRole('region',{name:'弹幕设置',exact:true}).waitFor();
- check(await page.locator('input[type=range]').count()===4,'focus on same danmaku toggle exposes all settings without a shortcut');
+ check(await page.locator('.desktop-danmaku-panel input[type=range]').count()===4,'focus on same danmaku toggle exposes all settings without a shortcut');
  await page.keyboard.press('Tab');
  check(await page.getByRole('region',{name:'弹幕设置',exact:true}).isVisible(),'tabbing into settings keeps panel open');
  await page.getByRole('slider',{name:'移动速度',exact:true}).focus();
