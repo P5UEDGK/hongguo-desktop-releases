@@ -32,6 +32,45 @@ class StandbyTests(unittest.TestCase):
         self.addCleanup(lambda:[jobs.release(k) for k in list(jobs.jobs)])
         return jobs,calls
 
+    def test_stale_child_cannot_join_new_foreground_generation(self):
+        from desktop_hls import EncodingCancelled
+        prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)
+        self.addCleanup(prefetch.close)
+        jobs,_=self.jobs();jobs.on_start=prefetch.begin
+        parent=jobs.create('1234567890123456',1)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        self.assertEqual(child.prefetch_generation,parent.prefetch_generation)
+        next_job=SimpleNamespace(id='f'*32,cancelled=threading.Event(),failed=False)
+        prefetch.begin(next_job,parent.series_id,9)
+        with self.assertRaises(EncodingCancelled):prefetch.before_work(child)
+        self.assertNotIn(child.id,prefetch.foreground);self.assertIsNone(prefetch.busy)
+
+    def test_cancel_before_promoted_metadata_releases_finished_ownership(self):
+        prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)
+        self.addCleanup(prefetch.close)
+        for mode in ('native','h264'):
+            job=SimpleNamespace(id=mode,source=None,cancelled=threading.Event(),failed=False,video_mode=mode,
+                                _prefetch_work_finished=True)
+            with patch('desktop_prefetch.threading.Thread') as thread:
+                prefetch.promote(job,'1234567890123456',2)
+                args=thread.call_args.kwargs['args']
+            prefetch.busy=job.id;job.cancelled.set();prefetch._load_promoted(*args)
+            self.assertNotIn(job.id,prefetch.foreground);self.assertIsNone(prefetch.busy)
+
+    def test_out_of_order_control_return_never_lowers_activation_revision(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        child.video_mode='native';child.ready.set()
+        revisions=iter((10,9));state=dict(visible=True,outputReady=True,revision=9)
+        jobs.native=SimpleNamespace(available=True,control=lambda *_:next(revisions),snapshot=lambda _:state,release=lambda _:None)
+        control=next(route.endpoint for route in make_router(jobs,lambda _:True).routes if route.path.endswith('/control'))
+        async def body():return {'visible':True,'paused':False,'muted':False}
+        asyncio.run(control(child.id,SimpleNamespace(json=body)))
+        asyncio.run(control(child.id,SimpleNamespace(json=body)))
+        self.assertEqual(child.activation_revision,10)
+        with self.assertRaises(HTTPException):jobs.activate(child)
+        state['revision']=10;jobs.activate(child)
+
     def test_standby_bound_to_immediate_next_and_single_parent(self):
         jobs,calls=self.jobs()
         parent=jobs.create('1234567890123456',1)
@@ -87,7 +126,7 @@ class StandbyTests(unittest.TestCase):
         parent=SimpleNamespace(id='a'*32,cancelled=threading.Event(),failed=False)
         prefetch.begin(parent,'1234567890123456',1)
         prefetch.foreground.clear()
-        warm=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False,prewarm_parent=parent.id)
+        warm=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False,prewarm_parent=parent.id,prefetch_generation=prefetch.generation)
         generation=prefetch.generation
         prefetch.before_work(warm)
         self.assertEqual(prefetch.busy,warm.id)
@@ -138,7 +177,7 @@ class StandbyTests(unittest.TestCase):
         self.addCleanup(prefetch.close)
         parent=SimpleNamespace(id='a'*32,cancelled=threading.Event(),failed=False)
         prefetch.begin(parent,'1234567890123456',1);prefetch.foreground.clear()
-        child=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False,prewarm_parent=parent.id)
+        child=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False,prewarm_parent=parent.id,prefetch_generation=prefetch.generation)
         prefetch.before_work(child)
         expected=[(prefetch.generation,9,'1234567890123456')]
         prefetch.download_pending=expected.copy()
@@ -171,7 +210,7 @@ class StandbyTests(unittest.TestCase):
         parent=SimpleNamespace(id='a'*32,cancelled=threading.Event(),failed=False)
         prefetch.begin(parent,'1234567890123456',1)
         prefetch.foreground.clear()
-        warm=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False,prewarm_parent=parent.id)
+        warm=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False,prewarm_parent=parent.id,prefetch_generation=prefetch.generation)
         prefetch.before_work(warm)
         warm.prewarm_parent=None
         prefetch.finish(warm,'1234567890123456',2,source)
@@ -229,7 +268,7 @@ class StandbyTests(unittest.TestCase):
         self.addCleanup(prefetch.close)
         prefetch.cache.contains=lambda *_,**kw:True
         job=SimpleNamespace(id='a'*32,source=source,cancelled=threading.Event(),failed=False,
-                            video_mode='h264',prewarm_parent='b'*32)
+                            video_mode='h264',prewarm_parent='b'*32,prefetch_generation=prefetch.generation)
         prefetch.before_work(job)
         job.prewarm_parent=None
         prefetch.promote(job,'1234567890123456',2)

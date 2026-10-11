@@ -1,6 +1,6 @@
 --- a/backend/desktop_native.py
 +++ b/backend/desktop_native.py
-@@ -169,10 +169,15 @@
+@@ -195,10 +195,15 @@
          with self.guard:
              if job.cancelled.is_set():
                  raise RuntimeError("Native job cancelled")
@@ -20,7 +20,7 @@
              session = NativeSession(self, job, self.parent_window())
              self.sessions[job.id] = session
              try:
-@@ -195,7 +200,37 @@
+@@ -221,7 +226,37 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -59,7 +59,7 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -320,7 +355,8 @@
+@@ -349,7 +384,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -69,15 +69,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -357,6 +393,7 @@
-                        "framedrop": "vo", "vd-lavc-threads": "0"}
-             for key, value in options.items():
-                 player.option(key, value)
-+            player.option("mute", "yes" if desired["muted"] else "no")
-             if progressive:
-                 for key, value in {"cache": "yes", "cache-secs": "12", "demuxer-readahead-secs": "12",
-                                    "demuxer-max-bytes": "32MiB", "cache-pause": "yes",
-@@ -478,6 +515,7 @@
+@@ -525,6 +561,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

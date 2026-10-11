@@ -1,6 +1,6 @@
 --- a/backend/desktop_hls_service.py
 +++ b/backend/desktop_hls_service.py
-@@ -45,11 +45,16 @@
+@@ -45,11 +45,17 @@
      source_description: dict | None = None
      video_mode: str = "h264"
      mode_selected: threading.Event = field(default_factory=threading.Event)
@@ -8,6 +8,7 @@
 +    episode: int = 0
 +    prewarm_parent: str | None = None
 +    activation_revision: int | None = None
++    prefetch_generation: int | None = None
  
  
  class HlsJobs:
@@ -18,15 +19,15 @@
          self.root = Path(root).resolve(strict=True)
          if not self.root.is_dir() or self.root.is_symlink():
              raise ValueError("Desktop work directory is unavailable")
-@@ -61,6 +66,7 @@
+@@ -61,6 +67,7 @@
          self.full_cache_ready = full_cache_ready
          self.negotiation_seconds = negotiation_seconds
          self.native = native
 +        self.on_activate = on_activate
          self.encoder_slots = threading.BoundedSemaphore(max_workers)
          self.closed = threading.Event()
-         self.reaper = None
-@@ -106,7 +112,7 @@
+         self.reaper_stop = threading.Event()
+@@ -118,7 +125,7 @@
              if time.monotonic() - job.touched > self.idle_seconds:
                  self.release(job.id)
  
@@ -35,7 +36,7 @@
          if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
              raise HTTPException(400, "Invalid episode identity")
          if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
-@@ -116,18 +122,26 @@
+@@ -128,18 +135,28 @@
              self._expire()
              if self.closed.is_set():
                  raise HTTPException(503, "Desktop sessions are closed")
@@ -54,6 +55,8 @@
 -                      negotiate_codec=negotiate_codec)
 +                      negotiate_codec=negotiate_codec, series_id=series_id, episode=episode,
 +                      prewarm_parent=prewarm_parent)
++            if prewarm_parent is not None:
++                job.prefetch_generation = parent.prefetch_generation
              self.jobs[identifier] = job
              try:
                  if self.reaper is None:
@@ -64,7 +67,7 @@
                      self.on_start(job, series_id, episode)
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
-@@ -263,6 +277,9 @@
+@@ -275,6 +292,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -74,7 +77,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -275,6 +292,28 @@
+@@ -287,6 +307,28 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -103,7 +106,7 @@
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -372,7 +411,7 @@
+@@ -384,7 +426,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -112,7 +115,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -383,7 +422,11 @@
+@@ -395,7 +437,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -125,7 +128,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -474,6 +517,7 @@
+@@ -486,6 +532,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -133,7 +136,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -497,7 +541,20 @@
+@@ -509,7 +556,20 @@
              raise HTTPException(400, "Invalid native control")
          except queue.Full:
              raise HTTPException(429, "Native control queue is busy")
@@ -141,7 +144,7 @@
 +            with jobs.guard:
 +                if job.cancelled.is_set():
 +                    raise HTTPException(404, "Desktop session is unavailable")
-+                job.activation_revision = revision
++                job.activation_revision = max(job.activation_revision or 0, revision)
          return {"revision": revision}
 +
 +    @router.post("/{identifier}/activate")
