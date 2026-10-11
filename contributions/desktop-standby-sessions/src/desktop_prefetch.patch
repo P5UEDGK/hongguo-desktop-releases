@@ -8,7 +8,7 @@
          self.foreground_directories = {}
          self.cache_results = {}
          self.busy = None
-@@ -58,10 +59,17 @@
+@@ -59,10 +60,17 @@
                  by_index.setdefault(index, vid)
          return sorted(by_index.items())
  
@@ -28,7 +28,7 @@
              if getattr(job, "directory", None) is not None:
                  self.foreground_directories[job.id] = Path(job.directory)
              self.pending = []
-@@ -77,15 +85,26 @@
+@@ -79,15 +87,26 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
@@ -56,7 +56,7 @@
                      self.busy = job.id
                      if getattr(job, "directory", None) is not None:
                          self.foreground_directories[job.id] = Path(job.directory)
-@@ -100,7 +119,7 @@
+@@ -102,7 +121,7 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
@@ -65,7 +65,7 @@
          with self.condition:
              generation = self.generation
          _, metadata = self.episode_loader(series_id)
-@@ -112,7 +131,7 @@
+@@ -114,7 +133,7 @@
              if (generation != self.generation or self.closed
                      or self.current != {"seriesId": str(series_id), "episode": episode}):
                  raise EncodingCancelled()
@@ -74,7 +74,7 @@
          with self.condition:
              if (generation == self.generation and not self.closed
                      and self.current == {"seriesId": str(series_id), "episode": episode}):
-@@ -139,6 +158,81 @@
+@@ -141,6 +160,81 @@
          self._report()
          return source
  
@@ -156,7 +156,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -165,6 +259,8 @@
+@@ -167,6 +261,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -165,7 +165,7 @@
              expected = self.foreground.get(job.id)
              cached_result = self.cache_results.pop(job.id, None)
              self.foreground_directories.pop(job.id, None)
-@@ -181,6 +277,9 @@
+@@ -184,6 +280,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -175,7 +175,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -325,6 +424,7 @@
+@@ -336,6 +435,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

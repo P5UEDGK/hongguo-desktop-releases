@@ -12,12 +12,13 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,44 @@
+@@ -291,7 +296,50 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
 -            return session.submit(body)
 +            previous_states = []
++            ownership = list(getattr(session, "handoff_previous", ()))
 +            try:
 +                if getattr(session.job, "prewarm_parent", None):
 +                    if body.get("visible") is True:
@@ -28,8 +29,15 @@
 +                        for identifier_, previous in self.sessions.items():
 +                            if identifier_ != identifier:
 +                                before = previous.desired_state() if hasattr(previous, "desired_state") else previous.snapshot()
++                                owned = next((item for item in ownership if item[0] is previous), None)
++                                current = getattr(previous, "pause_revision", before.get("revision", 0))
++                                if owned and owned[2] == current and before.get("paused"):
++                                    continue
++                                paused = owned[1] if owned and owned[2] == current else bool(before.get("paused", True))
 +                                previous_states.append((previous, bool(before.get("paused", True))))
 +                                revision = previous.submit({"paused": True})
++                                ownership = [item for item in ownership if item[0] is not previous]
++                                ownership.append((previous, paused, getattr(previous, "pause_revision", revision)))
 +                                until = time.monotonic() + .3
 +                                while time.monotonic() < until:
 +                                    value = previous.snapshot()
@@ -41,10 +49,8 @@
 +                    elif body.get("paused") is False or body.get("muted") is False:
 +                        raise ValueError("Standby must remain silent and paused")
 +                revision = session.submit(body)
-+                if previous_states and not getattr(session, "handoff_previous", None):
-+                    session.handoff_previous = [(previous, paused,
-+                        getattr(previous, "pause_revision", previous.snapshot().get("revision", 0)))
-+                        for previous, paused in previous_states]
++                if ownership:
++                    session.handoff_previous = ownership
 +                return revision
 +            except Exception:
 +                # No child command was accepted. Restore the old playback
@@ -58,7 +64,7 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -301,6 +343,15 @@
+@@ -301,6 +349,15 @@
          with self.guard:
              if self.sessions.get(identifier) is session:
                  self.sessions.pop(identifier, None)
@@ -74,7 +80,7 @@
          return True
  
  
-@@ -425,6 +476,8 @@
+@@ -425,6 +482,8 @@
              revision = self.revision + 1
              self.commands.put_nowait((revision, command))
              self.revision = revision
@@ -83,7 +89,7 @@
              self.queued_state.update({key: value for key, value in command.items()
                                        if key in self.queued_state})
              return revision
-@@ -451,7 +504,8 @@
+@@ -451,7 +510,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -93,7 +99,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -638,6 +692,7 @@
+@@ -638,6 +698,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

@@ -20,6 +20,27 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_repeated_visible_handoff_keeps_pause_ownership_and_latest_intent(self):
+        for later in (None, True, False):
+            for reject in (False, True):
+                with self.subTest(later=later, reject=reject):
+                    host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0};pauses=[]
+                    def submit(body):
+                        state.update(body,revision=state['revision']+1)
+                        if 'paused' in body:parent.pause_revision=state['revision'];pauses.append(body['paused'])
+                        return state['revision']
+                    parent=SimpleNamespace(job=SimpleNamespace(prewarm_parent=None),stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=submit)
+                    child=SimpleNamespace(job=SimpleNamespace(prewarm_parent='parent'),stop=threading.Event(),snapshot=lambda:{'outputReady':True},submit=lambda _:1,close=lambda:True)
+                    host.sessions={'parent':parent,'child':child};host.control('child',{'visible':True,'paused':False})
+                    if later is not None:host.control('parent',{'paused':later})
+                    if reject:
+                        def rejected(_):raise ValueError('child rejected')
+                        child.submit=rejected
+                        with self.assertRaises(ValueError):host.control('child',{'visible':True,'paused':False})
+                    else:host.control('child',{'visible':True,'paused':False})
+                    if later is None:self.assertEqual(pauses,[True], 'owned pause must not be submitted twice')
+                    host.release('child');self.assertEqual(state['paused'],later if later is not None else False)
+
     def test_cancelled_handoff_preserves_later_parent_pause_intent(self):
         host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0}
         def submit(body):
