@@ -22,7 +22,7 @@ from unittest.mock import patch
 def preload_outcome(value):
     native = value['native']
     if native['preloadLimited']:
-        return 'limited'
+        return 'limited' if native.get('preloadReason') == 'budget' else 'failed'
     if native['cacheComplete']:
         return 'complete'
     return None
@@ -32,7 +32,7 @@ def budget_stable(byte_samples, budget, range_bytes):
     # Sample actual bytes for three seconds: no write may exceed the budget,
     # and the last second (six samples) must remain stable.
     return (len(byte_samples) >= 16 and
-            max(byte_samples) <= budget and
+            budget - range_bytes < max(byte_samples) <= budget and min(byte_samples) > 0 and
             len(set(byte_samples[-6:])) == 1)
 
 
@@ -161,6 +161,8 @@ def main():
                 if preload_outcome(value):break
                 time.sleep(.2)
             limited = preload_outcome(value) == 'limited'
+            if preload_outcome(value) == 'failed':
+                raise AssertionError('Preloading failed: '+str(value['native'].get('preloadReason')))
             if limited:
                 # Observe actual file bytes after the writer reports its cap.
                 # A state flag alone cannot prove the hard budget.

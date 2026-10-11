@@ -12,7 +12,9 @@ spec.loader.exec_module(probe)
 
 class ProbeTests(unittest.TestCase):
     def test_observed_cap_is_valid_without_cli_override(self):
-        self.assertEqual(probe.preload_outcome({'native': {'preloadLimited': True, 'cacheComplete': False}}), 'limited')
+        self.assertEqual(probe.preload_outcome({'native': {'preloadLimited': True, 'preloadReason':'budget', 'cacheComplete': False}}), 'limited')
+        for reason in ('cache-io','cache-open','worker-start',None):
+            self.assertEqual(probe.preload_outcome({'native': {'preloadLimited': True,'preloadReason':reason}}),'failed')
         self.assertEqual(probe.preload_outcome({'native': {'preloadLimited': False, 'cacheComplete': True}}), 'complete')
         self.assertIsNone(probe.preload_outcome({'native': {'preloadLimited': False, 'cacheComplete': False}}))
 
@@ -21,6 +23,8 @@ class ProbeTests(unittest.TestCase):
         self.assertFalse(probe.budget_stable([1050 + i * 2 for i in range(16)], 1000, 100))
         self.assertFalse(probe.budget_stable([1101] * 16, 1000, 100))
         self.assertFalse(probe.budget_stable([1050], 1000, 100))
+        self.assertFalse(probe.budget_stable([0]*16,1000,100))
+        self.assertFalse(probe.budget_stable([100]*16,1000,100))
 
     def test_deadline_scales_with_100mib_rate_and_is_bounded(self):
         self.assertGreater(probe.preload_timeout(100*1024**2,.12),100*1024**2/65536*.12)

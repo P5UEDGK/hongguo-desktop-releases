@@ -1,5 +1,6 @@
 """Session-owned original blocks; enforce disk limits before any payload write."""
 import threading
+import time
 
 
 class RangeDiskCache:
@@ -70,6 +71,7 @@ class RangeDiskCache:
             return {'cacheFileBytes': self.bytes,
                     'cacheComplete': bool(self.total and not self.closed and not self.failed and self.bytes == self.total),
                     'preloadLimited': self.limited or self.failed,
+                    'preloadReason': 'cache-io' if self.failed else 'budget' if self.limited else None,
                     'cacheKind': 'original-range-blocks'}
 
     def close(self):
@@ -95,3 +97,30 @@ def preload(source, cache, stopped):
         # Network failures remain source-read failures. Optional local cache
         # failure is reported separately and must not trigger H.264 fallback.
         return
+
+
+class PreloadWorker:
+    """Restart an interrupted optional fill without overlapping workers."""
+    def __init__(self, source, cache, stopped):
+        self.source,self.cache,self.stopped=source,cache,stopped
+        self.thread=None
+        self.next_start=0
+        self.failure=None
+
+    def tick(self):
+        state=self.cache.snapshot()
+        if (self.stopped() or state['cacheComplete'] or state['preloadLimited']
+                or self.thread is not None and self.thread.is_alive()
+                or time.monotonic()<self.next_start):
+            return
+        self.next_start=time.monotonic()+1
+        self.thread=threading.Thread(target=preload,args=(self.source,self.cache,self.stopped),
+            name='desktop-current-source-preload',daemon=True)
+        try:
+            self.thread.start();self.failure=None
+        except RuntimeError:
+            self.failure='worker-start'
+
+    def close(self):
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1)

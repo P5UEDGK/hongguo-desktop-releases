@@ -1,5 +1,5 @@
 {
-  "nativeHead": "b330417cd2ab9ddc1a558cd897ffb423b7f407fc",
+  "nativeHead": "fae4eedc309bbc1a69865cfd153eaa86b10074df",
   "files": [
     {
       "path": "backend/desktop_stream.py",
@@ -8,13 +8,13 @@
     },
     {
       "path": "backend/desktop_hls_service.py",
-      "baseSha256": "49632d218e9eebcd580120791e846c8819a1605eda61c59ee76a5825f7ca0ed6",
-      "patchedSha256": "c67f9230603e765597941d0bab15e6e0043607ef76ab4863c8e88ffbed1b2a5b"
+      "baseSha256": "50379a15a160582e23c9b65368be25b296ac13f0555a7c475edc9536cf0de91c",
+      "patchedSha256": "e596ad9a59844f928d23a1c21ca414d0c0ac64dc9993136f30099993fe53775d"
     },
     {
       "path": "backend/desktop_native.py",
-      "baseSha256": "2451304632847433d1f84e0ae5233c6c7ad30549be479e9a21ca31ca71e7a228",
-      "patchedSha256": "860b33da7798354e7a62c8cc31e7d5d2063a077132a59f755934f95a76dcb946"
+      "baseSha256": "1ee40719fed6b9fcf141c18db790c45783335230ed0556f95a4bea00f3e0067d",
+      "patchedSha256": "dff9224724cfae8551d70ffc79f3aeb4d16c18571da01c831134658a0ca115a4"
     }
   ]
 }

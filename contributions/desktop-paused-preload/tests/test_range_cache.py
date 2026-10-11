@@ -2,11 +2,39 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile,threading,unittest
 from unittest.mock import patch
-from desktop_range_cache import RangeDiskCache,preload
+from desktop_range_cache import RangeDiskCache,preload,PreloadWorker
 from desktop_stream import RangeReader
 
 
 class RangeCacheTests(unittest.TestCase):
+    def test_interrupted_fill_restarts_after_backoff_without_duplicate_worker(self):
+        class Source:
+            size=65536*2;block_size=65536
+            def __init__(self):self.calls=0
+            def block(self,index,cancelled):
+                self.calls+=1
+                if self.calls==1:raise OSError('temporary disconnect')
+                return b'x'*65536
+            def reader(self,stopped,cache=None):return RangeReader(self,stopped,cache=cache)
+        source=Source();cache=RangeDiskCache(self.path,source.size,source.size);self.addCleanup(cache.close)
+        worker=PreloadWorker(source,cache,lambda:False)
+        with patch('desktop_range_cache.time.monotonic',return_value=0):
+            worker.tick();worker.thread.join(1)
+            first=worker.thread;worker.tick();self.assertIs(worker.thread,first)
+        with patch('desktop_range_cache.time.monotonic',return_value=1.1):
+            worker.tick();worker.thread.join(1)
+            self.assertIsNot(worker.thread,first);self.assertTrue(cache.snapshot()['cacheComplete'])
+            finished=worker.thread;worker.tick();self.assertIs(worker.thread,finished)
+
+    def test_worker_start_failure_is_explicit_and_can_retry(self):
+        cache=RangeDiskCache(self.path,100,100);self.addCleanup(cache.close)
+        worker=PreloadWorker(None,cache,lambda:False)
+        with patch('desktop_range_cache.threading.Thread.start',side_effect=RuntimeError('unavailable')):
+            worker.tick();self.assertEqual(worker.failure,'worker-start')
+        worker.next_start=0
+        with patch('desktop_range_cache.preload') as fill:
+            worker.tick();worker.thread.join(1);fill.assert_called_once();self.assertIsNone(worker.failure)
+
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         self.path=Path(temp.name)/'cache'

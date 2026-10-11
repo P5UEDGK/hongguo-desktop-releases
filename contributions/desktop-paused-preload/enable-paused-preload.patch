@@ -42,7 +42,7 @@
      stream_url: str | None = None
      stream_key: str | None = field(default=None, repr=False)
      negotiate_codec: bool = False
-@@ -422,7 +423,7 @@
+@@ -425,7 +426,7 @@
          response_headers.pop("Content-Length", None)
          def chunks():
              try:
@@ -53,27 +53,27 @@
                      while remaining:
 --- a/backend/desktop_native.py
 +++ b/backend/desktop_native.py
-@@ -14,6 +14,9 @@
+@@ -15,6 +15,9 @@
  import threading
  import time
  from desktop_stream import ProgressiveSource, SourceReadError
-+from desktop_range_cache import RangeDiskCache, preload
++from desktop_range_cache import RangeDiskCache, PreloadWorker
 +
 +CACHE_FILE_BUDGET = 512 * 1024 ** 2
  
  DLL_SHA256 = "34780746a0273a4fcae42dfe262a28984a426a238939474afd3a1561b450bbef"
  
-@@ -288,6 +291,9 @@
-         last_progress, last_position, slow_since = initial, None, None
-         retried = False
+@@ -316,6 +319,9 @@
          frame_ready = False
+         requested_position = self.job.start_seconds
+         drop_watch = FrameDropWatch()
 +        disk_cache = None
 +        preloader = None
-+        preload_limited = False
++        preload_reason = None
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
-@@ -329,6 +335,14 @@
+@@ -358,6 +364,16 @@
              for key, value in options.items():
                  player.option(key, value)
              if progressive:
@@ -82,52 +82,49 @@
 +                    disk_cache = RangeDiskCache(self.job.directory / "source-range.cache",
 +                                                CACHE_FILE_BUDGET, self.job.source.size)
 +                    self.job.input_cache = disk_cache
++                    preloader = PreloadWorker(self.job.source, disk_cache,
++                        lambda: self.stop.is_set() or self.job.cancelled.is_set())
 +                except OSError:
-+                    preload_limited = True  # Optional disk failure keeps normal playback.
++                    preload_reason = "cache-open"  # Optional disk failure keeps normal playback.
 +                player.option("cache-on-disk", "no")
                  for key, value in {"cache": "yes", "cache-secs": "12", "demuxer-readahead-secs": "12",
                                     "demuxer-max-bytes": "32MiB", "cache-pause": "yes",
                                     "cache-pause-wait": "1", "demuxer-lavf-format": "mov"}.items():
-@@ -420,6 +434,22 @@
+@@ -450,6 +466,17 @@
                              buffer_start, buffer_end = max(0, selected["start"]), selected["end"]
                      except (ValueError, TypeError, KeyError):
                          pass
 +                cache_state = {"cacheFileBytes": 0, "cacheComplete": False,
-+                               "preloadLimited": preload_limited, "cacheKind": "original-range-blocks"}
++                               "preloadLimited": preload_reason is not None,
++                               "preloadReason": preload_reason, "cacheKind": "original-range-blocks"}
 +                if disk_cache:
-+                    if output_ready and preloader is None:
-+                        preloader = threading.Thread(target=preload,
-+                            args=(self.job.source, disk_cache,
-+                                  lambda: self.stop.is_set() or self.job.cancelled.is_set()),
-+                            name="desktop-current-source-preload", daemon=True)
-+                        try:
-+                            preloader.start()
-+                        except RuntimeError:
-+                            preload_limited = True
++                    if output_ready:
++                        preloader.tick()
 +                    cache_state = disk_cache.snapshot()
-+                    cache_state["preloadLimited"] |= preload_limited
++                    if preloader.failure:
++                        cache_state.update(preloadLimited=True,preloadReason=preloader.failure)
 +                    if cache_state["cacheComplete"]:
 +                        buffer_start, buffer_end = 0, self.job.duration or buffer_end
                  if last_position is None or abs(position - last_position) > .01 or paused or seeking:
                      last_position, last_progress = position, now
                  unstable = not paused and not buffering and not seeking and not eof and now > grace
-@@ -444,6 +474,7 @@
+@@ -478,6 +505,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
 +                                     **cache_state,
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
-                                      frameDrops=player.number("frame-drop-count"), decoderDrops=player.number("decoder-frame-drop-count"))
-@@ -455,6 +486,11 @@
+                                      frameDrops=frame_drops, decoderDrops=decoder_drops)
+@@ -489,6 +517,11 @@
              with self.guard:
                  self.data.update(state="failed", failureCode="native-decode")
          finally:
 +            self.stop.set()
 +            if disk_cache:
 +                disk_cache.close()  # Close handle before the owning job removes its directory.
-+            if preloader and preloader.is_alive():
-+                preloader.join(timeout=1)
++            if preloader:
++                preloader.close()
              for surface, (previous, callback) in self.input_hooks.items():
                  if user.IsWindow(surface):
                      user.SetWindowLongPtrW(surface, -4, previous)
