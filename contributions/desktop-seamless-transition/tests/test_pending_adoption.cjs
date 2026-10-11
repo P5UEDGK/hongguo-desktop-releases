@@ -9,12 +9,12 @@ const tick=async()=>{for(let n=0;n<10;n++)await new Promise(setImmediate)};
   const context={URL,Event,Number,Math,Map,AbortController,setTimeout,clearTimeout,
    ResizeObserver:class{observe(){}disconnect(){}},document:{hidden:false,removeEventListener(){},head:{append(){}},createElement:()=>({remove(){}})},window:{},
    w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
-   desktopCodecHls(target,url,start,callbacks,preparation,windowed,intent){cold=true;coldPaused=intent.paused;assert.equal(start,20);return ()=>{};}};
+   desktopCodecHls(target,url,start,callbacks,preparation,windowed,intent){cold=true;coldPaused=intent.paused;assert.equal(start,20);assert.equal(target.playbackRate,3,'seek failure fallback refreshes current settings');assert.equal(target.volume,.7);assert.equal(target.muted,true);return ()=>{};}};
   vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);
   const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',0,{onSeekTarget(){},onError(){throw Error('unexpected failure');}},prep);
   dispose.seek(20);
   if(pausePhase==='claim')media.pause();
-  resolveClaim({mode:'copy',async seek(target){calls.push('seek');assert.equal(target,20);if(pausePhase==='seek')media.pause();await tick();if(fail)throw Error('seek rejected');position=target;},
+  resolveClaim({mode:'copy',async seek(target){calls.push('seek');assert.equal(target,20);if(pausePhase==='seek')media.pause();await tick();if(fail){Object.assign(media,{playbackRate:3,volume:.7,muted:true});throw Error('seek rejected');}position=target;},
    adopt(){calls.push('activate');assert.equal(position,20,'pending claim seek is ACKed before HLS activation');adopted=true;return Object.assign(()=>{},{seek(){}});}});
   await tick();await tick();assert.equal(adopted,!fail);assert.equal(cold,fail);assert.equal(cancelled,fail);
   assert.equal(calls[0],'seek');if(pausePhase!=='none'){assert.equal(media.paused,true,'pause during claim or seek survives adoption');if(fail)assert.equal(coldPaused,true,'fallback retains pending pause');}dispose();

@@ -14,7 +14,7 @@ function desktopShouldPrewarm(media) {
 function desktopHoldForNext(media) {
   if (!media) return null;
   const existing = desktopStandbys.get(media);
-  if (existing && !existing.failed) return existing;
+  if (existing && (!existing.failed || existing.holding)) {existing.hold?.();return existing;}
   let claimed = false, finished = false, timer;
   const releases = [];
   const holder = {
@@ -41,7 +41,7 @@ function desktopHoldForNext(media) {
 
 function desktopRetainPicture(media) {
   const preparation = desktopStandbys.get(media);
-  if (!preparation || preparation.failed) return null;
+  if (!preparation || preparation.failed && !preparation.holding) return null;
   const display = media.desktopDisplayMedia || media;
   let cover = null;
   // Native video is a separate HWND: its session is retained below. HLS can
@@ -69,7 +69,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
   const previous = desktopStandbys.get(currentMedia);
   previous?.dispose();
   let disposed = false, claimed = false, id = null, controller = null, video = null, creationToken = null;
-  let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null;
+  let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null, holdRequested = false;
   let known = {}, knownDuration = null, failed = false, resumePosition = null, resumeFailed = false, resumeInvalid = false;
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
@@ -112,7 +112,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     }));
   }
   function finishRetained() {
-    clearTimeout(retireTimer); retireTimer = null;
+    clearTimeout(retireTimer); retireTimer = null; holdRequested = false;
     for (const cleanup of retained.splice(0)) cleanup();
     if (desktopStandbys.get(currentMedia) === preparation) desktopStandbys.delete(currentMedia);
   }
@@ -169,6 +169,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
   }
   const preparation = {
     get failed() {return failed;},
+    get holding() {return holdRequested;},
+    hold() {holdRequested = true; retireTimer ||= setTimeout(finishRetained,90000);},
     get settings() {return {rate:currentMedia.playbackRate || 1, volume:currentMedia.volume, muted:currentMedia.muted};},
     get resumePosition() {return resumePosition;},
     get resumeFailed() {return resumeFailed;},
@@ -184,7 +186,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     claim: async () => null,
     async claimRecord(wanted, position = 0, requestedWindowed = false) {
       if (claimed) return null;
-      if (Date.now() >= deadline) {claimed = true;failed = true;cleanup(retained.length > 0);return null;}
+      if (Date.now() >= deadline) {claimed = true;failed = true;cleanup(holdRequested || retained.length > 0);return null;}
       if (wanted !== url) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
       if (requestedWindowed !== windowed) {cleanup(true);return null;}
@@ -226,12 +228,12 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       }, settings:preparation.settings, expiresAt:deadline};
     }
   };
-  expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup(retained.length > 0);}}, 90000);
+  expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup(holdRequested || retained.length > 0);}}, 90000);
   desktopStandbys.set(currentMedia, preparation);
   const callbacks = Object.fromEntries(['onTimeline','onPlayableRange','onComplete','onWindowOrigin',
     'onReady','onError','onAcceptanceHlsTransition'].map(name => [name, (...args) => {
     known[name] = args;
-    if (name === 'onError') {failed = true; if (consumer) finishRetained(); else cleanup(retained.length > 0);}
+    if (name === 'onError') {failed = true; if (consumer) finishRetained(); else cleanup(holdRequested || retained.length > 0);}
     consumer?.[name]?.(...args);
   }]));
   const prepared = (async () => {
@@ -377,7 +379,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         },{seek:value=>{rememberResume(value,known.onTimeline?.[0]||video.duration);controller?.seek(value);},sessionId:()=>controller?.sessionId?.() ?? null});
       }};
     } catch {
-      failed = true; if (!claimed) cleanup(retained.length > 0); else {release();video?.remove();}
+      failed = true; if (!claimed) cleanup(holdRequested || retained.length > 0); else {release();video?.remove();}
       return null;
     }
   })();
