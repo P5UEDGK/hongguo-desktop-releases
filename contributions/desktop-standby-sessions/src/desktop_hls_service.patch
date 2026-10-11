@@ -19,16 +19,17 @@
          self.root = Path(root).resolve(strict=True)
          if not self.root.is_dir() or self.root.is_symlink():
              raise ValueError("Desktop work directory is unavailable")
-@@ -62,6 +68,8 @@
+@@ -62,6 +68,9 @@
          self.full_cache_ready = full_cache_ready
          self.negotiation_seconds = negotiation_seconds
          self.native = native
++        self.foreground_generation = None
 +        self.on_activate = on_activate
 +        self.standby_source_loader = standby_source_loader
          self.encoder_slots = threading.BoundedSemaphore(max_workers)
          self.closed = threading.Event()
          self.reaper_stop = threading.Event()
-@@ -119,7 +127,7 @@
+@@ -119,7 +128,7 @@
              if time.monotonic() - job.touched > self.idle_seconds:
                  self.release(job.id)
  
@@ -37,7 +38,7 @@
          if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
              raise HTTPException(400, "Invalid episode identity")
          if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
-@@ -129,18 +137,28 @@
+@@ -129,19 +138,30 @@
              self._expire()
              if self.closed.is_set():
                  raise HTTPException(503, "Desktop sessions are closed")
@@ -66,9 +67,11 @@
 -                if self.on_start:
 +                if self.on_start and not prewarm_parent:
                      self.on_start(job, series_id, episode)
++                    self.foreground_generation = job.prefetch_generation
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
-@@ -158,7 +176,9 @@
+                 job.failed = True
+@@ -158,7 +178,9 @@
          source = None
          encoder_acquired = False
          try:
@@ -79,7 +82,7 @@
              job.source = source if isinstance(source, ProgressiveSource) else Path(source)
              if job.cancelled.is_set():
                  raise EncodingCancelled()
-@@ -278,6 +298,9 @@
+@@ -278,6 +300,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -89,7 +92,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -290,6 +313,35 @@
+@@ -290,6 +315,36 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -120,12 +123,13 @@
 +                if callable(accepted):
 +                    after_detach = accepted
 +            job.prewarm_parent = None
++            self.foreground_generation = job.prefetch_generation
 +        if after_detach:
 +            after_detach()
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -387,7 +439,7 @@
+@@ -387,7 +442,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -134,7 +138,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -398,7 +450,11 @@
+@@ -398,7 +453,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -147,7 +151,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -496,6 +552,7 @@
+@@ -496,6 +555,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -155,7 +159,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -509,17 +566,29 @@
+@@ -509,17 +569,32 @@
  
      @router.post("/{identifier}/control")
      async def control(identifier: str, request: Request):
@@ -170,6 +174,9 @@
 +                if (job.video_mode != "native" or not jobs.native or job.failed
 +                        or not job.ready.is_set()):
 +                    raise HTTPException(409, "Native session unavailable")
++                if (body.get("visible") is True and job.prewarm_parent and
++                        job.prefetch_generation != jobs.foreground_generation):
++                    raise HTTPException(409, "Standby generation expired")
 +                revision = jobs.native.control(identifier, body)
 +                if body.get("visible") is True:
 +                    job.activation_revision = max(job.activation_revision or 0, revision)

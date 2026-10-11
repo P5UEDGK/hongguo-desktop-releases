@@ -6,13 +6,13 @@
                  with self.guard:
 +                    parent = getattr(job, "prewarm_parent", None)
 +                    if parent:
-+                        if (self.sessions and parent not in self.sessions) or len(self.sessions) >= 2:
++                        if parent not in self.sessions or len(self.sessions) >= 2:
 +                            raise RuntimeError("Standby parent unavailable")
 +                        break  # The active parent must survive standby preparation.
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,37 @@
+@@ -291,7 +296,39 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -21,6 +21,8 @@
 +            try:
 +                if getattr(session.job, "prewarm_parent", None):
 +                    if body.get("visible") is True:
++                        if session.job.prewarm_parent not in self.sessions:
++                            raise ValueError("Native standby parent unavailable")
 +                        if not session.snapshot().get("outputReady"):
 +                            raise ValueError("Standby frame unavailable")
 +                        for identifier_, previous in self.sessions.items():
@@ -51,7 +53,7 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -445,7 +480,8 @@
+@@ -451,7 +488,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -61,7 +63,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -631,6 +667,7 @@
+@@ -638,6 +676,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

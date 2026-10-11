@@ -38,7 +38,7 @@ pwsh -NoProfile -Command "python -I contributions/desktop-standby-sessions/tests
 
 ## 本轮三次反馈修复
 
-HlsJobs新增可选standby_source_loader=prefetch.load_standby_source。该入口按job的父代际和取消状态检查冷源，不要求current为子集，也不提前提升；旧README接线的冷备用回放失败。推进新前台代际时取消正在编码的warm owner，让编码器按既有cancelled回调退出，实际退出后再释放busy。两个旧回放失败，当前174项全部通过（含自有HEVC）。当前原生依赖为 c7bfbc2ea269af4013ab971467d9ef68dc207b9a，prefetch依赖见BASELINES.json。
+HlsJobs新增可选standby_source_loader=prefetch.load_standby_source。该入口按job的父代际和取消状态检查冷源，不要求current为子集，也不提前提升；旧README接线的冷备用回放失败。推进新前台代际时取消正在编码的warm owner，让编码器按既有cancelled回调退出，实际退出后再释放busy。两个旧回放失败，当前174项全部通过（含自有HEVC）。当前原生及prefetch依赖均读取BASELINES.json对应HEAD，不再使用固定旧提交。
 
 本机候选与安装仍待完成。
 
@@ -49,3 +49,8 @@ HlsJobs新增可选standby_source_loader=prefetch.load_standby_source。该入�
 
 
 依赖元数据同步到完整缓存时间线校验提交；四个补丁的目标文件摘要保持不变。
+
+
+本轮第六批审查（2026-10-12）：4242520609/0615/0618：显示前验证当前generation；HLS父到native子跨模式拒绝未经确认音频交接；README依赖同步。
+
+旧实现回放失败，修改后的对应回归通过；公开待机组合192项、浏览器组合88项及本机融合后端295项通过，无跳过。本机真实Tauri原生及HLS含社交交互验收通过，关闭后资源归零；安装验收仍待完成，上游尚未合并发布。

@@ -95,6 +95,24 @@ class StandbyTests(unittest.TestCase):
         with self.assertRaises(EncodingCancelled):prefetch.load_standby_source(job,'1234567890123456',2)
         self.assertEqual(calls,[])
 
+    def test_stale_completed_standby_is_rejected_before_visible_control(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        child.video_mode='native';child.ready.set();child.prefetch_generation=1;jobs.foreground_generation=2
+        jobs.native=SimpleNamespace(available=True,control=lambda *_:self.fail('stale control must not reach parent/child'),release=lambda _:None)
+        control=next(route.endpoint for route in make_router(jobs,lambda _:True).routes if route.path.endswith('/control'))
+        async def body():return {'visible':True,'paused':False}
+        with self.assertRaises(HTTPException) as result:asyncio.run(control(child.id,SimpleNamespace(json=body)))
+        self.assertEqual(result.exception.status_code,409);self.assertIsNone(child.activation_revision)
+
+    def test_native_prewarm_rejects_unacknowledged_hls_parent(self):
+        host=NativeHost(dll_path=Path('missing-owned-fixture.dll'));host.available=True
+        job=SimpleNamespace(id='child',prewarm_parent='hls-parent',native_parent=123,cancelled=threading.Event())
+        with patch.object(host,'parent_window',return_value=123),patch('desktop_native.NativeSession') as session:
+            with self.assertRaises(RuntimeError):host.prepare(job)
+            session.assert_not_called()
+        self.assertEqual(host.sessions,{});self.assertEqual(host.preparing,set())
+
     def test_control_submit_and_revision_are_atomic_against_delete(self):
         jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)

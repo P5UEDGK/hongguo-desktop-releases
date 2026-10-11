@@ -175,7 +175,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -317,6 +416,7 @@
+@@ -318,6 +417,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result
