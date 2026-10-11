@@ -26,6 +26,14 @@ const retry=store.read('metrics');pending.shift().resolve({likes:4});await retry
 const old=store.read('replies',{comment_id:'pending'});store.dispose();await assert.rejects(old,{name:'AbortError'});pending.shift();
 const clean=store.read('comments',{kind:'episode'});pending.shift().resolve(page(['new-session']));await clean;assert.equal(calls.length,9);
 store.dispose();
+// Reopening page one joins a later in-flight cursor and receives merged rows.
+const reopenPending=createStore(endpoint);
+const firstPage=reopenPending.read('comments',{kind:'episode'});pending.shift().resolve(page(['one'],'p2',true));await firstPage;
+const nextPage=reopenPending.read('comments',{kind:'episode',cursor:'p2'});
+const reopenedPage=reopenPending.read('comments',{kind:'episode'});
+pending.shift().resolve(page(['two']));await nextPage;
+assert.deepEqual((await reopenedPage).items.map(x=>x.id),['one','two'],'reopened cached page joins pending pagination');
+reopenPending.dispose();
 // A late pagination request can recreate an evicted entry without page one.
 const evicted=createStore(endpoint);
 const initial=evicted.read('comments',{kind:'episode'});pending.shift().resolve(page(['first'],'p2',true));await initial;

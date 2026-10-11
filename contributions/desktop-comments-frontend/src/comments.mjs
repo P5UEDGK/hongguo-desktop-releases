@@ -48,7 +48,6 @@ function desktopSocialStore(endpoint) {
       if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).cancelled = true; entries.get(oldest).abort.abort(); entries.delete(oldest);}
       entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set()}; entries.set(key, entry);
     }
-    if (entry.value && entry.cursors.has(cursor)) return Promise.resolve(entry.value);
     if (entry.pending) {
       if (entry.pendingCursor === cursor) return entry.pending;
       let timer;
@@ -60,6 +59,7 @@ function desktopSocialStore(endpoint) {
         new Promise((_,reject)=>{timer=setTimeout(()=>reject(new DOMException('Read deadline expired','TimeoutError')),Math.max(0,deadline-Date.now()));})
       ]).finally(()=>clearTimeout(timer));
     }
+    if (entry.value && entry.cursors.has(cursor)) return Promise.resolve(entry.value);
     entry.pendingCursor = cursor;
     if (entry.abort.signal.aborted) entry.abort = new AbortController();
     const timer = setTimeout(() => entry.abort.abort(), Math.max(0,deadline-Date.now()));
@@ -265,7 +265,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     b.jsx('p', {children: b.jsx(DesktopEmojiText,{text:item.text || (item.image_count ? '[图片评论]' : '[无文字评论]')})}),
     b.jsx('small', {children: (item.created_at ? new Date(item.created_at * 1000).toLocaleDateString('zh-CN') + ' · ' : '') + '赞 ' + item.likes}),
     replies && item.replies > 0 && b.jsx('button', {'aria-expanded': open, onClick: () => {
-      setOpen(!open); if (open) {own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!page && !busy) load();}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
+      setOpen(!open); if (open) {own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!busy) load();}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
     open && b.jsxs('div', {className: 'desktop-social-replies', children: [
       page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, store, replies: false}, row.id)),
       page && !page.items.length && b.jsx('p', {children: '暂无回复'}),
