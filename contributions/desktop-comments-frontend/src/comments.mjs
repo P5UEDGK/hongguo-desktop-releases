@@ -246,6 +246,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
   const [busy, setBusy] = O.useState(false), [error, setError] = O.useState('');
   const own = O.useRef(null);
   const detachedCursor = O.useRef(null);
+  const laterIds = O.useRef(new Set());
   const failedCursor = O.useRef('');
   O.useEffect(() => {
     own.current = {abort: new AbortController(), busy: false};
@@ -261,10 +262,12 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
       if (own.current === request && !request.abort.signal.aborted) setPage(previous => {
         detachedCursor.current = null;
         const freshIds = new Set(result.items.map(row => row.id));
-        const keepLater = !cursor && previous && previous.items.some(row => !freshIds.has(row.id));
+        if (cursor) for (const row of result.items) laterIds.current.add(row.id);
+        const later = previous?.items.filter(row => laterIds.current.has(row.id) && !freshIds.has(row.id)) || [];
+        const keepLater = !cursor && later.length > 0;
         return {...result, cursor: keepLater ? previous.cursor : result.cursor,
           has_more: keepLater ? previous.has_more : result.has_more && result.cursor !== cursor,
-          items: !previous ? result.items : cursor ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : [...result.items, ...previous.items.filter(row => !freshIds.has(row.id))]};
+          items: !previous ? result.items : cursor ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : [...result.items, ...later]};
       });
     } catch (e) {if (!request.abort.signal.aborted) setError('回复加载失败，请重试');}
     finally {request.busy = false; if (!request.abort.signal.aborted) setBusy(false);}
