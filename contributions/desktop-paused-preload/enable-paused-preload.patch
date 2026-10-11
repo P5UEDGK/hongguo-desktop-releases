@@ -63,7 +63,7 @@
  from desktop_native_engine import EnginePool
  import uuid
  
-@@ -450,11 +453,15 @@
+@@ -453,11 +456,15 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -79,7 +79,7 @@
          desired = {"paused": True, "rate": 1, "volume": 1, "muted": False}
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
-@@ -507,6 +514,16 @@
+@@ -510,6 +517,16 @@
                      resources.update(player=player, hwnd=hwnd, parent=self.parent, id=uuid.uuid4().hex)
              # Every source-dependent option is reset, including when switching
              # encrypted/clear input or recovering from the previous soft retry.
@@ -96,7 +96,7 @@
              per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
                          "volume": 100, "mute": "yes" if desired["muted"] else "no",
                          "hwdec": "auto-safe" if self.host.hardware else "no",
-@@ -555,6 +572,7 @@
+@@ -558,6 +575,7 @@
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
                      if command.get("paused") is True:
@@ -104,7 +104,7 @@
                          desired["paused"] = True
                          player.command("set", "pause", "yes")
                      for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
-@@ -574,6 +592,7 @@
+@@ -577,6 +595,7 @@
                          output_watch.since = None
                          grace = initial + 3
                      if command.get("paused") is False:
@@ -112,7 +112,7 @@
                          desired["paused"] = False
                          player.command("set", "pause", "no")
                          grace = time.monotonic() + 3
-@@ -613,6 +632,17 @@
+@@ -616,6 +635,17 @@
                              buffer_start, buffer_end = max(0, selected["start"]), selected["end"]
                      except (ValueError, TypeError, KeyError):
                          pass
@@ -130,7 +130,7 @@
                  if last_position is None or abs(position - last_position) > .01 or paused or seeking:
                      last_position, last_progress = position, now
                  unstable = not paused and not buffering and not seeking and not eof and now > grace
-@@ -642,6 +672,7 @@
+@@ -645,6 +675,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
@@ -138,7 +138,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops)
-@@ -653,6 +684,11 @@
+@@ -656,6 +687,11 @@
              with self.guard:
                  self.data.update(state="failed", failureCode="native-decode")
          finally:
