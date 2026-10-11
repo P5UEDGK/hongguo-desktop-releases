@@ -28,6 +28,23 @@ function fixture() {
     settings:{opacity:80,lanes:6,fontSize:18,duration:4}};
 }
 (async()=>{
+  await test('same bucket pagination preserves its opaque cursor while paused',async()=>{
+    const f=fixture();f.media.currentTime=25;const stop=f.start();
+    assert.equal(f.pending[0].params.offset_ms,0);
+    await f.resolve({next_offset_ms:0,has_more:true,cursor:'second'});
+    await f.tick(25);
+    assert.equal(f.pending[0].params.cursor,'second');
+    await f.resolve({next_offset_ms:0,has_more:true,cursor:'third'});
+    await f.tick(25);assert.equal(f.pending[0].params.cursor,'third');stop();
+  });
+  await test('late-only raw pages are not repeatedly sorted while paused',async()=>{
+    const f=fixture();const stop=f.start();await f.tick(2);
+    await f.resolve({items:Array.from({length:600},(_,i)=>row(String(i),i)),next_offset_ms:30000});
+    await f.tick(2);let evaluations=0;
+    f.context.JSON={...JSON,stringify(...args){evaluations++;return JSON.stringify(...args);}};
+    for(let i=0;i<60;i++)await f.tick(2);
+    assert.equal(evaluations,0);assert.equal(f.media.desktopDanmaku.length,0);stop();
+  });
   await test('closing settings stays closed after restoring toggle focus',()=>{
     const values=[true,false,{opacity:80,lanes:3,fontSize:28,duration:14},true,[]];let index=0,root,focused=false;
     const React={useState(initial){const i=index++;return [values[i],value=>{values[i]=value;}];},

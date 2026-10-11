@@ -27,9 +27,12 @@ function DesktopDanmakuSettings({media, sessionKey}) {
   const [settings, setSettings] = O.useState(desktopDanmakuSettings);
   const [enabled, setEnabled] = O.useState(() => desktopSocialPreference('danmaku', true));
   const [rows, setRows] = O.useState([]), panel = O.useRef(null), hoverTimer = O.useRef(null);
-  const control = O.useRef(null), hovered = O.useRef(false);
+  const control = O.useRef(null), hovered = O.useRef(false), pointerFocus = O.useRef(false);
   const dismiss = () => {
-    if (!hovered.current && !control.current?.contains(document.activeElement)) setOpen(false);
+    const active = document.activeElement;
+    const keepFocus = panel.current?.contains(active) ||
+      (!pointerFocus.current && control.current?.contains(active));
+    if (!hovered.current && !keepFocus) setOpen(false);
   };
   O.useEffect(() => () => clearTimeout(hoverTimer.current), []);
   O.useEffect(() => {
@@ -63,9 +66,11 @@ function DesktopDanmakuSettings({media, sessionKey}) {
   }, [open, list, sessionKey]);
   const update = (name, value) => desktopSocialSet(media.current, {settings: {...settings, [name]: Number(value)}});
   return b.jsxs('span', {ref:control, className: 'desktop-danmaku-control',
+    onPointerDownCapture: () => {pointerFocus.current=true;},
+    onKeyDownCapture: () => {pointerFocus.current=false;},
     onPointerEnter: () => {hovered.current=true; clearTimeout(hoverTimer.current); setOpen(true);},
     onPointerLeave: () => {hovered.current=false; hoverTimer.current = setTimeout(dismiss, 250);},
-    onFocus: () => {clearTimeout(hoverTimer.current); setOpen(true);},
+    onFocus: event => {if (event?.target?.matches?.(':focus-visible')) pointerFocus.current=false;clearTimeout(hoverTimer.current); setOpen(true);},
     onBlur: event => {if (!event.currentTarget.contains(event.relatedTarget)) hoverTimer.current=setTimeout(dismiss,250);}, children: [
     b.jsx('button', {className: 'desktop-danmaku-toggle', 'aria-label': '弹幕', 'aria-pressed': enabled,
       'aria-expanded': open, title: '点击开关弹幕，悬停调整设置',
@@ -181,8 +186,9 @@ function desktopStartDanmaku(media, endpoint, status) {
   async function load() {
     const time = Math.max(0, media.currentTime || 0) * 1000;
     if (!enabled || busy || Date.now() < retryAt) return;
-    if (next < time - 24000) {
-      next = Math.floor(time / 30000) * 30000; cursor = ''; ended = false;
+    const bucket = Math.floor(time / 30000) * 30000;
+    if (next < time - 24000 && bucket > next) {
+      next = bucket; cursor = ''; ended = false;
     }
     if (ended || time + 5000 < next) return;
     busy = true; const own = generation, offset = next, ownCursor = cursor;
@@ -218,7 +224,7 @@ function desktopStartDanmaku(media, endpoint, status) {
     if (last >= 0 && (time < last - .7 || time > last + Math.max(3, elapsed + .7))) reset();
     last = time; lastClock = clock; load();
     const widthNow = viewport(), through = rows.at(-1)?.offset_ms ?? -1;
-    if (widthNow !== lastViewport || (through < time * 1000 + 5000 && raw.some(row => row.offset_ms > through))) {
+    if (widthNow !== lastViewport || (through < time * 1000 + 5000 && raw.some(row => row.offset_ms > through && row.offset_ms >= time * 1000))) {
       const updated = desktopDanmakuRows(raw, settings, rows, widthNow, time * 1000);
       if (JSON.stringify(updated) !== JSON.stringify(rows)) {rows = updated; publish();}
       lastViewport = widthNow;
