@@ -306,19 +306,27 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       id = await createSession();
       if (disposed) return;
       const deadline = Date.now() + 90000;
+      async function resetSavedPosition() {
+        const invalid = id; id = null;
+        if (!await release(invalid)) throw Error('Invalid resume session release failed');
+        if (state.time === requestedStart) {state.time = 0; seekPending = null;}
+        requestedStart = 0;
+        sourceUrl.searchParams.delete('start_seconds');
+        id = await createSession();
+      }
       let metadata;
       while (!disposed && Date.now() < deadline) {
         const result = await request('/' + id + '/status');
+        if (result.state === 'failed' && result.failureCode === 'start-position' && requestedStart > 0) {
+          await resetSavedPosition();
+          continue;
+        }
         if (result.state === 'failed') throw Error('Source preparation failed');
         if (result.source) {
-          if (Number.isFinite(result.duration) && result.duration > 0 && requestedStart >= result.duration && state.time === requestedStart) {
+          if (requestedStart > 0 && (!Number.isFinite(result.duration) || result.duration <= 0 || requestedStart >= result.duration) && state.time === requestedStart) {
             // Saved EOF belongs to the old duration. Validate it before mode
             // commitment, while a new zero-origin session is still possible.
-            const invalid = id; id = null;
-            if (!await release(invalid)) throw Error('Invalid resume session release failed');
-            state.time = requestedStart = 0; seekPending = null;
-            sourceUrl.searchParams.delete('start_seconds');
-            id = await createSession();
+            await resetSavedPosition();
             if (disposed) return;
             continue;
           }
@@ -337,6 +345,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
           body: JSON.stringify({mode: 'native', ...(context ? {window:context} : {})})});
       } catch (error) {
+        if (error.status === 400) {delegate(false); return;}
         if (error.status !== 409) throw error;
         const latest = await request('/' + id + '/status');
         if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;

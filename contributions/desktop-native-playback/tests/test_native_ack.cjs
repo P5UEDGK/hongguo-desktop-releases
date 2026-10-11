@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const tick=()=>new Promise(setImmediate);
 async function scenario(hostContext, invalidResume = false){
-  let selected=false,revision=0,position=0,ready=0,seeked=0,token=0,allowReady=false;
+  let selected=false,revision=0,position=0,ready=0,seeked=0,token=0,allowReady=false,creates=0,fallbacks=0,errors=0;
   const calls=[],timers=new Map();
   const stage={classList:{add(){},remove(){}},querySelector:()=>null};
   const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.2,muted:true,closest:()=>stage,
@@ -15,22 +15,26 @@ async function scenario(hostContext, invalidResume = false){
     document:{hidden:false,addEventListener(){},removeEventListener(){}},
     setTimeout(fn,delay){timers.set(++token,{fn,delay});return token;},clearTimeout(id){timers.delete(id);},
     w0:()=>({origin:'http://127.0.0.1:1234',url:'http://127.0.0.1:1234/desktop/hls?series_id=12345678&ep=1',key:'fixture'}),
-    desktopCodecHls(){throw Error('unexpected H264 fallback');},
+    desktopCodecHls(){fallbacks++;assert.equal(invalidResume,'stale-window');return ()=>{};},
     async fetch(url,init={}){
       url=String(url);calls.push([url,init]);let body;
       if(init.method==='DELETE')return {ok:true,status:204};
       if(url.endsWith('/capabilities'))body={nativePlayback:1};
-      else if(url.endsWith('/mode')){selected=true;body={mode:'native'};}
+      else if(url.endsWith('/mode')){if(invalidResume==='stale-window')return {ok:false,status:400};selected=true;body={mode:'native'};}
       else if(url.endsWith('/control')){const command=JSON.parse(init.body);revision++;if('seek'in command)position=command.seek;body={revision};}
-      else if(init.method==='POST')body={id:'a'.repeat(32)};
-      else body={state:'complete',duration:90,source:{video:{contentType:'video/mp4; codecs="hvc1.1"'},audio:[]},
+      else if(init.method==='POST'){creates++;body={id:'a'.repeat(32)};}
+      else if(invalidResume==='start-failure'&&creates===1)body={state:'failed',failureCode:'start-position'};
+      else body={state:'complete',duration:invalidResume==='unknown'?null:90,source:{video:{contentType:'video/mp4; codecs="hvc1.1"'},audio:[]},
         native:selected?{state:allowReady?'ready':'preparing',outputReady:true,revision,
           width:allowReady?128:0,height:128,time:position,duration:90,paused:true,seeking:false}:null};
       return {ok:true,status:200,json:async()=>body};
     }};
   vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/frontend-native.js'),'utf8'),context);
-  const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',invalidResume?90:0,{onReady(){if(++ready===1)media.currentTime=25;}},null,true);
-  await tick();
+  const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',invalidResume&&invalidResume!=='stale-window'?90:0,{onReady(){if(++ready===1)media.currentTime=25;},onError(){errors++;}},null,true);
+  for(let n=0;n<5;n++)await tick();
+  if(invalidResume==='stale-window'){
+    assert.equal(fallbacks,1,'window binding rejection uses existing HLS fallback');assert.equal(errors,0);dispose();timers.clear();return;
+  }
   if(invalidResume){
     const creates=calls.filter(([url,init])=>init.method==='POST'&&!url.endsWith('/mode')&&!url.endsWith('/control'));
     assert.equal(creates.length,2,'invalid EOF session is replaced before native mode');
@@ -59,4 +63,4 @@ async function scenario(hostContext, invalidResume = false){
   }
   dispose();await tick();timers.clear();
 }
-(async()=>{await scenario(false);await scenario(true);await scenario(true,true);console.log('PASS: seek waits for its own sent revision; requesting Tauri window is bound; saved EOF recreates zero-origin before native selection');})().catch(error=>{console.error(error);process.exitCode=1});
+(async()=>{if(process.argv[2])await scenario(true,process.argv[2]);else {await scenario(false);await scenario(true);for(const fault of [true,'unknown','start-failure','stale-window'])await scenario(true,fault);}console.log('PASS: seek ACK, Tauri binding, EOF/unknown/failed resume reset and stale-window HLS fallback');})().catch(error=>{console.error(error);process.exitCode=1});
