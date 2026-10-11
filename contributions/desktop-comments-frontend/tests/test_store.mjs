@@ -58,4 +58,18 @@ const third=inflight.read('comments',{kind:'series',cursor:'later'});
 const queued=inflight.read('comments',{kind:'series'});
 inflight.dispose();await assert.rejects(third,{name:'AbortError'});await assert.rejects(queued,{name:'AbortError'});
 pending.shift();
+// Waiting on another cursor consumes the same read's 15-second budget.
+const realNow=Date.now,realTimer=setTimeout,realClear=clearTimeout;
+let now=0,token=0;const timers=new Map();
+Date.now=()=>now;globalThis.setTimeout=(fn,ms)=>{timers.set(++token,{fn,due:now+ms,ms});return token;};
+globalThis.clearTimeout=id=>timers.delete(id);
+const slow=createStore(endpoint);
+try{
+  const late=slow.read('comments',{kind:'episode',cursor:'later'});now=1000;
+  const queued=slow.read('comments',{kind:'episode'});now=14000;
+  pending.shift().resolve(page(['later']));await late;await new Promise(setImmediate);
+  assert([...timers.values()].every(t=>t.due<=16000),'queued page one must not receive a second 15-second deadline');
+  now=16000;for(const [id,timer] of [...timers])if(timer.due<=now){timers.delete(id);timer.fn();}
+  await assert.rejects(queued,error=>['AbortError','TimeoutError'].includes(error.name));pending.shift();
+}finally{slow.dispose();Date.now=realNow;globalThis.setTimeout=realTimer;globalThis.clearTimeout=realClear;}
 console.log('PASS session cache, in-flight reuse, pagination, tab/reply isolation, refresh, failure retry and disposal');

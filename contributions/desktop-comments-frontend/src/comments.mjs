@@ -17,13 +17,13 @@ function desktopSocialEndpoint(session) {
   } catch {return null;}
 }
 
-async function desktopSocialRead(endpoint, resource, params = {}, signal) {
+async function desktopSocialRead(endpoint, resource, params = {}, signal, budget = 15000) {
   const url = new URL(endpoint.origin + '/desktop/social/' + resource);
   url.search = new URLSearchParams({series_id: endpoint.series, ep: endpoint.episode, ...params});
   const abort = new AbortController(), cancel = () => abort.abort();
   if (signal?.aborted) abort.abort();
   signal?.addEventListener('abort', cancel, {once:true});
-  const timer = setTimeout(cancel, 15000);
+  const timer = setTimeout(cancel, Math.max(0,budget));
   try {
     const response = await fetch(url, {headers: {'x-api-key': endpoint.key}, signal:abort.signal,
       credentials: 'omit', redirect: 'error', cache: 'no-store'});
@@ -40,7 +40,8 @@ function desktopSocialStore(endpoint) {
     for (const [key, entry] of entries) if ((!resource || entry.resource === resource)
       && (!params || key === identity(resource, params))) {entry.abort.abort(); entries.delete(key);}
   }
-  function read(resource, params = {}) {
+  function read(resource, params = {}, deadline = Date.now()+15000) {
+    if (Date.now() >= deadline) return Promise.reject(new DOMException("Read deadline expired", "TimeoutError"));
     const key = identity(resource, params), cursor = params.cursor || '';
     let entry = entries.get(key);
     if (!entry) {
@@ -50,15 +51,19 @@ function desktopSocialStore(endpoint) {
     if (entry.value && entry.cursors.has(cursor)) return Promise.resolve(entry.value);
     if (entry.pending) {
       if (entry.pendingCursor === cursor) return entry.pending;
-      return entry.pending.catch(() => {}).then(() => {
-        if (entry.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-        return read(resource, params);
-      });
+      let timer;
+      return Promise.race([
+        entry.pending.catch(() => {}).then(() => {
+          if (entry.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          return read(resource, params, deadline);
+        }),
+        new Promise((_,reject)=>{timer=setTimeout(()=>reject(new DOMException('Read deadline expired','TimeoutError')),Math.max(0,deadline-Date.now()));})
+      ]).finally(()=>clearTimeout(timer));
     }
     entry.pendingCursor = cursor;
     if (entry.abort.signal.aborted) entry.abort = new AbortController();
-    const timer = setTimeout(() => entry.abort.abort(), 15000);
-    entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal).then(result => {
+    const timer = setTimeout(() => entry.abort.abort(), Math.max(0,deadline-Date.now()));
+    entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal, deadline-Date.now()).then(result => {
       if (entry.abort.signal.aborted || entries.get(key) !== entry) throw new DOMException('Aborted', 'AbortError');
       const page = resource === 'comments' || resource === 'replies';
       if (page && !cursor) entry.cursors.clear();
@@ -93,7 +98,13 @@ function desktopSocialSet(media, changes) {
 }
 
 function DesktopSocialControls({media, sessionKey}) {
-  const [social, setSocial] = O.useState(false);
+  const [social, setSocial] = O.useState(false), [danmakuError,setDanmakuError] = O.useState('');
+  O.useEffect(()=>{
+    const video=media.current, changed=event=>setDanmakuError(event.detail || '');
+    setDanmakuError(video?.desktopDanmakuStatus || '');
+    video?.addEventListener('desktopdanmakustatus',changed);
+    return ()=>video?.removeEventListener('desktopdanmakustatus',changed);
+  },[sessionKey]);
   O.useEffect(() => {
     const video = media.current; setSocial(false);
     const changed = event => {
@@ -105,6 +116,7 @@ function DesktopSocialControls({media, sessionKey}) {
   }, [sessionKey]);
   return b.jsxs('span', {className: 'desktop-social-controls', children: [
     b.jsx(DesktopDanmakuSettings,{media,sessionKey}),
+    danmakuError && b.jsx('span',{className:'desktop-social-error',role:'status',title:danmakuError,children:'弹幕加载失败'}),
     b.jsx('button', {className: 'desktop-social-toggle', 'aria-label': '评论与互动', 'aria-pressed': social,
       'aria-controls': 'desktop-social-drawer', title: '评论、点赞数和收藏数',
       onClick: async () => {
@@ -127,7 +139,6 @@ function SocialSession({session, media}) {
   const [danmaku, setDanmaku] = O.useState(() => desktopSocialPreference('danmaku', true));
   const [drawer, setDrawer] = O.useState(() => desktopSocialPreference('social', false));
   const [comments, setComments] = O.useState(false);
-  const [danmakuError, setDanmakuError] = O.useState('');
   const commenting = drawer && comments && tab !== 'episodes';
   const current = O.useRef(null);
   const [,refreshEmojis]=O.useState(0);
@@ -188,10 +199,13 @@ function SocialSession({session, media}) {
     finally {own.busy = false; if (current.current === own) setBusy(false);}
   }
   O.useEffect(() => {
-    setDanmakuError('');
+    const video=media.current;
+    const status=message=>{if(video){video.desktopDanmakuStatus=message;video.dispatchEvent(new CustomEvent('desktopdanmakustatus',{detail:message}));}};
+    status('');
     try {localStorage.setItem('hongguo:danmaku', danmaku ? 'on' : 'off');} catch {}
     if (!endpoint || !danmaku || !media.current) return;
-    return desktopStartDanmaku(media.current, endpoint, setDanmakuError);
+    const stop=desktopStartDanmaku(video, endpoint, status);
+    return ()=>{stop?.();status('');};
   }, [key, danmaku]);
   if (!endpoint) return null;
   return b.jsxs('section', {id: 'desktop-social-drawer', className: 'desktop-social', 'data-tab': tab,
@@ -214,7 +228,6 @@ function SocialSession({session, media}) {
       b.jsx('button', {onClick: () => setMetricsRefresh(n => n + 1), 'aria-label': '刷新互动计数', children: '刷新'}),
       b.jsx('small', {className: 'desktop-social-favorite', children: '整剧收藏 ' + (stats ? stats.favorites.toLocaleString('zh-CN') : '…')})]}),
     tab !== 'episodes' && statsError && b.jsx('p', {className: 'desktop-social-error', role: 'status', children: statsError}),
-    tab !== 'episodes' && danmakuError && b.jsx('p', {className: 'desktop-social-error', role: 'status', children: danmakuError}),
     tab !== 'episodes' && b.jsxs('div', {className: 'desktop-social-list', role: 'tabpanel', 'aria-label': tab === 'episode' ? '本集评论' : '整剧剧评', children: [
       b.jsxs('div', {className: 'desktop-social-list-heading', children: [
         b.jsx('small', {className: 'desktop-social-status', children: page ? '共 ' + page.total.toLocaleString('zh-CN') + ' 条' : '评论'}),
