@@ -30,7 +30,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
         assert(claimed,'no speculative seek');assert(video.paused&&video.muted&&video.style.opacity==='0');
         calls.push({seek:value});video.seeking=true;
         if(fault==='cancel'){queueMicrotask(()=>prep.cancelClaim());return;}
-        if(fault==='seek-error')throw Error('seek rejected');
+        if(['seek-error','late-seek-failed'].includes(fault))throw Error('seek rejected');
         if(fault==='timeout')return;
         queueMicrotask(()=>{video.currentTime=value;video.seeking=false;callbacks.onReady();video.dispatchEvent(new Event('seeked'));
           const pending=[...frames.values()];frames.clear();for(const fn of pending)fn(0,{mediaTime:value});});
@@ -44,7 +44,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
       else if(request.endsWith('/control')){
         const command=JSON.parse(init.body);calls.push(command);revision++;
         if('seek'in command){assert(claimed,'no speculative seek');assert(command.paused&&command.muted&&!command.visible);target=command.seek;
-          if(fault==='seek-error')throw Error('seek rejected');
+          if(['seek-error','late-seek-failed'].includes(fault))throw Error('seek rejected');
           if(fault==='cancel')queueMicrotask(()=>prep.cancelClaim());}
         body={revision};
       }else if(request.endsWith('/status')){
@@ -65,7 +65,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     prep.retain(()=>retired++);claimed=true;
     if(fault==='unknown-duration'&&videos[0])videos[0].duration=Infinity;
     const record=await prep.claimRecord(fault==='identity'?url+'&other=1':url,position,fault==='windowed');
-    if(fault&&!['windowed','parent-refresh','pending-parent','settings-live','late-seek'].includes(fault)||!Number.isFinite(position)||position<0||position>=90){
+    if(fault&&!['windowed','parent-refresh','pending-parent','settings-live','late-seek','late-seek-failed'].includes(fault)||!Number.isFinite(position)||position<0||position>=90){
       assert.equal(record,null,'unsafe/failed reuse must fall back');
       if(fault.startsWith('prepare-failed')){
         assert.equal(prep.resumeInvalid,fault!=='prepare-failed-unknown'&&position>=90);
@@ -88,8 +88,9 @@ async function scenario(native,position,fault='',fallbackFrames=false){
       assert.equal(record.id,'b'.repeat(32));assert.equal(record.settings.rate,2);
       if(position>.05){assert.equal(calls.filter(x=>'seek'in x).length,1);assert.equal(native?target:videos[0].currentTime,position);}
       else assert(!calls.some(x=>'seek'in x));
-      if(fault==='late-seek'){await record.seek(20);assert.equal(videos[0].currentTime,20);assert(videos[0].paused);position=20;}
-      if(!native){const media=new Video();media.stage=current.stage;Object.assign(media,{playbackRate:4,volume:.7,muted:false});const dispose=record.adopt(media,{onReady(){}});
+      if(fault==='late-seek'){await record.seek(89.8);assert.equal(videos[0].currentTime,89.8);assert.equal(prep.resumePosition,89.8,'replayed near-EOF seek updates the cold resume marker');assert(videos[0].paused);position=89.8;}
+      if(fault==='late-seek-failed'){await assert.rejects(record.seek(89.8));assert.equal(prep.resumePosition,89.8,'failed replay retains its validated near-EOF target');record.dispose();}
+      else if(!native){const media=new Video();media.stage=current.stage;Object.assign(media,{playbackRate:4,volume:.7,muted:false});const dispose=record.adopt(media,{onReady(){}});
         assert.equal(media.playbackRate,4);assert.equal(media.volume,.7);assert.equal(media.muted,false);
         for(let n=0;n<20;n++)await tick();assert.equal(media.currentTime,position>.05?position:0);assert.equal(videos.length,1);assert(activated);dispose();}
       else record.dispose();
@@ -106,7 +107,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     for(const position of [-1,NaN,Infinity,90,91])await scenario(native,position);
     for(const fault of ['identity','cancel','timeout','seek-error','unknown-duration','windowed','mode-mismatch','parent-refresh','pending-parent'])await scenario(native,30,fault);
   }
-  await scenario(false,0,'late-seek');
+  await scenario(false,0,'late-seek');await scenario(false,0,'late-seek-failed');
   await scenario(true,0,'advanced');
   await scenario(false,0,'advanced');
   await scenario(false,.051,'',true);await scenario(false,89.8,'',true);

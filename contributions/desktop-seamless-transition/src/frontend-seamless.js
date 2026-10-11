@@ -203,7 +203,11 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         }
         if (disposed) return null;
       }
-      return {...result, seek:position=>seekToResume(result,position), settings:preparation.settings, expiresAt:deadline};
+      return {...result, seek:async position=>{
+        const duration=result.mode==='native'?result.duration:known.onTimeline?.[0]||video?.duration;
+        if(Number.isFinite(position)&&position>=0&&Number.isFinite(duration)&&duration>0&&position<duration)resumePosition=position;
+        return seekToResume(result,position);
+      }, settings:preparation.settings, expiresAt:deadline};
     }
   };
   expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup(retained.length > 0);}}, 90000);
