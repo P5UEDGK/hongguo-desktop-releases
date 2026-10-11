@@ -45,7 +45,7 @@ async function scenario(native,fail=false,fault=null){
         native:selected?{outputReady:true,revision}:null};
       return {ok:true,status:200,json:async()=>url.endsWith('/status')&&fault==='hung-json'?new Promise(()=>{}):body};
     }};
-  vm.createContext(context);vm.runInContext(source,context);
+  vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);vm.runInContext(source,context);
   assert.equal(context.desktopShouldPrewarm({duration:100,currentTime:70,playbackRate:1,readyState:4}),false);
   assert.equal(context.desktopShouldPrewarm({duration:100,currentTime:70,playbackRate:3,readyState:4}),true);
   assert.equal(context.desktopShouldPrewarm({duration:100,currentTime:70,playbackRate:3,readyState:4,desktopBuffering:true}),false);

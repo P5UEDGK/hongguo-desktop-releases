@@ -1,11 +1,11 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(path.join(__dirname,'../src/frontend-seamless.js'),'utf8');
-async function verify(chromeTop,scale,expected){
+async function verify(chromeTop,scale,expected,hidden=false){
   let placed=false,revision=0,resolveTimer,selected=false,nativeStatuses=0;const calls=[],pending=new Set();
   const media={playbackRate:2,volume:.4,muted:false,desktopSessionId:()=> 'a'.repeat(32),
     getBoundingClientRect:()=>({left:10,top:20,width:800,height:600}),
     closest:()=>({querySelector:()=>chromeTop===null?null:{getBoundingClientRect:()=>({top:chromeTop,height:64})}})};
-  const context={URL,Number,Math,Date,Map,WeakMap,AbortController,window:{devicePixelRatio:scale},
+  const context={URL,Number,Math,Date,Map,WeakMap,AbortController,window:{devicePixelRatio:scale},getComputedStyle:()=>({opacity:hidden?'0':'1'}),
     setTimeout(fn,ms){if(ms>=15000)return 999;const t=setTimeout(fn,1);pending.add(t);return t;},
     clearTimeout(t){clearTimeout(t);pending.delete(t);},w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
     fetch:async(url,init={})=>{url=String(url);let body={};
@@ -17,7 +17,7 @@ async function verify(chromeTop,scale,expected){
         if(selected)body.native=++nativeStatuses===1?{state:'preparing'}:{state:'preparing',outputReady:placed,revision};}
       return {ok:true,status:init.method==='DELETE'?204:200,json:async()=>body};
     }};
-  vm.createContext(context);vm.runInContext(source,context);
+  vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);vm.runInContext(source,context);
   const prep=context.desktopPrepareNext('http://127.0.0.1/desktop/hls?ep=2',media);
   try{
     const record=await Promise.race([prep.claimRecord('http://127.0.0.1/desktop/hls?ep=2',0),new Promise(r=>{resolveTimer=setTimeout(()=>r(null),200);})]);
@@ -28,6 +28,6 @@ async function verify(chromeTop,scale,expected){
     record.dispose();
   }finally{clearTimeout(resolveTimer);prep.cancelClaim();for(const t of pending)clearTimeout(t);}
 }
-(async()=>{await verify(556,1,[10,20,800,536]);await verify(556,1.5,[15,30,1200,804]);await verify(null,1,[10,20,800,516]);
+(async()=>{await verify(556,1,[10,20,800,536]);await verify(556,1.5,[15,30,1200,804]);await verify(null,1,[10,20,800,516]);await verify(556,1,[10,20,800,600],true);
  console.log('PASS: hidden layout precedes first frame; actual chrome, DPI and fallback geometry');
 })().catch(e=>{console.error(e);process.exitCode=1});

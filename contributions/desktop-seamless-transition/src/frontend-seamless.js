@@ -1,16 +1,6 @@
 // One speculative next episode; React still owns episode identity/auto-continue.
 const desktopStandbys = new WeakMap();
 
-function desktopNativeSurfaceRect(media) {
-  const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
-  const stage = media.closest('.player-stage') || media.parentElement;
-  const chrome = stage?.querySelector?.('.player-chrome')?.getBoundingClientRect();
-  const reserved = chrome?.height > 0 ? rect.top + rect.height - chrome.top : 84;
-  const bar = Math.min(Math.max(0, reserved), Math.max(0, rect.height - 1));
-  return [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
-    Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
-}
-
 function desktopShouldPrewarm(media) {
   const duration = media.desktopTimelineDuration || media.duration;
   const position = media.currentTime + (media.desktopTimeOrigin || 0);

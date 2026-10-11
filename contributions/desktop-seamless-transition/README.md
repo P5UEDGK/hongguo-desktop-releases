@@ -90,3 +90,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 ## 剩余审查回归（2026-10-11）
 
 无效或超出完整时长的续播位置归零后再冷加载；有效位置的跳转失败仍按原目标回退。失败准备保留上一集画面到冷加载就绪；暂停HLS交接确认后直接释放旧画面。替换会话ID空窗返回null，不暴露已退役ID。原生表面隐藏或零几何时保持隐藏暂停，等待可显示后再开始2秒可见ACK期限，仍受90秒寿命限制。公开补丁及全部前端回归通过；本批本机候选、安装验证尚待完成。
+
+两份前端补丁及BASELINES已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee。预热直接使用原生包的desktopNativeSurfaceRect，隐藏控制栏不预留84像素；移除重复函数。补丁应用/SHA和全部Node交接、续播、几何回归通过，本批安装验收待完成。

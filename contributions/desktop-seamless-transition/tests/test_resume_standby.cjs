@@ -54,7 +54,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
       else if(init.method==='POST')body={id:'b'.repeat(32)};
       return {ok:true,status:200,json:async()=>body};
     }};
-  vm.createContext(c);vm.runInContext(source,c);const prep=c.desktopPrepareNext(url,current);
+  vm.createContext(c);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),c);vm.runInContext(source,c);const prep=c.desktopPrepareNext(url,current);
   try{
     for(let n=0;n<15;n++)await tick();
     assert.equal(plays,0);assert(!calls.some(x=>'seek'in x),'prewarm stays at the opening');
