@@ -3,13 +3,13 @@
 @@ -214,14 +214,15 @@
              if self.pinned is not None:self.pinned.close();self.pinned=None
              self.blocks.clear()
-
+ 
 -    def reader(self, cancelled=lambda: False):
 -        return RangeReader(self, cancelled)
 +    def reader(self, cancelled=lambda: False, *, cache=None):
 +        return RangeReader(self, cancelled, cache=cache)
-
-
+ 
+ 
  class RangeReader(io.RawIOBase):
 -    def __init__(self, source, cancelled):
 +    def __init__(self, source, cancelled, *, cache=None):
@@ -18,7 +18,7 @@
 +        self.cache = cache
          self.stopped = threading.Event()
          self.position = 0
-
+ 
 @@ -261,7 +262,11 @@
          end, result = min(self.source.size, self.position + size), []
          while self.position < end:
@@ -41,8 +41,8 @@
 +    input_cache: object | None = field(default=None, repr=False)
      stream_url: str | None = None
      stream_key: str | None = field(default=None, repr=False)
-     negotiate_codec: bool = False
-@@ -437,7 +438,7 @@
+     native_parent: int | None = field(default=None, repr=False)
+@@ -438,7 +439,7 @@
          response_headers.pop("Content-Length", None)
          def chunks():
              try:
@@ -62,8 +62,8 @@
 +CACHE_FILE_BUDGET = 512 * 1024 ** 2
  from desktop_native_engine import EnginePool
  import uuid
-
-@@ -364,10 +367,14 @@
+ 
+@@ -428,10 +431,14 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -78,7 +78,7 @@
          desired = {"paused": True, "rate": 1, "volume": 1, "muted": False}
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
-@@ -418,6 +425,16 @@
+@@ -482,6 +489,16 @@
                      resources.update(player=player, hwnd=hwnd, parent=self.parent, id=uuid.uuid4().hex)
              # Every source-dependent option is reset, including when switching
              # encrypted/clear input or recovering from the previous soft retry.
@@ -95,7 +95,7 @@
              per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
                          "volume": 100, "mute": "yes" if desired["muted"] else "no",
                          "hwdec": "auto-safe" if self.host.hardware else "no",
-@@ -469,6 +486,8 @@
+@@ -536,6 +553,8 @@
                          if key in command:
                              value = command[key]
                              desired[key] = value
@@ -104,7 +104,7 @@
                              player.command("set", option, "yes" if value is True else "no" if value is False else value * 100 if key == "volume" else value)
                              grace = time.monotonic() + 3
                      if "seek" in command:
-@@ -516,6 +535,17 @@
+@@ -587,6 +606,17 @@
                              buffer_start, buffer_end = max(0, selected["start"]), selected["end"]
                      except (ValueError, TypeError, KeyError):
                          pass
@@ -122,7 +122,7 @@
                  if last_position is None or abs(position - last_position) > .01 or paused or seeking:
                      last_position, last_progress = position, now
                  unstable = not paused and not buffering and not seeking and not eof and now > grace
-@@ -544,6 +574,7 @@
+@@ -615,6 +645,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
@@ -130,7 +130,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops)
-@@ -555,6 +586,11 @@
+@@ -626,6 +657,11 @@
              with self.guard:
                  self.data.update(state="failed", failureCode="native-decode")
          finally:
