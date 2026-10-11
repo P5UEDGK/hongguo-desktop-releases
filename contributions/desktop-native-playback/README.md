@@ -6,7 +6,7 @@ HEVC 先实际尝试硬解，失败后只重试一次软解；软解失败或持
 
 ## 模块与接线
 
-`desktop_stream.py` 负责有界 Range、取消、源校验和 CENC 按包解密输入；`desktop_native.py` 负责 Windows 子窗口、默认音频、倍速、硬软解与输入转发；`desktop_hls_service.py` 负责鉴权会话和释放；`desktop_codec.py` 描述真实编解码轨道并提供可用时的 HLS 包复制。`desktop_hls.py`/`desktop_hls_budget.py` 是回退编码参考实现，已有编码器可按契约适配；其中 AUTO 解码与 #188 相同，不需要重复打补丁。
+`desktop_stream.py` 负责有界 Range、取消、源校验和 CENC 按包解密输入；`desktop_native.py` 负责 Windows 子窗口、默认音频、倍速、硬软解与输入转发；`desktop_native_engine.py` 复用同线程的 mpv、输出设备和子窗口，最多两个资源槽，空闲60秒销毁；`desktop_hls_service.py` 负责鉴权会话和释放；`desktop_codec.py` 描述真实编解码轨道并提供可用时的 HLS 包复制。`desktop_hls.py`/`desktop_hls_budget.py` 是回退编码参考实现，已有编码器可按契约适配；其中 AUTO 解码与 #188 相同，不需要重复打补丁。
 
 宿主只在后台解析媒体，返回已完成本地 Path 或 `ProgressiveSource(url, request=authorized_request, identity=stable_id, key=authorized_content_key)`。本包不实现上游 API 或密钥获取。复用完整原片前必须确认写入已完成；不能把后台正在写的非空文件当缓存，也不要等待旧下载锁才能启动新选的一集。Range 内存16MiB、原生包内存32MiB；第三方临时磁盘缓存由后续暂停补丁开启。
 
@@ -27,7 +27,7 @@ pwsh -NoProfile -Command "python -I contributions/desktop-native-playback/tests/
 pwsh -NoProfile -Command "node contributions/desktop-native-playback/tests/test_frontend.cjs"
 ```
 
-当前公开测试共31项：本轮30项通过、1项可选本地HEVC输入测试跳过。Node覆盖轨道协商、位置/暂停/倍速恢复、只回退一次、旧回执与源失败不误转码。新增真实合成Opus输入转AAC-LC、seek共同时间原点、取消和预算回归；已有AAC继续直拷。新增两个确定性取消竞争测试，防止DELETE后prepare注册残留会话。公开fixture是合成媒体及公开测试密钥，不含提供方视频。硬解失败由受控驱动测试，未人为破坏真实GPU。
+Node覆盖轨道协商、位置/暂停/倍速恢复、只回退一次、旧回执与源失败不误转码。新增真实合成Opus输入转AAC-LC、seek共同时间原点、取消和预算回归；已有AAC继续直拷。新增两个确定性取消竞争测试，防止DELETE后prepare注册残留会话。公开fixture是合成媒体及公开测试密钥，不含提供方视频。硬解失败由受控驱动测试，未人为破坏真实GPU。
 
 先前实际Tauri/WebView2已验证本机硬解dxva2-copy、强制软解、2x/3x、默认音频、首帧早于整片下载、缓冲恢复、暂停seek、切集、EOF连播及一次H.264回退。真实CENC输入的解码帧与已有明文一致。以上是本机接线结果；公开模块测试不能代替维护者私有源码与真实窗口验收。A-V数字来自内核时钟，没有物理声画、跨设备CPU/温度/功耗结论。
 
@@ -37,8 +37,14 @@ pwsh -NoProfile -Command "node contributions/desktop-native-playback/tests/test_
 
 复审修复：max_jobs限制总会话数；max_workers只限制copy/H.264实际编码，native准备不占编码槽。HlsJobs在有会话时自行启动回收线程，无后续请求也按idle_seconds清理，宿主shutdown调用jobs.close()。Range连接超时3秒、无数据读超时10秒，Timeout/ConnectionError最多尝试3次；每次重新校验Range/validator并丢弃失败的部分块，取消在读取和退避间检查。协议错误不重试；重试耗尽才报告source-read。[Requests超时说明](https://requests.readthedocs.io/en/stable/user/advanced/#timeouts)。新增真实3.2秒HTTP停顿恢复、重试关闭响应、取消、编码并发和无请求到期回归。
 
-第二轮复审：截断 Range 丢弃后有界重试；弱 ETag 仅比较身份，不发送 If-Range；未出首帧的 EOF 先重试软件解码，再明确失败；EOF 后 seek 清除 ended，恢复播放保留所选目标。当前 Python 33 项通过、1 项可选 HEVC 跳过，Node 回归通过。
+第二轮复审：截断 Range 丢弃后有界重试；弱 ETag 仅比较身份，不发送 If-Range；未出首帧的 EOF 先重试软件解码，再明确失败；EOF 后 seek 清除 ended，恢复播放保留所选目标。
 
-修复最新原生回执：描述与fallback共用AAC-LC资格判定，其余AAC profile转AAC-LC；无首帧EOF软件重试从原请求位置开始；close如线程仍存活返回pending，host/job/output保留，DELETE202，前端有界等待204才启动HLS，取消会话由reaper继续清理。新增真实AAC重编码及生命周期回归。 当前Python38项通过、1项可选HEVC跳过；Node回归通过。
+修复最新原生回执：描述与fallback共用AAC-LC资格判定，其余AAC profile转AAC-LC；无首帧EOF软件重试从原请求位置开始；close如线程仍存活返回pending，host/job/output保留，DELETE202，前端有界等待204才启动HLS，取消会话由reaper继续清理。新增真实AAC重编码及生命周期回归。
 
-连续至少2秒丢失不少于期望帧数50%且最近仍增长，视为解码不稳定；阈值随帧率和倍速变化，暂停/缓冲/seek重置。先一次软件尝试，软件仍不稳定才H264。seek中忽略旧EOF，未出帧重试保留最新请求位置。 Python41项通过、1项可选HEVC跳过；Node回归通过。
+连续至少2秒丢失不少于期望帧数50%且最近仍增长，视为解码不稳定；阈值随帧率和倍速变化，暂停/缓冲/seek重置。先一次软件尝试，软件仍不稳定才H264。seek中忽略旧EOF，未出帧重试保留最新请求位置。
+
+切集时不再逐集创建并销毁 mpv。每次仍重新加载媒体，重置位置、音量、暂停、解密参数和请求头，等待本集首帧；失败的实例退役，退出会等待实际释放。最多两个槽供当前集和备用集使用。
+
+本轮 Python 49 项：48通过、1项可选本地HEVC测试跳过；Node协商/暂停/回退回归通过。隔离真实mpv依次播放HEVC、HEVC、CENC HEVC、不同分辨率无音轨H264、HEVC，五次共用一个实例，后四次初始化耗时为0。单轮合成输入对照中，非首次首帧就绪为141–422ms，逐集新建为1312–1610ms。这是内部首帧就绪时间，不能当成正式版实际画面空档或跨设备性能承诺。
+
+协商中用户暂停会保留到原生或HLS控制器；已经选择copy/h264的会话由既有HLS接管；源读取失败不启动无效转码；shutdown时未结束的原生线程继续由回收器跟踪。

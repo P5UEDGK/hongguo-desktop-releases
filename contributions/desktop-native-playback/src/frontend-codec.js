@@ -16,7 +16,7 @@ async function desktopSupportsSource(source) {
 }
 
 function desktopCreateCodecFetch(forceH264 = false) {
-  let closed = false, usedCopy = false;
+  let closed = false, usedCopy = false, failureCode = null;
   const pending = new Map();
   const request = async (input, init = {}) => {
     const url = new URL(input);
@@ -30,6 +30,7 @@ function desktopCreateCodecFetch(forceH264 = false) {
     if (!response.ok || init.method === 'DELETE' || !/\/desktop\/hls\/[a-f0-9]{32}\/status$/.test(url.pathname))
       return response;
     const status = await response.clone().json();
+    failureCode = status.failureCode || null;
     if (closed || init.signal?.aborted) return response;
     if (status.videoMode) usedCopy = status.videoMode === 'copy';
     if (!forceH264 && status.source && status.videoMode === null) {
@@ -49,6 +50,7 @@ function desktopCreateCodecFetch(forceH264 = false) {
     return response;
   };
   request.usedCopy = () => usedCopy;
+  request.failureCode = () => failureCode;
   request.close = () => {closed = true;};
   return request;
 }
@@ -67,7 +69,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   };
   const onPause = () => {if (ready) wantedPlaying = false;};
   function fallback() {
-    if (disposed || retried || !transport?.usedCopy()) return false;
+    if (disposed || retried || !transport?.usedCopy() || transport.failureCode?.() === 'source-read') return false;
     retried = true;
     rememberTime();
     const resume = position;
@@ -121,7 +123,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
       : desktopLegacyHls(media, url, target, wrapped, force ? null : preparation, false, transport);
   }
   const onError = event => {
-    if (!disposed && !retried && transport?.usedCopy()) {
+    if (!disposed && !retried && transport?.usedCopy() && transport.failureCode?.() !== 'source-read') {
       event.stopImmediatePropagation();
       fallback();
     }

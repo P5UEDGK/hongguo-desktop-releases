@@ -63,10 +63,11 @@ class HlsJobs:
         self.native = native
         self.encoder_slots = threading.BoundedSemaphore(max_workers)
         self.closed = threading.Event()
+        self.reaper_stop = threading.Event()
         self.reaper = None
 
     def _reap(self):
-        while not self.closed.wait(min(1.0, max(.05, self.idle_seconds / 4))):
+        while not self.reaper_stop.wait(min(1.0, max(.05, self.idle_seconds / 4))):
             with self.guard:
                 expired = [job.id for job in self.jobs.values()
                            if job.cancelled.is_set() or time.monotonic() - job.touched > self.idle_seconds]
@@ -87,9 +88,20 @@ class HlsJobs:
             remaining = list(self.jobs.values())
         for job in remaining:
             self.release(job.id)
-        reaper = self.reaper
-        if reaper and reaper is not threading.current_thread():
+        close_native = getattr(self.native, "close", None)
+        if close_native:
+            close_native()
+        with self.guard:
+            if self.jobs:
+                if self.reaper is None or not self.reaper.is_alive():
+                    self.reaper = threading.Thread(target=self._reap, name="desktop-session-reaper", daemon=True)
+                    self.reaper.start()
+            else:
+                self.reaper_stop.set()
+            reaper = self.reaper
+        if not self.jobs and reaper and reaper is not threading.current_thread():
             reaper.join(5)
+        return not self.jobs
 
     def _remove_output(self, job):
         # Only our generated UUID child; never a source file or a caller's path.

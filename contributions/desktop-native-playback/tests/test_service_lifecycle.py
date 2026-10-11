@@ -21,6 +21,17 @@ def eventually(predicate, timeout=3):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_shutdown_keeps_reaping_until_pending_native_release_finishes(self):
+        stopped=threading.Event()
+        native=SimpleNamespace(release=lambda _:stopped.is_set())
+        jobs=self.jobs(native=native,idle_seconds=.05);jobs._run=lambda *_:None
+        job=jobs.create('1234567890123456',1);job.done.set();job.directory.mkdir()
+        (job.directory/'owned').write_bytes(b'owned')
+        self.assertFalse(jobs.close());self.assertIn(job.id,jobs.jobs)
+        stopped.set();eventually(lambda:not jobs.jobs)
+        eventually(lambda:jobs.reaper is None)
+        self.assertFalse(job.directory.exists())
+
     def test_delete_reports_pending_until_native_teardown_and_preserves_output(self):
         native=SimpleNamespace(release=lambda _:False)
         jobs=self.jobs(native=native)

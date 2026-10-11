@@ -15,6 +15,8 @@ from collections import deque
 import threading
 import time
 from desktop_stream import ProgressiveSource, SourceReadError
+from desktop_native_engine import EnginePool
+import uuid
 
 DLL_SHA256 = "34780746a0273a4fcae42dfe262a28984a426a238939474afd3a1561b450bbef"
 
@@ -92,6 +94,7 @@ class NativeHost:
         self.sessions = {}
         self.guard = threading.RLock()
         self.available = False
+        self.engine_pool = EnginePool(self._close_engine, self._pump_engine)
         if os.name != "nt":
             return
         path = Path(dll_path) if dll_path else Path(__file__).parent / "native/libmpv-2.dll"
@@ -146,6 +149,29 @@ class NativeHost:
             self.available = True
         except (OSError, AttributeError):
             self.available = False
+
+    def _pump_engine(self):
+        message = W.MSG()
+        while self.user.PeekMessageW(C.byref(message), None, 0, 0, 1):
+            self.user.TranslateMessage(C.byref(message))
+            self.user.DispatchMessageW(C.byref(message))
+
+    def _close_engine(self, resources):
+        player, hwnd = resources.get("player"), resources.get("hwnd")
+        try:
+            if player:
+                player.close()
+        finally:
+            if hwnd and self.user.IsWindow(hwnd):
+                self.user.DestroyWindow(hwnd)
+            resources.clear()
+
+    def close(self):
+        with self.guard:
+            sessions = list(self.sessions.items())
+        for identifier, session in sessions:
+            self.release(identifier)
+        return self.engine_pool.close()
 
     def parent_window(self):
         windows = []
@@ -238,7 +264,10 @@ class NativeSession:
                      "paused": True, "rate": 1, "volume": 1, "muted": False, "seeking": False,
                      "width": 0, "height": 0, "decoder": "probing", "revision": 0,
                      "hardwareAttempted": host.hardware, "softwareRetried": False}
-        self.thread = threading.Thread(target=self.run, name="desktop-native-player", daemon=True)
+        self.engine_resources = None
+        pool = getattr(host, "engine_pool", None)
+        self.thread = (pool.task(self) if pool else
+                       threading.Thread(target=self.run, name="desktop-native-player", daemon=True))
         self.input_hooks = {}
 
     def forward_input(self, container):
@@ -341,32 +370,50 @@ class NativeSession:
                 self.data.update(state="preparing", softwareRetried=True)
         try:
             user.SetThreadDpiAwarenessContext(C.c_void_p(-4))
-            hwnd = user.CreateWindowExW(0x08000000, "STATIC", "Hongguo native video",
-                                       0x40000000 | 0x04000000 | 0x02000000,
-                                       0, 0, 1, 1, self.parent, None, None, None)
-            if not hwnd:
-                raise RuntimeError("Native surface unavailable")
-            player = Mpv(self.host.dll)
-            options = {"config": "no", "load-scripts": "no", "osc": "no", "terminal": "no",
-                       "input-default-bindings": "no", "input-vo-keyboard": "no",
-                       "idle": "yes", "keep-open": "yes", "pause": "yes", "start": self.job.start_seconds,
-                       "hwdec": "auto-safe" if self.host.hardware else "no", "hwdec-software-fallback": "yes", "vo": "gpu",
-                       "gpu-api": "d3d11", "gpu-context": "d3d11", "wid": int(hwnd),
-                       "ao": "wasapi", "audio-exclusive": "no", "video-sync": "audio",
-                       "audio-pitch-correction": "yes", "priority": "abovenormal",
-                       "framedrop": "vo", "vd-lavc-threads": "0"}
-            for key, value in options.items():
-                player.option(key, value)
-            if progressive:
-                for key, value in {"cache": "yes", "cache-secs": "12", "demuxer-readahead-secs": "12",
-                                   "demuxer-max-bytes": "32MiB", "cache-pause": "yes",
-                                   "cache-pause-wait": "1", "demuxer-lavf-format": "mov"}.items():
+            resources = self.engine_resources
+            reused = bool(resources and resources.get("player"))
+            if reused:
+                player, hwnd = resources["player"], resources["hwnd"]
+                if resources["parent"] != self.parent or not user.IsWindow(hwnd):
+                    self.host._close_engine(resources)
+                    player, hwnd, reused = None, None, False
+            if not reused:
+                hwnd = user.CreateWindowExW(0x08000000, "STATIC", "Hongguo native video",
+                                           0x40000000 | 0x04000000 | 0x02000000,
+                                           0, 0, 1, 1, self.parent, None, None, None)
+                if not hwnd:
+                    raise RuntimeError("Native surface unavailable")
+                player = Mpv(self.host.dll)
+                options = {"config": "no", "load-scripts": "no", "osc": "no", "terminal": "no",
+                           "input-default-bindings": "no", "input-vo-keyboard": "no",
+                           "idle": "yes", "force-window": "yes", "keep-open": "yes", "pause": "yes",
+                           "hwdec-software-fallback": "yes", "vo": "gpu",
+                           "gpu-api": "d3d11", "gpu-context": "d3d11", "wid": int(hwnd),
+                           "ao": "wasapi", "audio-exclusive": "no", "video-sync": "audio",
+                           "audio-pitch-correction": "yes", "priority": "abovenormal",
+                           "framedrop": "vo", "vd-lavc-threads": "0"}
+                for key, value in options.items():
                     player.option(key, value)
-                if self.job.stream_key:
-                    player.option("http-header-fields", "x-api-key: " + self.job.stream_key)
-                if self.job.source.options():
-                    player.option("demuxer-lavf-o", "decryption_key=" + self.job.source.options()["decryption_key"])
-            player.check(player.dll.mpv_initialize(player.handle))
+                player.check(player.dll.mpv_initialize(player.handle))
+                if resources is not None:
+                    resources.update(player=player, hwnd=hwnd, parent=self.parent, id=uuid.uuid4().hex)
+            # Every source-dependent option is reset, including when switching
+            # encrypted/clear input or recovering from the previous soft retry.
+            per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
+                        "volume": 100, "mute": "yes" if desired["muted"] else "no",
+                        "hwdec": "auto-safe" if self.host.hardware else "no",
+                        "cache": "yes" if progressive else "auto", "cache-secs": "12",
+                        "demuxer-readahead-secs": "12", "demuxer-max-bytes": "32MiB",
+                        "cache-on-disk": "no", "cache-pause": "yes", "cache-pause-wait": "1",
+                        "http-header-fields": "x-api-key: " + self.job.stream_key if progressive and self.job.stream_key else "",
+                        "demuxer-lavf-format": "mov" if progressive else "",
+                        "demuxer-lavf-o": "decryption_key=" + self.job.source.options()["decryption_key"]
+                            if progressive and self.job.source.options() else ""}
+            for key, value in per_file.items():
+                player.command("set", key, value)
+            with self.guard:
+                self.data.update(engineReused=reused, engineId=resources.get("id") if resources else None,
+                                 engineInitializeMs=(time.monotonic()-initial)*1000)
             player.command("loadfile", media_uri)
             message = W.MSG()
             while not self.stop.is_set() and not self.job.cancelled.is_set() and user.IsWindow(self.parent):
@@ -492,7 +539,37 @@ class NativeSession:
             for surface, (previous, callback) in self.input_hooks.items():
                 if user.IsWindow(surface):
                     user.SetWindowLongPtrW(surface, -4, previous)
-            if player:
-                player.close()
-            if hwnd and user.IsWindow(hwnd):
-                user.DestroyWindow(hwnd)
+            self.input_hooks.clear()
+            reusable = self.engine_resources is not None and self.data.get("state") != "failed"
+            try:
+                if reusable and player:
+                    user.ShowWindow(hwnd, 0)
+                    player.command("set", "pause", "yes")
+                    player.command("set", "mute", "yes")
+                    player.command("stop")
+                    deadline = time.monotonic()+2
+                    while player.get("idle-active") != "yes":
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("Native input did not stop")
+                        self.host._pump_engine()
+                        time.sleep(.01)
+                    for key in ("http-header-fields", "demuxer-lavf-o", "demuxer-lavf-format"):
+                        player.command("set", key, "")
+                    # Drain EOF/restart events from the old file before a new
+                    # session can interpret them as its own first-frame ACK.
+                    for _ in range(1024):
+                        if player.dll.mpv_wait_event(player.handle, 0).contents.id == 0:
+                            break
+                    else:
+                        raise RuntimeError("Native event queue did not settle")
+            except Exception:
+                reusable = False
+            if not reusable:
+                try:
+                    if player:
+                        player.close()
+                finally:
+                    if hwnd and user.IsWindow(hwnd):
+                        user.DestroyWindow(hwnd)
+                    if self.engine_resources is not None:
+                        self.engine_resources.clear()

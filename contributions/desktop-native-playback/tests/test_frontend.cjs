@@ -148,4 +148,41 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   assert(seeks.length>0&&seeks.every(value=>value===25),'play must not replace the accepted target with seek(0)');
   assert.equal(nativeMedia.currentTime,25);stopAfterEof();await flush();
   console.log('PASS: EOF seek preserves the selected target when play resumes');
+  for (const kind of ['pause-native','pause-hls','committed-hls','mode-conflict']) {
+    nativeCalls.length=0;nativeTimers.clear();delegated=0;let selected=false,delegatedArgs;
+    nc.desktopCodecHls=(...args)=>{delegated++;delegatedArgs=args;return ()=>{}};
+    nativeMedia.pause=function(){this.paused=true};nativeMedia.play=function(){this.paused=false;return Promise.resolve()};
+    nc.fetch=async(url,init={})=>{
+      url=String(url);nativeCalls.push([url,init]);let body;
+      if(url.endsWith('/capabilities'))body={nativePlayback:1};
+      else if(init.method==='DELETE')return {ok:true,status:204};
+      else if(url.endsWith('/mode')){selected=true;if(kind==='mode-conflict')return {ok:false,status:409};body={mode:'native'}}
+      else if(url.endsWith('/control'))body={revision:1};
+      else if(init.method==='POST')body={id:'d'.repeat(32)};
+      else body={state:'complete',source:kind==='pause-hls'?{...desc,video:{contentType:'video/mp4; codecs="avc1.64001f"'}}:desc,
+        videoMode:kind==='committed-hls'||kind==='mode-conflict'&&selected?'h264':null,
+        native:selected?{state:'ready',outputReady:true,width:1920,height:1080,time:0,duration:90,paused:true,revision:100}:null};
+      return {ok:true,status:200,json:async()=>body};
+    };
+    const end=nc.desktopNativePlayback(nativeMedia,'http://127.0.0.1',0,{onReady(){}},null);
+    nativeMedia.pause();await flush();
+    for(let n=0;n<2;n++){const entries=[...nativeTimers];nativeTimers.clear();for(const [,entry] of entries)await entry.fn();await flush()}
+    if(kind==='pause-native') {
+      const controls=nativeCalls.filter(([url])=>url.endsWith('/control')).map(([,init])=>JSON.parse(init.body));
+      assert(controls.some(c=>c.paused===true));assert(!controls.some(c=>c.paused===false));
+    } else {
+      assert.equal(delegated,1,kind);assert.equal(delegatedArgs[6].paused,true);
+      if(kind!=='pause-hls') {
+        assert.equal(await delegatedArgs[4].claim(),'d'.repeat(32));
+        assert(!nativeCalls.some(([,init])=>init.method==='DELETE'),'committed HLS job must be transferred');
+      }
+    }
+    end();await flush();delete nativeMedia.pause;delete nativeMedia.play;delete nativeMedia.paused;
+  }
+  controllers=[];timers.clear();let sourceErrors=0;
+  const sourceMedia={currentTime:0,playbackRate:1,videoWidth:1920,pause(){},addEventListener(){},removeEventListener(){}};
+  const closeSource=c.desktopCodecHls(sourceMedia,'http://127.0.0.1',0,{onReady(){},onError(){sourceErrors++}},null);
+  controllers[0].transport.failureCode=()=> 'source-read';controllers[0].callbacks.onError();
+  assert.equal(controllers.length,1);assert.equal(sourceErrors,1);closeSource();
+  console.log('PASS: pending pause, committed HLS transfer/409 and source-read classification');
 })().catch(e=>{console.error(e);process.exitCode=1});

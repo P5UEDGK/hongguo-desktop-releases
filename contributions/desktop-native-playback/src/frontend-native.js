@@ -10,13 +10,35 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
     rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
     seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
+  const negotiationMethods = new Map();
+  const negotiationPause = () => {if (!native) state.paused = true;};
+  const negotiationPlay = () => {if (!native) state.paused = false;};
+  media.addEventListener?.('pause', negotiationPause);
+  media.addEventListener?.('play', negotiationPlay);
+  for (const [name, paused] of [['pause', true], ['play', false]]) {
+    const original = media[name];
+    if (typeof original !== 'function') continue;
+    negotiationMethods.set(name, Object.getOwnPropertyDescriptor(media, name));
+    Object.defineProperty(media, name, {configurable:true, value:function(...args) {
+      if (!native && !disposed) state.paused = paused;
+      return original.apply(this, args);
+    }});
+  }
+  function finishNegotiation() {
+    media.removeEventListener?.('pause', negotiationPause);
+    media.removeEventListener?.('play', negotiationPlay);
+    for (const [name, descriptor] of negotiationMethods) {
+      if (descriptor) Object.defineProperty(media, name, descriptor); else delete media[name];
+    }
+    negotiationMethods.clear();
+  }
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
   const event = name => {if (!disposed && native) media.dispatchEvent(new Event(name));};
   async function request(path, init = {}) {
     const response = await fetch(endpoint.origin + '/desktop/hls' + path,
       {...options, ...init, headers: {...headers, ...init.headers}});
-    if (!response.ok) throw Error('Desktop native session unavailable');
+    if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
     return response.status === 204 ? null : response.json();
   }
   async function release(identifier) {
@@ -35,6 +57,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   function restore() {
     if (restored) return;
     restored = true;
+    finishNegotiation();
     clearTimeout(timer); clearTimeout(controlTimer);
     resize?.disconnect();
     document.removeEventListener('fullscreenchange', layout);
@@ -50,7 +73,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     media.volume = state.volume;
     media.muted = state.muted;
   }
-  async function delegate(forceH264) {
+  async function delegate(forceH264, committedHls = false) {
     if (disposed || fallbackStarted) return;
     if (!native) {
       state.rate = media.playbackRate || state.rate;
@@ -60,11 +83,18 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     const old = id; id = null;
     restore();
     // Stop the native audio before the HLS element is allowed to autoplay.
-    const stopped = await release(old);
+    const stopped = committedHls || await release(old);
     if (disposed) return;
     if (!stopped) {callbacks.onComplete?.(false);callbacks.onError?.();return;}
+    let transfer = forceH264 ? null : preparation;
+    if (committedHls) {
+      let claimed = false;
+      preparation?.dispose();
+      transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
+                  dispose() {if (!claimed) {claimed = true; release(old);}}};
+    }
     delegated = desktopCodecHls(media, url, Math.max(0, state.time), callbacks,
-      forceH264 ? null : preparation, windowed, {forceH264, paused: state.paused});
+      transfer, windowed, {forceH264, paused: state.paused});
   }
   async function failPreparation() {
     if (disposed || fallbackStarted) return;
@@ -116,6 +146,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     queue({seek: state.time});
   }
   function patch() {
+    finishNegotiation();
     // React's control effect can apply its remembered speed while the source
     // is downloading. Capture it immediately before replacing the properties.
     state.rate = media.playbackRate || state.rate;
@@ -235,15 +266,25 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       while (!disposed && Date.now() < deadline) {
         const result = await request('/' + id + '/status');
         if (result.state === 'failed') throw Error('Source preparation failed');
-        if (result.source) {metadata = result.source; break;}
+        if (result.source) {
+          if (['h264', 'copy'].includes(result.videoMode)) {delegate(false, true); return;}
+          metadata = result.source; break;
+        }
         await new Promise(resolve => setTimeout(resolve, 250));
       }
       if (disposed) return;
       // Source download/transport failure says nothing about decoder support.
       if (!metadata) {failPreparation(); return;}
       if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
-      await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({mode: 'native'})});
+      try {
+        await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
+          body: JSON.stringify({mode: 'native'})});
+      } catch (error) {
+        if (error.status !== 409) throw error;
+        const latest = await request('/' + id + '/status');
+        if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
+        delegate(false, true); return;
+      }
       if (disposed) return;
       preparation?.dispose();
       patch(); poll(generation);
