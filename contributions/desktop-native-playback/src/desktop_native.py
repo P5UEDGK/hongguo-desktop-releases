@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import queue
+from collections import deque
 import threading
 import time
 from desktop_stream import ProgressiveSource, SourceReadError
@@ -207,6 +208,25 @@ class NativeHost:
         return True
 
 
+class FrameDropWatch:
+    def __init__(self):
+        self.samples=deque()
+        self.growth=None
+
+    def observe(self, now, output_drops, decoder_drops, fps, rate, active):
+        total=max(0,output_drops)+max(0,decoder_drops)
+        if not active or self.samples and total < self.samples[-1][1]:
+            self.samples.clear();self.growth=None
+        if not active:
+            return False
+        if self.samples and total>self.samples[-1][1]:self.growth=now
+        self.samples.append((now,total))
+        while len(self.samples)>2 and self.samples[1][0]<=now-2:self.samples.popleft()
+        elapsed=now-self.samples[0][0]
+        return (elapsed>=2 and self.growth is not None and now-self.growth<=.5
+                and total-self.samples[0][1]>=max(10,max(1,fps)*max(.25,rate)*elapsed*.5))
+
+
 class NativeSession:
     def __init__(self, host, job, parent):
         self.host, self.job, self.parent = host, job, parent
@@ -294,6 +314,8 @@ class NativeSession:
         last_progress, last_position, slow_since = initial, None, None
         retried = False
         frame_ready = False
+        requested_position = self.job.start_seconds
+        drop_watch = FrameDropWatch()
         progressive = isinstance(self.job.source, ProgressiveSource)
         media_uri = str(self.job.source) if not progressive else self.job.stream_url
         # Starting paused allows the frontend to place the surface and apply
@@ -305,7 +327,8 @@ class NativeSession:
                 raise RuntimeError("Software decoding failed")
             retried = True
             frame_ready = False
-            position = self.job.start_seconds if no_frame else player.number("time-pos", self.job.start_seconds)
+            position = requested_position if no_frame else player.number("time-pos", self.job.start_seconds)
+            drop_watch.samples.clear();drop_watch.growth=None
             player.command("set", "hwdec", "no")
             player.command("set", "start", position)
             player.command("loadfile", media_uri)
@@ -387,6 +410,7 @@ class NativeSession:
                         if self.job.duration and target >= self.job.duration:
                             target = max(0, self.job.duration - .05)
                         player.command("seek", target, "absolute+exact")
+                        requested_position = target
                         frame_ready = False
                         initial = time.monotonic()
                         grace = initial + 3
@@ -409,7 +433,7 @@ class NativeSession:
                     # Native renderer must not cover the existing trusted UI
                     # input surface without restoring click/key forwarding.
                     output_ready = self.forward_input(hwnd)
-                if eof and not output_ready:
+                if eof and not seeking and not output_ready:
                     retry_software(no_frame=True)
                     continue
                 avsync = player.number("avsync")
@@ -429,20 +453,24 @@ class NativeSession:
                 if last_position is None or abs(position - last_position) > .01 or paused or seeking:
                     last_position, last_progress = position, now
                 unstable = not paused and not buffering and not seeking and not eof and now > grace
+                frame_drops=player.number("frame-drop-count")
+                decoder_drops=player.number("decoder-frame-drop-count")
+                dropping=drop_watch.observe(now,frame_drops,decoder_drops,
+                    player.number("container-fps",30),desired["rate"],unstable)
                 if buffering:
                     last_progress = now
                 if unstable and abs(avsync) > .2:
                     slow_since = slow_since or now
                 else:
                     slow_since = None
-                if (unstable and (now - last_progress > 3 or slow_since and now - slow_since > 2)
+                if (unstable and (dropping or now - last_progress > 3 or slow_since and now - slow_since > 2)
                         or not output_ready and not buffering and now - initial > 10):
                     if progressive and self.job.source.network_failed.is_set():
                         raise SourceReadError("Native media input timed out")
                     retry_software()
                     continue
                 with self.guard:
-                    self.data.update(state="ended" if eof and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
+                    self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                      time=position, duration=player.number("duration", self.job.duration),
                                      paused=paused, rate=player.number("speed", desired["rate"]),
                                      volume=player.number("volume", desired["volume"] * 100) / 100,
@@ -452,7 +480,7 @@ class NativeSession:
                                      buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
                                      bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                      audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
-                                     frameDrops=player.number("frame-drop-count"), decoderDrops=player.number("decoder-frame-drop-count"))
+                                     frameDrops=frame_drops, decoderDrops=decoder_drops)
                 self.stop.wait(.04)
         except SourceReadError:
             with self.guard:

@@ -15,13 +15,28 @@ import urllib.error
 import av
 from fastapi import FastAPI
 import uvicorn
-from desktop_native import validate_control, NativeHost, NativeSession, Event
+from desktop_native import validate_control, NativeHost, NativeSession, Event, FrameDropWatch
 from desktop_hls_service import HlsJobs, make_router
 from desktop_hls import encode_hls
 from desktop_prefetch import EpisodePrefetcher
 
 
 class NativeTests(unittest.TestCase):
+    def test_sustained_output_or_decoder_frame_loss_is_detected_with_moving_clock(self):
+        for decoder in (False,True):
+            watch=FrameDropWatch();values=[]
+            for n in range(26):
+                values.append(watch.observe(n/10,0 if decoder else n*3,n*3 if decoder else 0,30,1,True))
+            self.assertTrue(any(values),'moving audio clock cannot hide sustained video loss')
+            self.assertFalse(any(values[:20]),'one early burst cannot trigger recovery')
+
+    def test_drop_watch_ignores_pause_counter_reset_and_normal_low_loss(self):
+        watch=FrameDropWatch()
+        for n in range(30):self.assertFalse(watch.observe(n/10,n//10,0,30,1,True))
+        self.assertFalse(watch.observe(3,500,0,30,1,False))
+        self.assertFalse(watch.observe(4,0,0,30,1,True))
+        for n in range(25):self.assertFalse(watch.observe(5+n/10,n*3,0,30,3,True))
+
     def test_release_retains_session_while_teardown_is_pending(self):
         host=object.__new__(NativeHost);host.guard=threading.RLock()
         results=iter((False,True))
@@ -250,7 +265,10 @@ class NativeTests(unittest.TestCase):
     def test_eof_without_a_frame_cannot_publish_ended_and_retries_once(self):
         self.hardware_recovery(empty_eof=True)
 
-    def hardware_recovery(self,empty_eof=False):
+    def test_seek_with_stale_eof_does_not_reload_or_discard_target(self):
+        self.hardware_recovery(empty_eof=True,stale_seek=True)
+
+    def hardware_recovery(self,empty_eof=False,stale_seek=False):
         # This fault cannot be reliably provoked on every physical GPU. The
         # production NativeSession recovery is exercised with a bounded driver.
         class Driver:
@@ -278,7 +296,8 @@ class NativeTests(unittest.TestCase):
             def get(self,key):
                 return {'hwdec-current':'d3d11va' if self.loads==1 else 'no','pause':'yes',
                         'current-vo':'gpu','video-out-params':'frame','audio-device':'auto',
-                        'audio-exclusive':'no','eof-reached':'yes' if empty_eof else 'no'}.get(key)
+                        'audio-exclusive':'no','seeking':'yes' if stale_seek else 'no',
+                        'eof-reached':'yes' if empty_eof else 'no'}.get(key)
             def number(self,key,default=0):
                 return {'time-pos':12.5,'video-params/w':1920,'video-params/h':1080,'duration':87}.get(key,default)
             def close(self): self.handle=None
@@ -292,9 +311,16 @@ class NativeTests(unittest.TestCase):
         with patch('desktop_native.Mpv',Player):
             session.thread.start()
             session.submit({'rate':3,'paused':True,'volume':.4})
-            until=time.monotonic()+2
+            if stale_seek:session.submit({'seek':25})
+            until=time.monotonic()+(.2 if stale_seek else 2)
             while not session.snapshot().get('softwareRetried') and time.monotonic()<until: time.sleep(.01)
             session.close()
+        if stale_seek:
+            self.assertFalse(session.data['softwareRetried'])
+            self.assertEqual(created[0].loads,1)
+            self.assertIn(('seek',25,'absolute+exact'),created[0].commands)
+            self.assertNotEqual(session.data['state'],'failed')
+            return
         self.assertTrue(session.data['softwareRetried'])
         player=created[0]
         self.assertEqual(player.loads,2)

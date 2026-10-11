@@ -40,3 +40,5 @@ pwsh -NoProfile -Command "node contributions/desktop-native-playback/tests/test_
 第二轮复审：截断 Range 丢弃后有界重试；弱 ETag 仅比较身份，不发送 If-Range；未出首帧的 EOF 先重试软件解码，再明确失败；EOF 后 seek 清除 ended，恢复播放保留所选目标。当前 Python 33 项通过、1 项可选 HEVC 跳过，Node 回归通过。
 
 修复最新原生回执：描述与fallback共用AAC-LC资格判定，其余AAC profile转AAC-LC；无首帧EOF软件重试从原请求位置开始；close如线程仍存活返回pending，host/job/output保留，DELETE202，前端有界等待204才启动HLS，取消会话由reaper继续清理。新增真实AAC重编码及生命周期回归。 当前Python38项通过、1项可选HEVC跳过；Node回归通过。
+
+连续至少2秒丢失不少于期望帧数50%且最近仍增长，视为解码不稳定；阈值随帧率和倍速变化，暂停/缓冲/seek重置。先一次软件尝试，软件仍不稳定才H264。seek中忽略旧EOF，未出帧重试保留最新请求位置。 Python41项通过、1项可选HEVC跳过；Node回归通过。
