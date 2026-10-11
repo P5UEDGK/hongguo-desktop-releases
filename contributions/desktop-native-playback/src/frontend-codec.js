@@ -58,11 +58,11 @@ function desktopCreateCodecFetch(forceH264 = false) {
 function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
   let disposed = false, retried = false, epoch = 0, controller, transport;
   let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
-  let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false;
+  let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false, internalPlay = false;
   const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
   const savedPlay = Object.getOwnPropertyDescriptor(media, "play"), originalPlay = media.play;
   const play = function(...args) {
-    if (!ready && !internalPause) {wantedPlaying = true; pauseUntil = 0;}
+    if (!internalPause && !internalPlay) {wantedPlaying = true; pauseUntil = 0;}
     return originalPlay.apply(media, args);
   };
   if (typeof originalPlay === "function") Object.defineProperty(media, "play", {configurable:true, writable:true, value:play});
@@ -75,7 +75,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (ready && Number.isFinite(media.currentTime)) position = media.currentTime + origin;
   };
   const onPlay = () => {
-    if (!ready) return;
+    if (!ready || internalPlay) return;
     if (Date.now() < pauseUntil) {media.pause(); return;}
     wantedPlaying = true;
   };
@@ -108,11 +108,14 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
       onReady() {
         if (!active()) return;
         ready = true;
+        // The legacy controller invokes play synchronously after onReady.
+        internalPlay = true;
+        queueMicrotask(() => {internalPlay = false;});
         media.playbackRate = rate;
         callbacks.onReady();
         if (!wantedPlaying) {
           pauseUntil = Date.now() + 500;
-          queueMicrotask(() => {if (active()) media.pause();});
+          queueMicrotask(() => {if (active() && !wantedPlaying) media.pause();});
         }
         // A media element can play audio while silently failing video decoding.
         clearTimeout(watchdog);

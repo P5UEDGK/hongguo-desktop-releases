@@ -81,6 +81,11 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   explicit.pause();await explicit.play();const beforeReadyPauses=explicitPauses;
   controllers[0].callbacks.onReady();await flush();
   assert.equal(explicitPauses,beforeReadyPauses,'latest explicit play while preparing wins over old pause');
+  explicit.pause();controllers[0].callbacks.onReady();
+  await explicit.play(); // Legacy onReady startup play must preserve user pause.
+  await flush();const pausesBeforeUserPlay=explicitPauses;
+  await explicit.play();await flush();
+  assert.equal(explicitPauses,pausesBeforeUserPlay,'explicit ready play bypasses the startup pause guard');
   closeExplicit();assert.equal(explicit.play,explicitPlay);
   console.log('PASS: codec detection, negotiation, position/rate/pause, one retry, stale callbacks and missing video');
   // HLS audio copy restrictions must not prevent native HEVC selection.
