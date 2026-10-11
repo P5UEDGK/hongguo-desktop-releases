@@ -69,5 +69,11 @@ try:
         assert not track.failed and player.get('sid')==replacement
         actual={name:player.get(name) for name in original_options}
         assert actual==original_options,(actual,original_options)
+        for _ in range(2):
+            track=DanmakuTrack();track.update({'danmaku':[{'text':'worker teardown overlay','offset_ms':0,'lane':1}]});track.apply(player)
+            assert not track.failed and player.get('sid')==track.track_id
+            track.close(player)
+            assert player.get('sid')==replacement and player.get('secondary-sid')=='no'
+            assert {name:player.get(name) for name in original_options}==original_options
         print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration; no pixel or Win32 claim'}))
 finally:player.close()

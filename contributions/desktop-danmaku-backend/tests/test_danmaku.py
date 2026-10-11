@@ -67,9 +67,18 @@ class DanmakuTests(unittest.TestCase):
         p.command=failed_old
         track.update({'danmaku':[{**ITEM,'text':'replacement'}]});track.apply(p)
         self.assertEqual(track.track_id,'2');self.assertEqual(track.pending_removals,{'1'})
+        self.assertFalse(track.failed);self.assertTrue(track.snapshot(2)['danmakuVisible'])
         track.update({'danmaku':[]});track.apply(p)
         self.assertIsNone(track.track_id);self.assertEqual(p.get('sid'),'7')
         self.assertIn(('sub-remove','2'),p.commands);self.assertEqual(track.pending_removals,{'1'})
+
+    def test_worker_teardown_restores_caption_options_before_player_reuse(self):
+        p=Player();p.properties.update({'sid':'7','sub-delay':'2','sub-pos':'83'})
+        original=dict(p.properties);track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertNotEqual(p.properties,original);track.close(p)
+        self.assertEqual(p.properties,original);self.assertIn(('sub-remove','1'),p.commands)
+        next_track=DanmakuTrack();next_track.update({'danmaku':[ITEM]});next_track.apply(p);next_track.close(p)
+        self.assertEqual(p.properties,original)
 
     def test_retimed_negative_origin_matches_dom_phase_and_clips_ass_start(self):
         item={**ITEM,'offset_ms':0,'text':'甲乙','motion_start_ms':-5000}
@@ -206,6 +215,7 @@ class DanmakuTests(unittest.TestCase):
         track.update({'danmaku':[ITEM]});track.apply(p)
         p.fail_remove=True;track.update({'danmaku':[ITEM,{**ITEM,'offset_ms':5000}]});track.apply(p)
         self.assertEqual(track.track_id,'2');self.assertEqual(track.pending_removals,{'1'})
+        self.assertFalse(track.failed);self.assertTrue(track.snapshot(2)['danmakuVisible'])
         p.fail_remove=False;clock[0]=1;track.apply(p)
         self.assertEqual(track.pending_removals,set());self.assertEqual(track.loads,2)
 if __name__=='__main__': unittest.main()

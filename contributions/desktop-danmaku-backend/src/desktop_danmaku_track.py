@@ -121,8 +121,22 @@ class DanmakuTrack:
 
     def remove_pending(self, player):
         for identifier in tuple(self.pending_removals):
+            try:
+                player.command('sub-remove', identifier)
+                self.pending_removals.remove(identifier)
+            except RuntimeError:
+                self.dirty = True
+                self.retry_at = self.clock() + 1
+
+    def close(self, player):
+        # Called before stop/pool release while the file and its caption IDs exist.
+        self.restore_captions(player)
+        if self.track_id: self.pending_removals.add(self.track_id)
+        for identifier in tuple(self.pending_removals):
             player.command('sub-remove', identifier)
             self.pending_removals.remove(identifier)
+        self.track_id, self.document, self.saved = None, '', None
+        self.promoted = False
 
     def apply(self, player):
         if self.track_id and str(player.get('sid')) != str(self.track_id):
