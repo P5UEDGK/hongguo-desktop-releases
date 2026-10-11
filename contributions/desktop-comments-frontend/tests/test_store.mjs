@@ -99,3 +99,17 @@ try{
   assert.deepEqual((await queued).items.map(x=>x.id),['reopened']);
 }finally{timedOutCursor.dispose();Date.now=realNow;globalThis.setTimeout=realTimer;globalThis.clearTimeout=realClear;}
 console.log('PASS session cache, in-flight reuse, pagination, tab/reply isolation, refresh, failure retry and disposal');
+
+// Request-page reads share transport with merged readers without losing provenance.
+const rawStore=createStore(endpoint);
+const rawFirst=rawStore.readPage('replies',{comment_id:'raw'});
+pending.shift().resolve(page(['one'],'p2',true));await rawFirst;
+const mergedSecond=rawStore.read('replies',{comment_id:'raw',cursor:'p2'});
+const rawSecond=rawStore.readPage('replies',{comment_id:'raw',cursor:'p2'});
+pending.shift().resolve(page(['two']));
+assert.deepEqual((await mergedSecond).items.map(x=>x.id),['one','two']);
+assert.deepEqual((await rawSecond).items.map(x=>x.id),['two']);
+assert.deepEqual((await rawStore.readPage('replies',{comment_id:'raw'})).items.map(x=>x.id),['one']);
+assert.deepEqual((await rawStore.readPage('replies',{comment_id:'raw',cursor:'p2'})).items.map(x=>x.id),['two']);
+rawStore.dispose();
+console.log('PASS requested-page cache retains raw pagination provenance');
