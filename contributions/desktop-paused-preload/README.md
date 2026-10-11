@@ -2,7 +2,7 @@
 
 原生播放器暂停后约12秒就停止预读，灰条随之停止。本补丁在暂停时顺序读取当前集的原片 Range 块，恢复播放和 seek 复用已存块；没有缓存时继续正常网络读取。只影响当前原生会话，后三集预取仍由 #187 负责。
 
-依赖 #204 的 `fae4eedc309bbc1a69865cfd153eaa86b10074df`，各文件 LF 规范化后的补丁前后 SHA256 见 `BASELINES.json`。这是公开接入材料，合并不代表发行版已经修复；不包含 EXE、第三方 DLL、真实视频或账号数据。
+依赖 #204 的 `d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee`，各文件 LF 规范化后的补丁前后 SHA256 见 `BASELINES.json`。这是公开接入材料，合并不代表发行版已经修复；不包含 EXE、第三方 DLL、真实视频或账号数据。
 
 ## 缓存与生命周期
 
@@ -16,8 +16,8 @@
 
 ```pwsh
 pwsh -NoProfile -Command "git apply --check <contribution-dir>/enable-paused-preload.patch"
-pwsh -NoProfile -Command "git apply <contribution-dir>/enable-paused-preload.patch"
 pwsh -NoProfile -Command "python -I contributions/desktop-paused-preload/tests/test_patch.py --native-package <native-dir> --prefetch-package <prefetch-dir>"
+pwsh -NoProfile -Command "git apply <contribution-dir>/enable-paused-preload.patch"
 ```
 
 测试核对摘要、补丁可应用性与编译，运行原生回归及缓存/验证器测试。覆盖无节流并发写入不超预算、重复与取消写入、完整块复用、磁盘失败，以及依据输入大小和限速计算验证期限。可选真实 HEVC 包一致性用例未配置时明确跳过。
@@ -28,20 +28,14 @@ pwsh -NoProfile -Command "python -I contributions/desktop-paused-preload/tests/t
 pwsh -NoProfile -Command "python -I contributions/desktop-paused-preload/tests/verify_preload.py --native-package <native-dir> --prefetch-package <prefetch-dir> --mpv <verified-libmpv-2.dll> --source <owned-hevc.mp4> --sha <sha256> --run <owned-output-dir>"
 ```
 
-`--software` 强制软解；`--cache-budget 1048576 --range-delay 0` 验证无节流1MiB硬预算。默认 Range 延迟0.12秒，验证期限随输入块数增长，最多3600秒；可用 `--preload-timeout` 在1至3600秒内显式指定。仅 preloadReason=budget 接受达限分支，缓存打开/写入或线程启动失败会使验证失败。达限后采样3秒，写入字节须接近可计算容量且大于零，最大物理文件大小不得超过预算，末尾1秒必须稳定。报告及媒体不提交。
+`--software` 强制软解；`--cache-budget 8388608 --range-delay 0` 验证无节流8MiB硬预算。默认 Range 延迟0.12秒，验证期限随输入块数增长，最多3600秒；可用 `--preload-timeout` 在1至3600秒内显式指定。仅 preloadReason=budget 接受达限分支，缓存打开/写入或线程启动失败会使验证失败。达限后采样3秒，写入字节须接近可计算容量且大于零，最大物理文件大小不得超过预算，末尾1秒必须稳定。报告及媒体不提交。
 
 维护者接入发布前，仍需验证真实前端 #189 灰条、冷缓存、慢网、断网、快速切集、默认音频与倍速恢复。此补丁不提供连续画面录制结论，也不宣称正式版已无黑屏。Related to #23、#181：发布并完成暂停加载/恢复验收后再考虑关闭；#202/#199 仅部分覆盖，不自动关闭。
 
 回滚撤销补丁和新增模块，恢复约12秒预读；保留用户原片与观看记录。
 
-当前公开组合53项：52项通过、1项可选HEVC跳过。自有40秒合成HEVC+AAC实际mpv/API复测：无节流1MiB硬预算8项通过、正常输入9项通过，涵盖暂停加载、2x/3x恢复、seek和释放；未据此宣称真实UI或像素连续性验收。
-
-恢复既有资源/取消/过期契约并适配原生播放器常驻资源池。修复暂停预加载触发、续载游标和读取线程回收。Python62项61通过1可选跳过；真实mpv预算/完整预加载19项检查通过。正式应用仍未安装，不代表零黑屏验收通过。
-
 备用集的隐藏暂停也不会启动整集后台填充；提升为当前集后，由用户暂停触发。真实合成源的备用首帧仍按有界预读准备。
 
 适配最新原生音频就绪与已排队控制状态，保留用户暂停才填满缓存及隐藏备用不触发整集下载的边界。
 
-本轮组合64项：63项通过、1项可选HEVC跳过。
-
-本次回执修复与验证：仅跟随#204依赖HEAD更新，暂停整集缓存行为未新增修改；公开组合64项63通过1可选跳过。
+当前公开组合76项全部通过，已提供自有HEVC夹具完成可选项。缓存关闭时可选磁盘flush失败不再中断资源清理。真实自有40秒HEVC+AAC、libmpv及鉴权API复测中，正常填满与无节流8MiB硬预算均通过，验证暂停后确有新增填充、2x/3x恢复、seek及释放。1MiB在启动预读时已达限的输入被验证器明确拒绝；它不能证明暂停加载线程运行，需提高预算重测。新增缓存关闭失败回归在旧实现失败。

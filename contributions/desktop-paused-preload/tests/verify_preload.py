@@ -25,7 +25,12 @@ def preload_outcome(value):
         return 'limited' if native.get('preloadReason') == 'budget' else 'failed'
     if native['cacheComplete']:
         return 'complete'
-    return None
+
+
+def pause_fill_advanced(before, after):
+    previous, current = before['native'], after['native']
+    return (not previous['preloadLimited'] and not previous['cacheComplete']
+            and current['cacheFileBytes'] > previous['cacheFileBytes'])
 
 
 def budget_stable(byte_samples, budget, range_bytes):
@@ -181,6 +186,10 @@ def main():
                       {'bytes': byte_samples, 'observationSeconds': 3,
                        'allowedOvershootBytes': 0})
             samples=report['pausedSamples']
+            report['beforePause']=bounded
+            check('user-pause-starts-additional-cache-work',pause_fill_advanced(bounded,value),
+                  {'before':bounded['native'],'after':value['native'],
+                   'hint':'If bootstrap already exhausts the cap, increase --cache-budget to exercise paused fill.'})
             check('pause-position-fixed',all(s['native']['paused'] and abs(s['native']['time'])<.1 for s in samples))
             if not limited:
                 check('paused-bytes-and-range-advance',value['sourceProgress']['receivedBytes']>initial['sourceProgress']['receivedBytes'] and

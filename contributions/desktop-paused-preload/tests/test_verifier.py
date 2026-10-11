@@ -11,6 +11,16 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_budget_probe_rejects_bootstrap_only_and_requires_post_pause_work(self):
+        def state(size,limited=False,complete=False):
+            return {'native':{'cacheFileBytes':size,'preloadLimited':limited,'cacheComplete':complete}}
+        self.assertFalse(probe.pause_fill_advanced(state(1000,True),state(1000,True)))
+        self.assertFalse(probe.pause_fill_advanced(state(1000),state(1000,True)))
+        self.assertFalse(probe.pause_fill_advanced(state(1000,True),state(1100,True)))
+        self.assertFalse(probe.pause_fill_advanced(state(1000,complete=True),state(1100,complete=True)))
+        self.assertTrue(probe.pause_fill_advanced(state(1000),state(2000,True)))
+        self.assertTrue(probe.pause_fill_advanced(state(1000),state(2000,complete=True)))
+
     def test_observed_cap_is_valid_without_cli_override(self):
         self.assertEqual(probe.preload_outcome({'native': {'preloadLimited': True, 'preloadReason':'budget', 'cacheComplete': False}}), 'limited')
         for reason in ('cache-io','cache-open','worker-start',None):
