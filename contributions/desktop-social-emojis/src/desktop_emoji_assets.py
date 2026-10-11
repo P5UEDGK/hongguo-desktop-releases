@@ -24,7 +24,7 @@ def validate_png(png, width, height):
     depths={0:(1,2,4,8,16),2:(8,16),3:(1,2,4,8),4:(8,16),6:(8,16)}
     if color not in depths or depth not in depths[color] or compression or filtering or interlace not in (0,1):
         raise ValueError('Invalid emoji PNG format')
-    cursor=8; compressed=bytearray(); palette=None; ended=False; idat=False; idat_closed=False
+    cursor=8; compressed=bytearray(); palette=None; ended=False; idat=False; idat_closed=False; transparency=False
     while cursor<len(png):
         if cursor+12>len(png): raise ValueError('Truncated emoji PNG')
         length=int.from_bytes(png[cursor:cursor+4],'big');kind=png[cursor+4:cursor+8];end=cursor+12+length
@@ -36,9 +36,18 @@ def validate_png(png, width, height):
         if kind==b'IHDR':
             if cursor!=8 or length!=13: raise ValueError('Invalid emoji PNG header')
         elif kind==b'PLTE':
-            if palette is not None or idat or color in (0,4) or length%3 or not 3<=length<=768 or color==3 and length//3>2**depth:
+            if palette is not None or transparency or idat or color in (0,4) or length%3 or not 3<=length<=768 or color==3 and length//3>2**depth:
                 raise ValueError('Invalid emoji PNG palette')
             palette=length//3
+        elif kind==b'tRNS':
+            if transparency or idat:raise ValueError('Invalid emoji PNG transparency order')
+            if color==3:
+                if palette is None or not 1<=length<=palette:raise ValueError('Invalid emoji PNG palette transparency')
+            elif color in (0,2):
+                samples=1 if color==0 else 3
+                if length!=samples*2 or any(int.from_bytes(content[i:i+2],'big')>=2**depth for i in range(0,length,2)):raise ValueError('Invalid emoji PNG transparency samples')
+            else:raise ValueError('Invalid emoji PNG transparency format')
+            transparency=True
         elif kind==b'IDAT':
             if idat_closed or color==3 and palette is None: raise ValueError('Invalid emoji PNG data order')
             idat=True;compressed.extend(content)
@@ -51,6 +60,7 @@ def validate_png(png, width, height):
             raise ValueError('Compressed emoji PNG metadata is unsupported')
         elif not kind[0]&32:
             raise ValueError('Unknown critical emoji PNG chunk')
+        else:raise ValueError('Unsupported emoji PNG metadata')
         if idat and kind!=b'IDAT': idat_closed=True
         cursor=end
     if not ended: raise ValueError('Missing emoji PNG end')

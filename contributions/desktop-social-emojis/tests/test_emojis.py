@@ -7,6 +7,17 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from desktop_emoji_assets import validate_assets,catalog
 FIXTURE={'[测试]':{'src':'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','resolution':1,'drawing':[{'color':[255,0,0],'alpha':1,'paths':[[[0,0],[1,0],[1,1],[0,1]]]}]}}
 class EmojiTests(unittest.TestCase):
+    def test_png_transparency_validates_palette_order_and_cardinality(self):
+        def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
+        header=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1,1,8,3,0,0,0))
+        palette=chunk(b'PLTE',b'\0\0\0');alpha=chunk(b'tRNS',b'\x80');data=chunk(b'IDAT',zlib.compress(b'\0\0'));end=chunk(b'IEND',b'')
+        for middle,valid in ((palette+alpha,True),(alpha+palette,False),(palette+chunk(b'tRNS',b'\x80\xff'),False),(palette+alpha+alpha,False),(palette+chunk(b'tEXt',b'ignored'),False)):
+            row=copy.deepcopy(FIXTURE);row['[测试]']['src']='data:image/png;base64,'+base64.b64encode(header+middle+data+end).decode()
+            if valid:validate_assets(row)
+            else:
+                with self.assertRaises(ValueError):validate_assets(row)
+
+
     def test_compressed_ancillary_chunks_are_rejected(self):
         raw=base64.b64decode(FIXTURE['[测试]']['src'].split(',')[1])
         def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))

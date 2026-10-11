@@ -14,6 +14,19 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_generated_png_strips_non_orientation_exif(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            for format in ('PNG','JPEG'):
+                path=Path(directory)/('exif.'+format.lower());image=Image.new('RGB',(8,4),'blue')
+                exif=image.getexif();exif[274]=6;exif[315]='owned author';exif[270]='private fixture metadata'
+                image.save(path,format=format,exif=exif)
+                row=compiler.compile_assets({'[测试]':path})['[测试]'];raw=base64.b64decode(row['src'].split(',',1)[1])
+                self.assertNotIn(b'eXIf',raw)
+                with Image.open(io.BytesIO(raw)) as result:self.assertEqual(result.size,(4,8));self.assertEqual(len(result.getexif()),0)
+                validate_assets({'[测试]':row})
+
+
     def test_invalid_tag_rejected_before_any_image_open(self):
         with patch('PIL.Image.open') as opened:
             for tag in ('bad','[line\nfeed]','['+'x'*17+']',7):
