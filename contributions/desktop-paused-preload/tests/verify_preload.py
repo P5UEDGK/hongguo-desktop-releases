@@ -208,8 +208,8 @@ def main():
         until=time.monotonic()+timeout
         while time.monotonic()<until:
             value=request('/'+identifier+'/status')
+            if value.get('state')=='failed' or value.get('native',{}).get('state')=='failed': raise AssertionError('Native failed')
             if predicate(value): return value
-            if value.get('native',{}).get('state')=='failed': raise AssertionError('Native failed')
             time.sleep(.1)
         raise AssertionError('Native timeout')
     def scenario():
@@ -282,7 +282,8 @@ def main():
                 # Resuming software output can take longer than a fixed sleep.
                 # This checks eventual progress/sync, not real-time throughput.
                 state=wait(identifier,lambda s:s['native']['rate']==rate and s['native']['time']>position+advance and
-                           not s['native']['buffering'],timeout=timeout)['native']
+                           not s['native']['buffering'] and abs(s['native']['avsync'])<.1 and
+                           s['native']['audioDevice']=='auto' and s['native']['audioOutput']=='wasapi',timeout=timeout)['native']
                 check(str(rate)+'x-resumes-default-audio',state['time']>position+advance and abs(state['avsync'])<.1 and
                       state['audioDevice']=='auto' and state['audioOutput']=='wasapi' and
                       (not args.software or state['hwdec']=='no'),state)

@@ -14,6 +14,21 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_failed_snapshot_cannot_satisfy_wait_predicate(self):
+        tree=ast.parse(inspect.getsource(probe));node=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='wait')
+        scope={'time':SimpleNamespace(monotonic=lambda:0,sleep=lambda _:None),'request':lambda _:dict(native=dict(state='failed',paused=True))}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[node],type_ignores=[])),'<actual-wait>','exec'),scope)
+        with self.assertRaisesRegex(AssertionError,'Native failed'):scope['wait']('owned',lambda s:s['native']['paused'])
+
+    def test_rate_wait_includes_eventual_audio_and_sync_readiness(self):
+        tree=ast.parse(inspect.getsource(probe));calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='wait']
+        node=next(n.args[1] for n in calls if len(n.args)>1 and isinstance(n.args[1],ast.Lambda) and "['rate']" in ast.unparse(n.args[1]))
+        predicate=eval(compile(ast.fix_missing_locations(ast.Expression(node)),'<actual-rate-wait>','eval'),{'rate':2,'position':0,'advance':1})
+        ready=dict(rate=2,time=2,buffering=False,avsync=.01,audioDevice='auto',audioOutput='wasapi')
+        for changes in (dict(avsync=.3),dict(audioDevice=''),dict(audioOutput='')):
+            self.assertFalse(predicate({'native':dict(ready,**changes)}))
+        self.assertTrue(predicate({'native':ready}))
+
     def test_incomplete_bootstrap_reads_must_fit_seconds_and_byte_envelope(self):
         tree=ast.parse(inspect.getsource(probe));gate=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and n.args and isinstance(n.args[0],ast.Constant) and n.args[0].value=='bootstrap-completion-within-envelope')
         code=compile(ast.fix_missing_locations(ast.Expression(gate.args[1])),'<actual-bootstrap-gate>','eval')
