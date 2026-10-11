@@ -169,7 +169,8 @@ function desktopStartDanmaku(media, endpoint, status) {
     }
     if (enabled) load();
   };
-  const viewport = () => (media.clientWidth || 1000)/Math.max(.3,(media.clientHeight-84 || 562)/562);
+    const availableHeight = () => layer.clientHeight || media.clientHeight - 84 || 562;
+    const viewport = () => (media.clientWidth || 1000)/Math.max(.3,availableHeight()/562);
   function reset() {
     generation++; loadAbort?.abort(); loadAbort=null; busy=false;
     raw = []; rows = []; cursor = ''; ended = false; retryAt = 0;
@@ -239,7 +240,7 @@ function desktopStartDanmaku(media, endpoint, status) {
         }
         existing.delete(row.id);
         const age = (time * 1000 - row.offset_ms) / (settings.duration * 1000);
-        const scale = Math.max(0.3, (media.clientHeight - 84 || 562) / 562), size = settings.fontSize * scale;
+          const scale = Math.max(0.3, availableHeight() / 562), size = settings.fontSize * scale;
         node.style.fontSize = size + 'px'; node.style.opacity = settings.opacity / 100;
         node.style.transform = `translate3d(${width - (width + node.offsetWidth) * age}px,${(25 + row.lane * (settings.fontSize+15)) * scale}px,0)`;
       }
