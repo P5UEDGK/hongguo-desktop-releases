@@ -65,7 +65,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     prep.retain(()=>retired++);claimed=true;
     if(fault==='unknown-duration'&&videos[0])videos[0].duration=Infinity;
     const record=await prep.claimRecord(fault==='identity'?url+'&other=1':url,position,fault==='windowed');
-    if(fault&&!['windowed','parent-refresh','pending-parent','settings-live'].includes(fault)||!Number.isFinite(position)||position<0||position>=90){
+    if(fault&&!['windowed','parent-refresh','pending-parent','settings-live','late-seek'].includes(fault)||!Number.isFinite(position)||position<0||position>=90){
       assert.equal(record,null,'unsafe/failed reuse must fall back');
       if(fault.startsWith('prepare-failed')){
         assert.equal(prep.resumeInvalid,fault!=='prepare-failed-unknown'&&position>=90);
@@ -88,6 +88,7 @@ async function scenario(native,position,fault='',fallbackFrames=false){
       assert.equal(record.id,'b'.repeat(32));assert.equal(record.settings.rate,2);
       if(position>.05){assert.equal(calls.filter(x=>'seek'in x).length,1);assert.equal(native?target:videos[0].currentTime,position);}
       else assert(!calls.some(x=>'seek'in x));
+      if(fault==='late-seek'){await record.seek(20);assert.equal(videos[0].currentTime,20);assert(videos[0].paused);position=20;}
       if(!native){const media=new Video();media.stage=current.stage;Object.assign(media,{playbackRate:4,volume:.7,muted:false});const dispose=record.adopt(media,{onReady(){}});
         assert.equal(media.playbackRate,4);assert.equal(media.volume,.7);assert.equal(media.muted,false);
         for(let n=0;n<20;n++)await tick();assert.equal(media.currentTime,position>.05?position:0);assert.equal(videos.length,1);assert(activated);dispose();}
@@ -105,8 +106,9 @@ async function scenario(native,position,fault='',fallbackFrames=false){
     for(const position of [-1,NaN,Infinity,90,91])await scenario(native,position);
     for(const fault of ['identity','cancel','timeout','seek-error','unknown-duration','windowed','mode-mismatch','parent-refresh','pending-parent'])await scenario(native,30,fault);
   }
+  await scenario(false,0,'late-seek');
   await scenario(true,0,'advanced');
   await scenario(false,0,'advanced');
   await scenario(false,.051,'',true);await scenario(false,89.8,'',true);
-  console.log('PASS: 48 native/HLS resume cases, including failed preparation with known/unknown duration, target-frame readiness, invalid positions, cancellation, timeout and retention');
+  console.log('PASS: native/HLS resume cases, including failed preparation with known/unknown duration, target-frame readiness, invalid positions, cancellation, timeout and retention');
 })().catch(e=>{console.error(e);process.exitCode=1;});

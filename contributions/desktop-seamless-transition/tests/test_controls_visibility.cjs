@@ -11,8 +11,10 @@ function check(event, media, state, expected, reason) {
   checks++;
 }
 // Source disposal has reset ended before the controls' ended listener runs.
-check({type:'ended'}, {paused:true, ended:false}, {autoContinue:true}, false, 'EOF event survives teardown');
-check({type:'pause'}, {paused:true, ended:true}, {autoContinue:true}, false, 'EOF-related pause stays hidden');
+check({type:'ended'}, {paused:true, ended:false}, {autoContinue:true,hasNext:true}, false, 'EOF event survives teardown');
+check({type:'pause'}, {paused:true, ended:true}, {autoContinue:true,hasNext:true}, false, 'EOF-related pause stays hidden');
+check({type:'ended'}, {paused:true, ended:true}, {autoContinue:true,hasNext:false}, true, 'auto preference alone cannot hide final EOF');
+check({type:'ended'}, {paused:true, ended:true}, {autoContinue:true}, true, 'failed next resolution remains operable');
 check({type:'ended'}, {paused:true, ended:false}, {autoContinue:false}, true, 'last episode remains operable');
 check({type:'pause'}, {paused:true, ended:false}, {}, true, 'ordinary user pause reveals');
 for (const type of ['pause', 'ended']) {

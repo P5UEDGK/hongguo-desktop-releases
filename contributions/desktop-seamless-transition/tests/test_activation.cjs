@@ -59,6 +59,7 @@ async function scenario(fault){
   else if(fault==='hidden-during-activate'){
     for(let n=0;n<10;n++){await tick();await new Promise(r=>setTimeout(r,1));}
     assert(activated);assert.equal(errors,0);assert.equal(finished,0,'hidden activation retains the old picture until visible');
+    assert.equal(commands.at(-1).paused,true,'hidden in-flight activation must pause audio');
     context.document.hidden=false;documentListeners.get('visibilitychange')?.();
     for(let n=0;n<10;n++){await tick();await new Promise(r=>setTimeout(r,1));}
     assert.equal(errors,0);assert(finished>0,'showing the activated surface finishes retention');

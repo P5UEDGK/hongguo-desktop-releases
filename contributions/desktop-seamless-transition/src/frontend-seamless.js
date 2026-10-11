@@ -201,7 +201,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         }
         if (disposed) return null;
       }
-      return {...result, settings:preparation.settings, expiresAt:deadline};
+      return {...result, seek:position=>seekToResume(result,position), settings:preparation.settings, expiresAt:deadline};
     }
   };
   expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup();}}, 90000);

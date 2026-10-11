@@ -34,6 +34,7 @@ HLS接管先保留旧帧，activate成功后清除codec控制器的备用父标�
 if (desktopControlsShouldReveal(event, media, {
   disabled: controls.current.disabled,
   autoContinue: controls.current.autoContinue,
+  hasNext: controls.current.canNext,
   transitioning: controls.current.isTransitioning?.()
 })) revealControls();
 ```
@@ -128,3 +129,9 @@ claim 携带原准备 expiresAt；隐藏表面等待与交接沿用这一期限�
 2026-10-12 追加复核：同步native前端入口修复，重放备用桥接且保持既有保帧/ACK控制契约。
 
 验证：无原生能力的未知时长续播、准备期显式 seek 和首帧前播放设置，旧入口均能复现失败，修复后通过；原生/备用前端 12 个套件及候选 Tauri 原生/HLS 实测通过，包含社交交互和关闭释放。后端模块未变，核验摘要后复用 308 项通过证据。安装版最终验收随后执行，上游尚未合并发布。
+
+`hasNext` 必须由当前剧集和可用下一集计算；不存在下一集或解析失败时传 `false`。只开启自动连播不能压住最终 EOF 的控件。
+
+2026-10-12 第十轮复核：4242853044/3048/3054：activate在途隐藏也暂停；HLS接管前显式seek重放；EOF显隐依赖实际下一集/过渡。
+
+验证：318 项融合后端测试无跳过，205 项备用组合测试、13 套前端测试和 88 项社交浏览器检查通过；真实 libmpv 字幕检查、1 秒片源 2x/3x 检查及候选 Tauri 原生/HLS、社交交互与关闭释放通过。新增回归同时保留旧实现失败证据。本机安装验收随后执行，上游尚未合并发布。
