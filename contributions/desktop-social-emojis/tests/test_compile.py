@@ -14,6 +14,14 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_small_non_square_vector_is_upscaled_to_native_canvas(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'small.png';Image.new('RGBA',(4,2),'red').save(path)
+            row=compiler.compile_assets({'[测试]':path})['[测试]']
+            points=[point for group in row['drawing'] for contour in group['paths'] for point in contour]
+            xs,ys=zip(*points)
+            self.assertEqual((min(xs),max(xs),min(ys),max(ys)),(0,48,12,36))
     def test_non_square_native_vectors_keep_the_png_aspect_ratio(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:

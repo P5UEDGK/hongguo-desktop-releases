@@ -3,6 +3,8 @@ import base64
 import json
 import math
 import re
+import struct
+import zlib
 from pathlib import Path
 
 def load_assets(path):
@@ -20,7 +22,13 @@ def validate_assets(assets):
         if not isinstance(src,str) or not src.startswith('data:image/png;base64,') or len(src)>1024*1024: raise ValueError('Invalid emoji PNG')
         try: png=base64.b64decode(src.split(',',1)[1],validate=True)
         except (ValueError,TypeError): raise ValueError('Invalid emoji base64') from None
-        if not png.startswith(b'\x89PNG\r\n\x1a\n'): raise ValueError('Invalid emoji PNG header')
+        if (len(png)<33 or not png.startswith(b'\x89PNG\r\n\x1a\n')
+                or png[8:16]!=b'\x00\x00\x00\x0dIHDR'
+                or zlib.crc32(png[12:29])!=int.from_bytes(png[29:33],'big')):
+            raise ValueError('Invalid emoji PNG header')
+        width,height=struct.unpack('>II',png[16:24])
+        if not 1<=width<=256 or not 1<=height<=256:
+            raise ValueError('Emoji PNG dimensions exceed 256 pixels')
         if type(resolution) is not int or not 1<=resolution<=256: raise ValueError('Invalid emoji resolution')
         if not isinstance(row['drawing'],list) or len(row['drawing'])>128: raise ValueError('Invalid emoji drawing')
         for group in row['drawing']:
