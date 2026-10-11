@@ -61,6 +61,9 @@ def validate_png(png, width, height):
         for _ in range(h):
             method=raw[offset];offset+=1;row=bytearray(raw[offset:offset+stride]);offset+=stride
             if method>4: raise ValueError('Invalid emoji PNG filter')
+            # Every non-indexed sample bit pattern is valid. Only palette
+            # indices need reconstruction before checking their value range.
+            if color!=3: continue
             for i in range(stride):
                 a=row[i-bpp] if i>=bpp else 0;b=prior[i];c=prior[i-bpp] if i>=bpp else 0
                 if method==1: predictor=a

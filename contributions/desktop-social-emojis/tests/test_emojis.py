@@ -7,6 +7,15 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from desktop_emoji_assets import validate_assets,catalog
 FIXTURE={'[测试]':{'src':'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','resolution':1,'drawing':[{'color':[255,0,0],'alpha':1,'paths':[[[0,0],[1,0],[1,1],[0,1]]]}]}}
 class EmojiTests(unittest.TestCase):
+    def test_filtered_palette_indices_are_checked_after_reconstruction(self):
+        def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
+        for samples,valid in ((b'\1\1\0',True),(b'\1\1\1',False)):
+            png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',2,1,8,3,0,0,0))+chunk(b'PLTE',b'\0\0\0\xff\xff\xff')+chunk(b'IDAT',zlib.compress(samples))+chunk(b'IEND',b'')
+            row=copy.deepcopy(FIXTURE);row['[测试]']['src']='data:image/png;base64,'+base64.b64encode(png).decode()
+            if valid:validate_assets(row)
+            else:
+                with self.assertRaisesRegex(ValueError,'palette index'):validate_assets(row)
+
     def test_truncated_corrupt_and_wrong_inflated_pixels_are_rejected(self):
         raw=base64.b64decode(FIXTURE['[测试]']['src'].split(',')[1])
         def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
