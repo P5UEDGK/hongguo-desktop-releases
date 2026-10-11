@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import base64
 import io
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -13,6 +14,13 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_excessive_dimensions_rejected_before_pixel_conversion(self):
+        source=MagicMock();source.size=(8000,8000)
+        source.__enter__.return_value=source
+        with patch('PIL.Image.open',return_value=source):
+            with self.assertRaisesRegex(ValueError,'dimensions'):
+                compiler.compile_assets({'[测试]':'oversized.png'})
+        source.convert.assert_not_called()
     def test_authored_image_compiles_to_png_and_vectors(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:

@@ -41,3 +41,7 @@ node contributions/desktop-social-emojis/tests/test_emojis.mjs
 ## 首轮审查修复
 
 PNG 编译先限制到256px，再执行资源 schema 与16MiB总输出校验，失败不写输出；JS 标签正则按 Unicode 码点计数。新增大图、错误映射与九个非BMP emoji 标签回归，7项 Python 和 Node 测试通过。
+
+## 剩余审查回归（2026-10-11）
+
+打开本地图片后先检查尺寸，超过4096×4096像素总量时在RGBA转换前拒绝；避免8000×8000输入先分配整幅像素副本。普通图片仍缩到256px并执行资源schema和16MiB目录校验。8项Python及Node测试通过。

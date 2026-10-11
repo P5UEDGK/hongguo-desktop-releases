@@ -13,6 +13,10 @@ def compile_assets(mapping):
     result={}
     for name, source_path in mapping.items():
         with Image.open(source_path) as source:
+            # Inspect the header before allocating a full RGBA copy.
+            width,height=source.size
+            if width<=0 or height<=0 or width*height>4096*4096:
+                raise ValueError('Emoji image dimensions exceed 16 megapixels')
             image=source.convert('RGBA')
             image.thumbnail((256,256),Image.Resampling.LANCZOS)
             png=io.BytesIO(); image.save(png,format='PNG',optimize=True)
