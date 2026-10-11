@@ -1,6 +1,14 @@
 --- a/backend/desktop_prefetch.py
 +++ b/backend/desktop_prefetch.py
-@@ -56,10 +56,13 @@
+@@ -26,6 +26,7 @@
+         self.reporter = None
+         self.generation = 0
+         self.foreground = {}
++        self.warm_jobs = {}
+         self.busy = None
+         self.pending = []
+         self.active = None
+@@ -56,10 +57,17 @@
                  by_index.setdefault(index, vid)
          return sorted(by_index.items())
  
@@ -10,13 +18,17 @@
 +        with self.condition:
 +            if expected_generation is not None and (self.closed or expected_generation != self.generation):
 +                return None
++            for identifier, warm in self.warm_jobs.items():
++                if identifier != job.id:
++                    warm.cancelled.set()
++            self.warm_jobs.clear()
              self.generation += 1
              self.foreground[job.id] = self.generation
 +            job.prefetch_generation = self.generation
              self.pending = []
              self.download_pending = []
              self.sources = {}
-@@ -73,15 +76,25 @@
+@@ -73,15 +81,26 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
@@ -32,6 +44,7 @@
 +                if generation != self.generation:
 +                    raise EncodingCancelled()
 +                self.foreground.setdefault(job.id, generation)
++                self.warm_jobs[job.id] = job
              while True:
                  if (job.cancelled.is_set() or self.closed
                          or self.foreground.get(job.id) != self.generation):
@@ -43,7 +56,7 @@
                      self.busy = job.id
                      return
                  self.condition.wait(0.1)
-@@ -94,7 +107,7 @@
+@@ -94,7 +113,7 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
@@ -52,7 +65,7 @@
          with self.condition:
              generation = self.generation
          _, metadata = self.episode_loader(series_id)
-@@ -106,7 +119,7 @@
+@@ -106,7 +125,7 @@
              if (generation != self.generation or self.closed
                      or self.current != {"seriesId": str(series_id), "episode": episode}):
                  raise EncodingCancelled()
@@ -61,10 +74,29 @@
          with self.condition:
              if (generation == self.generation and not self.closed
                      and self.current == {"seriesId": str(series_id), "episode": episode}):
-@@ -131,6 +144,55 @@
+@@ -131,6 +150,74 @@
          self._report()
          return source
  
++    def load_standby_source(self, job, series_id, episode):
++        def current_generation():
++            with self.condition:
++                if (self.closed or job.cancelled.is_set() or not job.prewarm_parent
++                        or job.prefetch_generation != self.generation):
++                    raise EncodingCancelled()
++        current_generation()
++        _, metadata = self.episode_loader(series_id)
++        vid = next((vid for index, vid in self._episodes(metadata) if index == episode), None)
++        if vid is None:
++            raise ValueError("Episode media identity unavailable")
++        current_generation()
++        with self.condition:
++            source = self.sources.get(vid)
++        if source is None:
++            source = self.source_loader(vid)
++        current_generation()
++        return source
++
 +    def promote(self, job, series_id, episode):
 +        if job.cancelled.is_set():
 +            return False
@@ -117,15 +149,16 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -155,6 +217,7 @@
+@@ -155,6 +242,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
++            self.warm_jobs.pop(job.id, None)
 +            job._prefetch_work_finished = True
              expected = self.foreground.get(job.id)
          mode = getattr(job, "video_mode", "h264")
          # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
-@@ -169,6 +232,9 @@
+@@ -169,6 +258,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -135,7 +168,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -304,6 +370,7 @@
+@@ -304,6 +396,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

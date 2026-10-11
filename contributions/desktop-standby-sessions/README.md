@@ -6,7 +6,7 @@
 
 ## 接线与生命周期
 
-应用src下三个backend补丁和原生测试适配补丁。原HlsJobs增加on_activate=prefetch.promote，保留on_start=prefetch.begin、before_work=prefetch.before_work、on_finish=prefetch.finish和source_loader=prefetch.load_source。CORS允许请求头加入x-desktop-prewarm-parent，保持回环鉴权与来源白名单。
+应用src下三个backend补丁和原生测试适配补丁。原HlsJobs增加on_activate=prefetch.promote、standby_source_loader=prefetch.load_standby_source，保留on_start=prefetch.begin、before_work=prefetch.before_work、on_finish=prefetch.finish和source_loader=prefetch.load_source。CORS允许请求头加入x-desktop-prewarm-parent，保持回环鉴权与来源白名单。
 
 创建请求带x-desktop-codec-negotiation:1及x-desktop-prewarm-parent:<当前UUID>。服务器验证同剧、紧邻下一集、零偏移、有效父会话与单备用，能力接口standbyPlayback:1。备用继承创建时的预缓存代际，before_work和activate均拒绝已过期代际。
 
@@ -24,7 +24,7 @@ pwsh -NoProfile -Command "python -I contributions/desktop-standby-sessions/tests
 
 用户已确认上一批本机黑屏消失，本轮继续处理短暂停顿；上游发行版是否解决需接入发布后验证。回滚撤销补丁及on_activate接线，保留用户原片和观看记录。[Issue关闭条件](ISSUES.md)，不自动关闭。
 
-补丁基线已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee及#187的8f28b71bd9c59a6a47e31413f7be3f486d81ab0b，保留异步诊断writer和原生源一致性修复。新增立即完成元数据的确定性回归，证明先解除父关系再完成foreground清理；旧实现失败，当前组合通过。
+前序批次补丁基线曾同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee及#187的8f28b71bd9c59a6a47e31413f7be3f486d81ab0b，保留异步诊断writer和原生源一致性修复。新增立即完成元数据的确定性回归，证明先解除父关系再完成foreground清理；旧实现失败，当前组合通过。
 
 备用会话补丁同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516 与prefetch 6b78af10c856f1327ef7f16f9242e6754057b8f4。保留元数据返回后的代际重查；预热在可取消准备锁内保留父会话，使用job绑定的请求窗口。组合167项全部通过，含自有HEVC夹具、新窗口归属及全部prefetch回归。本机安装待完成。
 
@@ -34,3 +34,10 @@ pwsh -NoProfile -Command "python -I contributions/desktop-standby-sessions/tests
 原生 control 在读取请求体后，将会话有效性检查、提交及 activation revision 更新置于同一 jobs.guard 临界区，避免 DELETE 在父会话已暂停后抢先取消。预缓存依赖同步本轮前台状态与后台 stage 清理修复；保留 promote 的解除父关系后启动行为。确定性双线程回归在旧实现失败。
 
 本机完整候选、安装回读与反馈观察期仍待完成。
+
+
+## 本轮三次反馈修复
+
+HlsJobs新增可选standby_source_loader=prefetch.load_standby_source。该入口按job的父代际和取消状态检查冷源，不要求current为子集，也不提前提升；旧README接线的冷备用回放失败。推进新前台代际时取消正在编码的warm owner，让编码器按既有cancelled回调退出，实际退出后再释放busy。两个旧回放失败，当前174项全部通过（含自有HEVC）。当前原生依赖为 c7bfbc2ea269af4013ab971467d9ef68dc207b9a，prefetch依赖见BASELINES.json。
+
+本机候选与安装仍待完成。

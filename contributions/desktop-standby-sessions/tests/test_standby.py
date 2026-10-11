@@ -5,6 +5,7 @@ import asyncio
 import queue
 import threading
 import time
+from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -19,6 +20,62 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def wired_jobs(self, encoder):
+        source=self.root/'cold-fixture.mp4';source.write_bytes(b'owned test bytes')
+        metadata=[{'index':i,'vid':str(123456780000+i)} for i in (1,2,3)]
+        prefetch=EpisodePrefetcher(lambda _:source,lambda _:({},metadata),self.root/'cache',encoder=encoder,ahead=0)
+        self.addCleanup(prefetch.close);prefetch.cache.contains=lambda *_,**kw:True
+        jobs=HlsJobs(self.root,source_loader=prefetch.load_source,standby_source_loader=prefetch.load_standby_source,
+            encoder=encoder,on_start=prefetch.begin,before_work=prefetch.before_work,on_finish=prefetch.finish,
+            on_activate=prefetch.promote,negotiation_seconds=.01)
+        self.addCleanup(jobs.close)
+        self.enterContext(patch('desktop_hls_service.open_media',side_effect=lambda *_,**kw:nullcontext(SimpleNamespace(duration=10000000))))
+        self.enterContext(patch('desktop_hls_service.describe_streams',return_value={'copyEligible':True}))
+        return jobs,prefetch
+
+    def test_cold_standby_loads_without_becoming_current_episode(self):
+        def encode(source,directory,on_ready,**kwargs):
+            directory.mkdir(exist_ok=True);(directory/'complete.marker').write_text('complete');on_ready()
+        jobs,prefetch=self.wired_jobs(encode)
+        parent=jobs.create('1234567890123456',1);self.assertTrue(parent.done.wait(2));self.assertFalse(parent.failed)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        self.assertTrue(child.done.wait(2));self.assertFalse(child.failed,child.failure_code)
+        self.assertTrue(child.ready.is_set());self.assertIsNotNone(child.source)
+        self.assertEqual(prefetch.current,{'seriesId':parent.series_id,'episode':1})
+        self.assertEqual(prefetch.generation,parent.prefetch_generation)
+
+    def test_new_generation_cancels_running_warm_encoder_before_foreground_work(self):
+        entered=threading.Event();cancelled=threading.Event();encodes=[]
+        def encode(source,directory,on_ready,**kwargs):
+            encodes.append(directory.name)
+            if len(encodes)==2:
+                from desktop_hls import EncodingCancelled
+                entered.set()
+                until=time.monotonic()+2
+                while not kwargs['cancelled']() and time.monotonic()<until:time.sleep(.005)
+                if not kwargs['cancelled']():raise AssertionError('stale warm encode was not cancelled')
+                cancelled.set();raise EncodingCancelled()
+            directory.mkdir(exist_ok=True);(directory/'complete.marker').write_text('complete');on_ready()
+        jobs,prefetch=self.wired_jobs(encode)
+        parent=jobs.create('1234567890123456',1);self.assertTrue(parent.done.wait(2))
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        self.assertTrue(entered.wait(2));self.assertEqual(prefetch.busy,child.id)
+        newer=jobs.create(parent.series_id,3)
+        self.assertTrue(cancelled.wait(1));self.assertTrue(child.cancelled.is_set())
+        self.assertTrue(newer.done.wait(2));self.assertFalse(newer.failed,newer.failure_code)
+        self.assertEqual(encodes,[parent.id,child.id,newer.id])
+
+    def test_standby_metadata_generation_change_never_loads_source(self):
+        from desktop_hls import EncodingCancelled
+        calls=[];job=SimpleNamespace(id='warm',prewarm_parent='parent',prefetch_generation=1,cancelled=threading.Event())
+        def metadata(_):
+            prefetch.begin(SimpleNamespace(id='new'),'1234567890123456',3)
+            return {},[{'index':2,'vid':'123456780002'}]
+        prefetch=EpisodePrefetcher(lambda vid:calls.append(vid),metadata,self.root/'cache',encoder=lambda *_:None)
+        self.addCleanup(prefetch.close);prefetch.generation=1
+        with self.assertRaises(EncodingCancelled):prefetch.load_standby_source(job,'1234567890123456',2)
+        self.assertEqual(calls,[])
+
     def test_control_submit_and_revision_are_atomic_against_delete(self):
         jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)

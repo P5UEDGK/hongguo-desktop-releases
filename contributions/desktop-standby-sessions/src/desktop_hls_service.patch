@@ -15,19 +15,20 @@
      def __init__(self, root, source_loader, *, encoder=encode_hls, max_jobs=4, max_workers=2, idle_seconds=300,
 -                 on_start=None, before_work=None, on_finish=None, full_cache_ready=None, negotiation_seconds=12, native=None):
 +                 on_start=None, before_work=None, on_finish=None, full_cache_ready=None, negotiation_seconds=12, native=None,
-+                 on_activate=None):
++                 on_activate=None, standby_source_loader=None):
          self.root = Path(root).resolve(strict=True)
          if not self.root.is_dir() or self.root.is_symlink():
              raise ValueError("Desktop work directory is unavailable")
-@@ -62,6 +68,7 @@
+@@ -62,6 +68,8 @@
          self.full_cache_ready = full_cache_ready
          self.negotiation_seconds = negotiation_seconds
          self.native = native
 +        self.on_activate = on_activate
++        self.standby_source_loader = standby_source_loader
          self.encoder_slots = threading.BoundedSemaphore(max_workers)
          self.closed = threading.Event()
          self.reaper_stop = threading.Event()
-@@ -119,7 +126,7 @@
+@@ -119,7 +127,7 @@
              if time.monotonic() - job.touched > self.idle_seconds:
                  self.release(job.id)
  
@@ -36,7 +37,7 @@
          if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
              raise HTTPException(400, "Invalid episode identity")
          if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
-@@ -129,18 +136,28 @@
+@@ -129,18 +137,28 @@
              self._expire()
              if self.closed.is_set():
                  raise HTTPException(503, "Desktop sessions are closed")
@@ -67,7 +68,18 @@
                      self.on_start(job, series_id, episode)
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
-@@ -276,6 +293,9 @@
+@@ -158,7 +176,9 @@
+         source = None
+         encoder_acquired = False
+         try:
+-            source = self.source_loader(series_id, episode)
++            source = (self.standby_source_loader(job, series_id, episode)
++                      if job.prewarm_parent and self.standby_source_loader
++                      else self.source_loader(series_id, episode))
+             job.source = source if isinstance(source, ProgressiveSource) else Path(source)
+             if job.cancelled.is_set():
+                 raise EncodingCancelled()
+@@ -276,6 +296,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -77,7 +89,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -288,6 +308,35 @@
+@@ -288,6 +311,35 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -113,7 +125,7 @@
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -385,7 +434,7 @@
+@@ -385,7 +437,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -122,7 +134,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -396,7 +445,11 @@
+@@ -396,7 +448,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -135,7 +147,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -494,6 +547,7 @@
+@@ -494,6 +550,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -143,7 +155,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -507,17 +561,29 @@
+@@ -507,17 +564,29 @@
  
      @router.post("/{identifier}/control")
      async def control(identifier: str, request: Request):
