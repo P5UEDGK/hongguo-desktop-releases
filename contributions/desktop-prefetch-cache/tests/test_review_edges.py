@@ -11,6 +11,75 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_complete_cache_rejects_master_playlist_tags(self):
+        playlist=self.output/'index.m3u8';original=playlist.read_text(encoding='utf8')
+        for tag in ('#EXT-X-STREAM-INF:BANDWIDTH=1000','#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1000,URI="x"','#EXT-X-MEDIA:TYPE=AUDIO','#EXT-X-SESSION-DATA:DATA-ID="x",VALUE="y"'):
+            with self.subTest(tag=tag):
+                playlist.write_text(original.replace('#EXTM3U\n','#EXTM3U\n'+tag+'\n',1),encoding='utf8')
+                with self.assertRaises(ValueError):self.cache().store(self.source,self.output)
+
+    def test_restore_rollback_revokes_marker_first_and_preserves_cancellation(self):
+        cache=self.cache();cache.store(self.source,self.output);destination=self.root/'restored';cancel=threading.Event();copy=cache._copy;unlink=Path.unlink;removed=[]
+        def copy_then_cancel(source,target,check):
+            copy(source,target,check)
+            if target.name=='complete.marker':cancel.set()
+        def remove(path,*args,**kwargs):
+            if path.parent==destination:
+                removed.append(path.name)
+                if path.name=='init.mp4':raise OSError('owned cleanup sharing violation')
+            return unlink(path,*args,**kwargs)
+        with patch.object(cache,'_copy',copy_then_cancel),patch.object(Path,'unlink',remove):
+            with self.assertRaises(EncodingCancelled):cache.restore(self.source,destination,cancel.is_set)
+        self.assertEqual(removed[0],'complete.marker');self.assertFalse((destination/'complete.marker').exists())
+        self.assertIn('index.m3u8',removed);self.assertIn('seg000000.m4s',removed)
+
+    def test_fresh_stage_rmdir_failure_restores_owned_marker(self):
+        from desktop_playable_cache import OWNER
+        cache=self.cache();stage=cache.root/('stage-'+uuid.uuid4().hex);stage.mkdir();(stage/'owner.marker').write_text(OWNER,encoding='ascii');(stage/'seg000000.m4s').write_bytes(b'x')
+        rmdir=Path.rmdir
+        def blocked(path):
+            if path==stage:raise OSError('transient sharing failure')
+            return rmdir(path)
+        with patch.object(Path,'rmdir',blocked):
+            with self.assertRaises(OSError):cache._remove_fresh_stage(stage)
+        self.assertTrue((stage/'owner.marker').is_file());cache._owned_children(stage);cache._remove_owned(stage)
+
+    def _native_download_fixture(self, download):
+        episodes=[{'index':n,'vid':str(10000000+n)} for n in range(1,5)]
+        value=EpisodePrefetcher(lambda _:self.source,lambda _:({},episodes),self.root/'download-cache',encoder=encoder,profile_files=PROFILE_FILES,download_loader=download)
+        self.addCleanup(value.close)
+        job=Job(uuid.uuid4().hex,self.root/'native-session');job.video_mode='native'
+        value.begin(job,'series',1)
+        return value,job
+
+    def test_native_download_failure_is_reported_without_hls_worker(self):
+        def download(vid):
+            if vid=='10000002':raise OSError('private transport detail')
+            return self.source
+        value,job=self._native_download_fixture(download)
+        source=value.load_source('series',1);value.finish(job,'series',1,source)
+        self.assertTrue(value.wait_idle(2));state=value.snapshot()
+        self.assertEqual(state['failedEpisodes'],[2]);self.assertEqual(state['downloadCompletedEpisodes'],[3,4])
+        self.assertEqual(state['failureCode'],'preparation-failed');self.assertIsNone(value.worker)
+        self.assertNotIn('private',json.dumps(state))
+
+    def test_native_download_thread_failure_reports_all_pending_episodes(self):
+        value,job=self._native_download_fixture(lambda _:self.source)
+        with patch('desktop_prefetch.threading.Thread.start',side_effect=RuntimeError('thread limit')):
+            source=value.load_source('series',1)
+        value.finish(job,'series',1,source);self.assertTrue(value.wait_idle(.1))
+        self.assertEqual(value.snapshot()['failedEpisodes'],[2,3,4]);self.assertIsNone(value.worker)
+
+    def test_stale_download_failure_cannot_pollute_new_generation(self):
+        entered,release=threading.Event(),threading.Event();self.addCleanup(release.set)
+        def download(_):
+            entered.set();release.wait(2);raise OSError('old generation failed')
+        value,job=self._native_download_fixture(download)
+        source=value.load_source('series',1);self.assertTrue(entered.wait(1))
+        newer=Job(uuid.uuid4().hex,self.root/'new-session');value.begin(newer,'series',4)
+        value.finish(job,'series',1,source);value.finish(newer,'series',4,None)
+        release.set();self.assertTrue(value.wait_idle(2));self.assertEqual(value.snapshot()['failedEpisodes'],[])
+
     def test_complete_cache_rejects_discontinuous_and_invalid_sequence_tags(self):
         playlist=self.output/'index.m3u8';original=playlist.read_text(encoding='utf8');cache=self.cache()
         for tag in ('#EXT-X-DISCONTINUITY','#EXT-X-DISCONTINUITY-SEQUENCE:0',

@@ -99,7 +99,18 @@ class PlayableEpisodeCache:
             raise ValueError('Unknown fresh encoder stage content')
         for file in sorted(files, key=lambda file: file.name == "owner.marker"):
             file.unlink()
-        directory.rmdir()
+        self._rmdir_with_owner(directory)
+
+    @staticmethod
+    def _rmdir_with_owner(directory):
+        owner = directory / "owner.marker"
+        try:
+            directory.rmdir()
+        except OSError:
+            if plain(directory) and directory.is_dir() and not owner.exists():
+                with owner.open("x", encoding="ascii") as stream:
+                    stream.write(OWNER)
+            raise
 
     @staticmethod
     def _copy(source, destination, cancelled=lambda: False):
@@ -149,6 +160,9 @@ class PlayableEpisodeCache:
             raise ValueError("Artifact playlist is incomplete")
         mapped, ended, segments, pending = False, False, [], None
         for line in lines:
+            if line.startswith(('#EXT-X-STREAM-INF', '#EXT-X-I-FRAME-STREAM-INF',
+                                '#EXT-X-MEDIA:', '#EXT-X-SESSION-DATA', '#EXT-X-SESSION-KEY')):
+                raise ValueError("Master playlist tag in local media artifact")
             if line.startswith('#EXT-X-DISCONTINUITY'):
                 raise ValueError("Unsupported local artifact timeline")
             if line.startswith('#EXT-X-MEDIA-SEQUENCE') and segments:
@@ -245,9 +259,22 @@ class PlayableEpisodeCache:
                     raise EncodingCancelled()
                 return True
             except BaseException:
-                for path in created:
-                    path.unlink(missing_ok=True)
-                directory.rmdir()
+                # Revoke the commit signal before removing any referenced data.
+                # Preserve the original failure and continue past cleanup errors.
+                marker_removed = True
+                for path in reversed(created):
+                    if not marker_removed:
+                        break  # Leave intact data if the commit signal is locked.
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        if path.name == "complete.marker":
+                            marker_removed = False
+                if marker_removed:
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
                 raise
 
     def _owned_children(self, directory):
@@ -275,13 +302,7 @@ class PlayableEpisodeCache:
             raise EncodingCancelled()
         # Keep proof of ownership through every cancellable/fallible file removal.
         owner.unlink()
-        try:
-            directory.rmdir()
-        except OSError:
-            if plain(directory) and directory.is_dir() and not owner.exists():
-                with owner.open("x", encoding="ascii") as stream:
-                    stream.write(OWNER)
-            raise
+        self._rmdir_with_owner(directory)
 
     def _reserve(self, needed, *, replacing=None, cancelled=lambda: False):
         if cancelled():

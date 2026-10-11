@@ -129,8 +129,10 @@ class EpisodePrefetcher:
                     try:
                         self.downloader.start()
                     except RuntimeError:
-                        for _, _, future_vid in self.download_pending:
+                        for _, future_episode, future_vid in self.download_pending:
                             self.sources[future_vid] = None
+                            if future_episode not in self.failed:
+                                self.failed.append(future_episode)
                         self.download_pending = []
                         self.downloader = None
                 self.condition.notify_all()
@@ -155,6 +157,8 @@ class EpisodePrefetcher:
                     self.sources[task[2]] = source
                     if source is not None:
                         self.download_completed.append(task[1])
+                    elif task[1] not in self.failed:
+                        self.failed.append(task[1])
                 self.download_active = None
                 self.condition.notify_all()
             self._report()
@@ -275,10 +279,13 @@ class EpisodePrefetcher:
                         if task[1] == self.current["episode"]:
                             self.current_complete = not failed
                             if failed:
-                                self.failed.append(task[1])
+                                if task[1] not in self.failed:
+                                    self.failed.append(task[1])
                                 self.pending = []
                         else:
-                            (self.failed if failed else self.completed).append(task[1])
+                            outcomes = self.failed if failed else self.completed
+                            if task[1] not in outcomes:
+                                outcomes.append(task[1])
                     self.active = None
                     self.busy = None
                     self.condition.notify_all()
