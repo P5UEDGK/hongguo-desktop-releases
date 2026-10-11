@@ -43,6 +43,8 @@ def validate_png(png, width, height):
             ended=True
         elif kind in (b'acTL',b'fcTL',b'fdAT'):
             raise ValueError('Animated emoji PNG is unsupported')
+        elif kind in (b'iCCP',b'zTXt',b'iTXt'):
+            raise ValueError('Compressed emoji PNG metadata is unsupported')
         elif not kind[0]&32:
             raise ValueError('Unknown critical emoji PNG chunk')
         if idat and kind!=b'IDAT': idat_closed=True

@@ -7,6 +7,15 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from desktop_emoji_assets import validate_assets,catalog
 FIXTURE={'[测试]':{'src':'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','resolution':1,'drawing':[{'color':[255,0,0],'alpha':1,'paths':[[[0,0],[1,0],[1,1],[0,1]]]}]}}
 class EmojiTests(unittest.TestCase):
+    def test_compressed_ancillary_chunks_are_rejected(self):
+        raw=base64.b64decode(FIXTURE['[测试]']['src'].split(',')[1])
+        def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
+        for kind,prefix in ((b'iCCP',b'profile\0\0'),(b'zTXt',b'key\0\0'),(b'iTXt',b'key\0\1\0\0\0')):
+            # Small bounded fixture exercises the same unsupported metadata path.
+            png=raw[:33]+chunk(kind,prefix+zlib.compress(b'x'*1024*1024))+raw[33:]
+            row=copy.deepcopy(FIXTURE);row['[测试]']['src']='data:image/png;base64,'+base64.b64encode(png).decode()
+            with self.subTest(kind=kind),self.assertRaises(ValueError):validate_assets(row)
+
     def test_apng_and_concatenated_idat_streams_are_rejected(self):
         raw=base64.b64decode(FIXTURE['[测试]']['src'].split(',')[1])
         def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
