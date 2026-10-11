@@ -102,7 +102,7 @@ function SocialSession({session, media}) {
   O.useEffect(() => {
     const video = media.current, layout = video?.closest('.desktop-player-layout');
     layout?.classList.toggle('desktop-social-enabled', drawer);
-    layout?.querySelector('aside')?.setAttribute('aria-label', drawer ? '评论与互动抽屉' : '选集');
+    layout?.querySelector('aside')?.setAttribute('aria-label', '选集与评论抽屉');
     const frame = requestAnimationFrame(() => video?.dispatchEvent(new Event('desktopsociallayout')));
     return () => {cancelAnimationFrame(frame); layout?.classList.remove('desktop-social-enabled');};
   }, [key, drawer]);
@@ -142,12 +142,17 @@ function SocialSession({session, media}) {
   if (!endpoint) return null;
   return b.jsxs('section', {id: 'desktop-social-drawer', className: 'desktop-social', 'data-tab': tab,
     'aria-label': tab === 'episodes' ? '选集' : '评论与互动', hidden: !drawer, children: [
-    tab !== 'episodes' && b.jsxs('div', {className: 'desktop-social-header', children: [
-      b.jsx('h3', {children: '评论与互动'}), b.jsx('button', {'aria-label': '关闭评论抽屉', title: '关闭评论抽屉',
-        onClick: () => {desktopSocialSet(media.current, {social: false}); media.current?.closest('.player-stage')?.querySelector('.desktop-social-toggle')?.focus();}, children: '×'})]}),
+    b.jsxs('div', {className: 'desktop-social-navigation', children: [
     b.jsxs('div', {className: 'desktop-social-tabs', role: 'tablist', 'aria-label': '抽屉内容', children: [
       ...[['episodes', '选集'], ['episode', '本集评论'], ['series', '整剧剧评']].map(([name, label]) => b.jsx('button', {
         role: 'tab', 'aria-selected': tab === name, onClick: () => desktopSocialSet(media.current, {social: true, tab: name}), children: label}, name))]}),
+    b.jsx('button', {className: 'desktop-social-close', 'aria-label': '关闭右侧抽屉', title: '关闭右侧抽屉',
+      onClick: () => {
+        const video = media.current, wasEpisodes = tab === 'episodes';
+        desktopSocialSet(video, {social: false, tab: 'episodes'});
+        const player = video?.closest('.desktop-player');
+        player?.querySelector(wasEpisodes ? '.desktop-selection-open' : '.desktop-social-toggle')?.focus();
+      }, children: '×'})]}),
     tab !== 'episodes' && b.jsxs('div', {className: 'desktop-social-toolbar', children: [
       b.jsx('span', {children: '本集赞 ' + (stats ? stats.likes.toLocaleString('zh-CN') : '…')}),
       b.jsx('span', {children: '评论 ' + (stats ? stats.comments.toLocaleString('zh-CN') : '…')}),
