@@ -29,7 +29,7 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
                 if job.cancelled.is_set() or job.failed:
                     return [0, 0]
                 return [0, duration]
-        except (OSError, ValueError):
+        except Exception:
             pass  # Optional disk cache must not interrupt status/playback.
     try:
         init = job.directory / "init.mp4"

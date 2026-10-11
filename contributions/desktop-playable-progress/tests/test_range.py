@@ -39,6 +39,12 @@ class RangeTests(unittest.TestCase):
         self.job.source.write_bytes(b"raw")
         self.assertEqual(playable_range(self.job), [0, 0])
 
+    def test_optional_cache_backend_failure_falls_back_to_session_range(self):
+        import sqlite3
+        self.output();self.job.source=self.path/'source.mp4'
+        def unavailable(_):raise sqlite3.OperationalError('temporary cache index failure')
+        self.assertEqual(playable_range(self.job,unavailable),[0,2])
+
     def test_encryption_tags_do_not_claim_playable_fragments(self):
         self.output();self.job.done.set();playlist=self.path/'index.m3u8'
         original=playlist.read_text(encoding='utf-8')
