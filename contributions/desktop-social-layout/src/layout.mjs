@@ -148,7 +148,7 @@ function DesktopSocialSelection({media, sessionKey}) {
   return b.jsx('button', {ref:button, className: 'desktop-selection-open',
     'aria-label': drawerState.closing ? '关闭选集' : '打开选集',
     'aria-expanded': drawerState.expanded, 'aria-controls':'desktop-social-drawer',
-    'data-tauri-drag-region': 'false', onClick: () => {
+    onClick: () => {
       const drawer = media.current?.closest('.desktop-player-layout')?.querySelector('.desktop-social');
       const open = !drawer || drawer.hidden || drawer.dataset.tab !== 'episodes';
       desktopSocialSet(media.current, {social: open, ...(!open ? {comments:false} : {}), tab: 'episodes'});

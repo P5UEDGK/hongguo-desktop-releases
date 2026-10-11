@@ -100,6 +100,7 @@ try{
  await page.evaluate(()=>{failDanmaku=false;changeEpisode();});
  await page.getByRole('status').filter({hasText:'弹幕加载失败'}).waitFor({state:'hidden'});
 
+ check(await page.getByRole('button',{name:'关闭选集',exact:true}).getAttribute('data-tauri-drag-region')===null,'interactive selection button has no presence-based window drag marker');
  check(await page.getByRole('button',{name:'关闭选集',exact:true}).getAttribute('aria-expanded')==='true','remembered-open selection exposes its closing action and expanded state');
  check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-pressed')==='false'&&await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-expanded')===null,'disabled comments use pressed state while the remembered drawer stays expanded');
  check(await page.locator('aside').evaluate(n=>n.firstElementChild.classList.contains('desktop-social')),'drawer navigation is first in DOM order');
