@@ -323,7 +323,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         }
         if (result.state === 'failed') throw Error('Source preparation failed');
         if (result.source) {
-          if (requestedStart > 0 && (!Number.isFinite(result.duration) || result.duration <= 0 || requestedStart >= result.duration) && state.time === requestedStart) {
+          if (requestedStart > 0 && (!Number.isFinite(result.duration) || result.duration <= 0 || requestedStart >= result.duration)) {
             // Saved EOF belongs to the old duration. Validate it before mode
             // commitment, while a new zero-origin session is still possible.
             await resetSavedPosition();

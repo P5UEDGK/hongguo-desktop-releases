@@ -199,11 +199,13 @@ class HlsJobs:
                     with self.guard:
                         if job.cancelled.is_set():
                             raise EncodingCancelled()
+                        restored_full = origin == 0 and (job.directory / "complete.marker").is_file()
+                        if restored_full and duration is None: duration = job.duration
                         if (job.window_origin is not None
                                 or not isinstance(origin, (int, float)) or isinstance(origin, bool)
                                 or not isinstance(duration, (int, float)) or isinstance(duration, bool)
                                 or not math.isfinite(origin) or not math.isfinite(duration)
-                                or not job.start_seconds <= origin < duration <= 86400
+                                or not (0 if restored_full else job.start_seconds) <= origin < duration <= 86400
                                 or job.duration is None or abs(duration - job.duration) > 0.001):
                             raise ValueError("Invalid desktop window metadata")
                         job.window_origin = float(origin)

@@ -21,6 +21,20 @@ def eventually(predicate, timeout=3):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_resumed_complete_cache_has_zero_origin_without_reencoding(self):
+        from desktop_playable_cache import PlayableEpisodeCache
+        from desktop_hls import encode_hls
+        cache=PlayableEpisodeCache(self.root/'full-cache',encoder=encode_hls)
+        jobs=self.jobs(encoder=cache.encode)
+        first=jobs.create('1234567890123456',1)
+        self.assertTrue(first.done.wait(5));self.assertFalse(first.failed,first.failure_code)
+        cache.encoder=lambda *a,**kw:self.fail('a cached resumed episode must not reencode')
+        resumed=jobs.create('1234567890123456',1,start_seconds=.8)
+        self.assertTrue(resumed.done.wait(3));self.assertFalse(resumed.failed,resumed.failure_code)
+        self.assertTrue(resumed.ready.is_set());self.assertEqual(resumed.window_origin,0)
+        with av.open(str(resumed.directory/'index.m3u8')) as media:
+            self.assertGreater(sum(1 for _ in media.decode(video=0)),0)
+
     def test_shutdown_keeps_reaping_until_pending_native_release_finishes(self):
         stopped=threading.Event()
         native=SimpleNamespace(release=lambda _:stopped.is_set())

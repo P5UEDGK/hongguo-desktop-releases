@@ -304,6 +304,18 @@ class NativeHost:
         return True
 
 
+class OutputLossWatch:
+    """Only a continuous, unbuffered output loss can trigger decoder retry."""
+    def __init__(self): self.since = None
+
+    def observe(self, now, ready, buffering):
+        if ready or buffering:
+            self.since = None
+            return False
+        if self.since is None: self.since = now
+        return now - self.since > 10
+
+
 class FrameDropWatch:
     def __init__(self):
         self.samples=deque()
@@ -428,6 +440,7 @@ class NativeSession:
         frame_ready = False
         requested_position = self.job.start_seconds
         drop_watch = FrameDropWatch()
+        output_watch = OutputLossWatch()
         progressive = isinstance(self.job.source, ProgressiveSource)
         media_uri = str(self.job.source) if not progressive else self.job.stream_url
         # Starting paused allows the frontend to place the surface and apply
@@ -439,6 +452,7 @@ class NativeSession:
                 raise RuntimeError("Software decoding failed")
             retried = True
             frame_ready = False
+            output_watch.since = None
             position = requested_position if no_frame else player.number("time-pos", self.job.start_seconds)
             drop_watch.samples.clear();drop_watch.growth=None
             player.command("set", "hwdec", "no")
@@ -546,6 +560,7 @@ class NativeSession:
                         requested_position = target
                         frame_ready = False
                         initial = time.monotonic()
+                        output_watch.since = None
                         grace = initial + 3
                     if command.get("paused") is False:
                         desired["paused"] = False
@@ -600,8 +615,9 @@ class NativeSession:
                     slow_since = slow_since or now
                 else:
                     slow_since = None
+                missing_output = output_watch.observe(now, output_ready, buffering)
                 if (unstable and (dropping or now - last_progress > 3 or slow_since and now - slow_since > 2)
-                        or not output_ready and not buffering and now - initial > 10):
+                        or missing_output):
                     if progressive and self.job.source.network_failed.is_set():
                         raise SourceReadError("Native media input timed out")
                     retry_software(no_frame=not frame_ready)
