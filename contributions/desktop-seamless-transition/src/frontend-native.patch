@@ -49,18 +49,26 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -124,7 +136,9 @@
+@@ -124,14 +136,14 @@
        transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
                    dispose() {if (!claimed) {claimed = true; release(old);}}};
      }
--    delegated = desktopCodecHls(media, url, Math.max(0, state.time), callbacks,
-+    delegated = desktopCodecHls(media, url, Math.max(0, state.time), {...callbacks,
-+      onReady() { preparation?.finishRetained?.(); callbacks.onReady?.(); },
-+      onError(...args) { preparation?.finishRetained?.(); callbacks.onError?.(...args); }},
-       transfer, windowed, {forceH264, paused: state.paused});
+-    const hlsCallbacks = resetHlsOrigin ? {...callbacks, onReady() {
+-      if (seekPending !== null) {
++    const hlsCallbacks = {...callbacks, onReady() {
++      if (resetHlsOrigin && seekPending !== null) {
+         const target = seekPending; seekPending = null;
+         queueMicrotask(() => {if (!disposed) delegated?.seek(target);});
+         return;
+       }
+-      callbacks.onReady();
+-    }} : callbacks;
++      preparation?.finishRetained?.(); callbacks.onReady?.();
++    }, onError(...args) { preparation?.finishRetained?.(); callbacks.onError?.(...args); }};
+     delegated = desktopCodecHls(media, url, resetHlsOrigin ? 0 : Math.max(0, state.time), hlsCallbacks,
+       transfer, windowed && !resetHlsOrigin, {forceH264, paused: state.paused});
    }
-   async function failPreparation() {
-@@ -133,7 +147,7 @@
+@@ -141,7 +153,7 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -69,7 +77,7 @@
    }
    function delegateCommittedHls(status) {
      const start = Math.max(requestedStart, ...[status.startSeconds,status.windowOrigin].filter(Number.isFinite));
-@@ -144,16 +158,16 @@
+@@ -152,16 +164,16 @@
    function queue(command) {
      if (disposed || !native || fallbackStarted) return;
      Object.assign(pending, command);
@@ -90,7 +98,7 @@
        revision = result.revision;
      } catch {if (!disposed) failPreparation();}
      finally {
-@@ -184,13 +198,13 @@
+@@ -192,13 +204,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -106,7 +114,7 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -268,6 +282,7 @@
+@@ -276,6 +288,7 @@
            else {callbacks.onReady(); if (!state.paused) event('playing');}
          }
          const applied = value.revision >= revision && !controlBusy && !Object.keys(pending).length;
@@ -114,7 +122,7 @@
          if (reportedSeek && applied && !value.seeking) {
            state.time = value.time;
            reportedSeek = false; seekPending = null; state.seeking = false;
-@@ -283,12 +298,31 @@
+@@ -291,12 +304,31 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -146,9 +154,9 @@
 +      const preparedNative = standby?.mode === 'native';
 +      const capability = preparedNative ? {nativePlayback:1} : await request('/capabilities');
        if (disposed) return;
-       if (capability.nativePlayback !== 1) {delegate(false); return;}
        const sourceUrl = new URL(endpoint.url);
-@@ -303,9 +337,9 @@
+       requestedStart = state.time;
+@@ -310,9 +342,9 @@
          if (disposed) {await release(identifier); return null;}
          return identifier;
        }
@@ -160,7 +168,7 @@
        async function resetSavedPosition() {
          const invalid = id; id = null;
          if (!await release(invalid)) throw Error('Invalid resume session release failed');
-@@ -314,8 +348,8 @@
+@@ -321,8 +353,8 @@
          sourceUrl.searchParams.delete('start_seconds');
          id = await createSession();
        }
@@ -171,16 +179,16 @@
          const result = await request('/' + id + '/status');
          if (result.state === 'failed' && result.failureCode === 'start-position' && requestedStart > 0) {
            await resetSavedPosition();
-@@ -339,7 +373,7 @@
+@@ -347,7 +379,7 @@
        // Source download/transport failure says nothing about decoder support.
        if (!metadata) {failPreparation(); return;}
-       if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
+       if (capability.nativePlayback !== 1 || !metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
 -      try {
 +      if (!preparedNative) try {
          const context = await desktopNativeWindowContext();
          if (disposed) return;
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
-@@ -351,29 +385,113 @@
+@@ -359,29 +391,113 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegateCommittedHls(latest); return;
        }
