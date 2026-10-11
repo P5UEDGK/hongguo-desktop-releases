@@ -14,6 +14,18 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_initial_source_and_ready_waits_use_scaled_timeout(self):
+        tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
+        calls=[n for n in ast.walk(scenario) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='wait'][:2]
+        self.assertEqual(len(calls),2)
+        def wait(identifier,predicate,timeout=15):self.assertEqual(timeout,60);return {}
+        for call in calls:eval(compile(ast.fix_missing_locations(ast.Expression(call)),'<actual-ready-wait>','eval'),{'wait':wait,'identifier':'owned','timeout':60})
+
+    def test_probe_rejects_preload_started_before_user_pause(self):
+        tree=ast.parse(inspect.getsource(probe));call=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and n.args and isinstance(n.args[0],ast.Constant) and n.args[0].value=='no-preload-before-user-pause')
+        expression=compile(ast.fix_missing_locations(ast.Expression(call.args[1])),'<actual-startup-preload-gate>','eval');event=threading.Event()
+        self.assertTrue(eval(expression,{'preload_entered':event}));event.set();self.assertFalse(eval(expression,{'preload_entered':event}))
+
     def test_actual_rate_loop_accepts_one_second_fixture_twice(self):
         tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
         loop=next(n for n in ast.walk(scenario) if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='rate')

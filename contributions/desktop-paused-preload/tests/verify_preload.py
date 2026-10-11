@@ -196,9 +196,9 @@ def main():
         identifier=None
         try:
             identifier=request('?series_id=1234567890123456&ep=1','POST')['id']
-            wait(identifier,lambda s:bool(s.get('source')))
+            wait(identifier,lambda s:bool(s.get('source')),timeout=timeout)
             request('/'+identifier+'/mode','POST',{'mode':'native'})
-            initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready')
+            initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready',timeout=timeout)
             session=host.sessions[identifier]
             check('first-frame-ready',initial['native']['outputReady'],initial)
             report['fullSourceAtFirstFrame']=initial['sourceProgress']['complete']
@@ -206,6 +206,7 @@ def main():
                 session.job.source.reading.is_set,timeout=timeout,quiet_seconds=max(1.,fixture.delay*3+.5))
             bootstrap_complete=bounded['native']['cacheComplete']
             report['inputOutcome']='bootstrap-complete' if bootstrap_complete else 'requires-paused-fill'
+            check('no-preload-before-user-pause',not preload_entered.is_set())
             request('/'+identifier+'/control','POST',{'paused':True})
             started=time.monotonic()
             while time.monotonic()-started<timeout:
