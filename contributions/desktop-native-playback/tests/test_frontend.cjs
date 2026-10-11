@@ -2,26 +2,27 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync(require('node:path').join(__dirname,'../src/frontend-codec.js'),'utf8');
 const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
 (async()=>{
-  let supported=true,smooth=true,calls=[],controllers=[],timers=new Map(),tid=0;
+  let supported=true,smooth=true,containerDuration=null,calls=[],controllers=[],timers=new Map(),tid=0;
   const c={URL,Headers,Number,Math,Date,queueMicrotask,
     setTimeout:(fn,delay)=>{timers.set(++tid,{fn,delay});return tid},clearTimeout:id=>timers.delete(id),
     MediaSource:{isTypeSupported:()=>supported},navigator:{mediaCapabilities:{decodingInfo:async()=>({supported,smooth})}},
     fetch:async(url,init={})=>{
       calls.push([url,init]);
       if(url.endsWith('/mode'))return {ok:true,json:async()=>JSON.parse(init.body)};
-      const body={source:{copyEligible:true,video:{contentType:'video/mp4; codecs="hvc1.1.6.L120.B0"'},audio:[]},videoMode:null,startSeconds:0};
+      const body={source:{copyEligible:true,video:{contentType:'video/mp4; codecs="hvc1.1.6.L120.B0"'},audio:[]},videoMode:null,startSeconds:0,duration:containerDuration};
       return {ok:true,clone(){return this},json:async()=>body};
     }};
-  const fake=(media,url,target,callbacks,prep,transport)=>{
+  const fake=(media,url,target,callbacks,prep,transport,kind="window")=>{
     const index=controllers.length;
     media.pause?.(); // Existing windowed controller pauses synchronously at construction.
-    const dispose=()=>{};dispose.seek=()=>{media.pause?.();callbacks.onReady();media.play?.();};
-    controllers.push({target,callbacks,transport});
+    const dispose=()=>{};dispose.seek=value=>{controllers[index].seekTarget=value;media.currentTime=value;media.pause?.();callbacks.onReady();media.play?.();};
+    controllers.push({target,callbacks,transport,kind});
+    transport.durationKnown=()=>true;
     // The wrapper must preserve selected transport and callback ownership.
     transport.usedCopy=()=>index===0;
     return dispose;
   };
-  c.ek=fake;c.desktopLegacyHls=(m,u,t,cb,p,a,f)=>fake(m,u,t,cb,p,f);
+  c.ek=fake;c.desktopLegacyHls=(m,u,t,cb,p,a,f)=>fake(m,u,t,cb,p,f,"legacy");
   vm.createContext(c);vm.runInContext(source,c);
   const desc={copyEligible:true,video:{contentType:'video/mp4; codecs="hvc1.1.6.L120.B0"'},audio:[]};
   assert.equal(await c.desktopSupportsSource(desc),true);
@@ -32,7 +33,8 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   await fetcher('http://127.0.0.1:4567/desktop/hls',{method:'POST'});
   assert.equal(calls.at(-1)[1].headers.get('x-desktop-codec-negotiation'),'1');
   const status='http://127.0.0.1:4567/desktop/hls/'+'a'.repeat(32)+'/status';
-  await fetcher(status);assert.equal(fetcher.usedCopy(),true);
+  await fetcher(status);assert.equal(fetcher.usedCopy(),true);assert.equal(fetcher.durationKnown(),false);
+  containerDuration=90;await fetcher(status);assert.equal(fetcher.durationKnown(),true);containerDuration=null;
   fetcher.close();await assert.rejects(fetcher(status));
   await assert.rejects(c.desktopCreateCodecFetch()('https://example.com/desktop/hls'));
   for(const windowed of [false,true]){
@@ -55,6 +57,14 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     controllers[0].callbacks.onError();assert.equal(errors,0);
     controllers[1].callbacks.onError();assert.equal(errors,1);assert.equal(controllers.length,2);
     dispose();assert.deepEqual(Object.keys(listeners),[]);
+    controllers=[];timers.clear();media.currentTime=0;
+    const closeUnknown=c.desktopCodecHls(media,'http://127.0.0.1',0,{onReady(){},onError(){throw Error('unexpected copy recovery failure');}},null,windowed);
+    controllers[0].transport.durationKnown=()=>false;controllers[0].callbacks.onReady();
+    media.currentTime=37;listeners.timeupdate();controllers[0].callbacks.onError();
+    assert.equal(controllers[1].target,0,'unknown-duration copy fallback starts from zero');
+    assert.equal(controllers[1].kind,'legacy','unknown duration cannot use a nonzero windowed encode');
+    controllers[1].callbacks.onReady();await flush();
+    assert.equal(controllers[1].seekTarget,37,'copy recovery carries playback as a pending seek');closeUnknown();
     controllers=[];timers.clear();media.videoWidth=1920;
     media.getVideoPlaybackQuality=()=>({totalVideoFrames:0});
     const end=c.desktopCodecHls(media,'http://127.0.0.1',0,{onReady(){},onError(){}},null,windowed);
@@ -119,7 +129,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   const stage={classList:{add(){},remove(){}}};
   const nativeMedia={playbackRate:2,volume:1,muted:false,closest:()=>stage,
     dispatchEvent(){},getBoundingClientRect:()=>({left:0,top:0,width:800,height:500})};
-  const nc={URL,Event,Number,Math,Date,DOMException,
+  const nc={URL,Event,Number,Math,Date,DOMException,AbortController,queueMicrotask,
     window:{devicePixelRatio:1},ResizeObserver:class{observe(){}disconnect(){}},
     document:{hidden:false,head:{append(node){nativeStyles.push(node.textContent)}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
     setTimeout:(fn,delay)=>{nativeTimers.set(++nativeTid,{fn,delay});return nativeTid},clearTimeout:id=>nativeTimers.delete(id),

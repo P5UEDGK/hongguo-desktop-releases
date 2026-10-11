@@ -39,6 +39,10 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   const negotiationPause = () => {if (!native) state.paused = true;};
   const negotiationPlay = () => {if (!native) state.paused = false;};
   function trackNegotiation() {
+    if (fallbackStarted && !negotiationMethods.has('currentTime')) {
+      negotiationMethods.set('currentTime',Object.getOwnPropertyDescriptor(media,'currentTime'));
+      Object.defineProperty(media,'currentTime',{configurable:true,get:()=>state.time,set:seek});
+    }
     media.addEventListener?.('pause', negotiationPause);
     media.addEventListener?.('play', negotiationPlay);
     for (const [name, paused] of [['pause', true], ['play', false]]) {
@@ -63,23 +67,32 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
   const event = name => {if (!disposed && native) media.dispatchEvent(new Event(name));};
-  async function request(path, init = {}) {
-    const response = await fetch(endpoint.origin + '/desktop/hls' + path,
-      {...options, ...init, headers: {...headers, ...init.headers}});
-    if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
-    return response.status === 204 ? null : response.json();
+  async function request(path, init = {}, timeoutMs = 15000) {
+    const abort = new AbortController();
+    let timeout;
+    try {
+      return await Promise.race([
+        (async () => {
+          const response = await fetch(endpoint.origin + '/desktop/hls' + path,
+            {...options,...init,signal:abort.signal,headers:{...headers,...init.headers}});
+          if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
+          return response.status === 204 ? null : response.json();
+        })(),
+        new Promise((_,reject)=>{timeout=setTimeout(()=>{abort.abort();reject(Error('Desktop request timed out'));},Math.max(1,timeoutMs));})
+      ]);
+    } finally {clearTimeout(timeout);}
   }
   async function release(identifier) {
     if (!identifier) return true;
     const deadline = Date.now() + 15000;
-    try {
-      do {
-        const result = await request('/' + identifier, {method:'DELETE'});
+    do {
+      try {
+        const result = await request('/' + identifier, {method:'DELETE'}, deadline-Date.now());
         if (result?.released !== false) return true;
-        if (Date.now() >= deadline) return false;
-        await new Promise(resolve=>setTimeout(resolve,100));
-      } while (Date.now() < deadline);
-    } catch {}
+      } catch {}
+      if (Date.now() >= deadline) return false;
+      await new Promise(resolve=>setTimeout(resolve,Math.min(100,deadline-Date.now())));
+    } while (Date.now() < deadline);
     return false;
   }
   function restore() {
@@ -124,6 +137,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
                   dispose() {if (!claimed) {claimed = true; release(old);}}};
     }
+    if (resetHlsOrigin && seekPending === null && state.time > 0) seekPending = state.time;
     const hlsCallbacks = resetHlsOrigin ? {...callbacks, onReady() {
       if (seekPending !== null) {
         const target = seekPending; seekPending = null;
@@ -330,7 +344,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         }
         if (result.state === 'failed') throw Error('Source preparation failed');
         if (result.source) {
-          if (capability.nativePlayback !== 1 && !(Number.isFinite(result.duration) && result.duration > 0)) resetHlsOrigin = true;
+          if (!(Number.isFinite(result.duration) && result.duration > 0)) resetHlsOrigin = true;
           if (requestedStart > 0 && (!Number.isFinite(result.duration) || result.duration <= 0 || requestedStart >= result.duration)) {
             // Saved EOF belongs to the old duration. Validate it before mode
             // commitment, while a new zero-origin session is still possible.

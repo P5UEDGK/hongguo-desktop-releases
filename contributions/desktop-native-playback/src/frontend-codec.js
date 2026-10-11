@@ -25,7 +25,7 @@ async function desktopSupportsSource(source) {
 }
 
 function desktopCreateCodecFetch(forceH264 = false) {
-  let closed = false, usedCopy = false, failureCode = null;
+  let closed = false, usedCopy = false, failureCode = null, knownDuration = false;
   const pending = new Map();
   const request = async (input, init = {}) => {
     const url = new URL(input);
@@ -40,6 +40,7 @@ function desktopCreateCodecFetch(forceH264 = false) {
       return response;
     const status = await response.clone().json();
     failureCode = status.failureCode || null;
+    knownDuration = Number.isFinite(status.duration) && status.duration > 0;
     if (closed || init.signal?.aborted) return response;
     if (status.videoMode) usedCopy = status.videoMode === 'copy';
     if (!forceH264 && status.source && status.videoMode === null) {
@@ -59,6 +60,7 @@ function desktopCreateCodecFetch(forceH264 = false) {
     return response;
   };
   request.usedCopy = () => usedCopy;
+  request.durationKnown = () => knownDuration;
   request.failureCode = () => failureCode;
   request.close = () => {closed = true;};
   return request;
@@ -66,6 +68,7 @@ function desktopCreateCodecFetch(forceH264 = false) {
 
 function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
   let disposed = false, retried = false, epoch = 0, controller, transport;
+  let pendingSeek = null, zeroOriginRecovery = false;
   let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
   let rate = media.playbackRate || 1, watchdog, frameToken, watchPlayback = () => {}, pauseUntil = 0, internalPause = false, internalPlay = false;
   const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
@@ -100,7 +103,9 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     rememberTime();
     const resume = position;
     rate = media.playbackRate || rate;
-    start(true, Math.max(0, resume));
+    zeroOriginRecovery = !transport.durationKnown();
+    if (zeroOriginRecovery) pendingSeek = resume;
+    start(true, zeroOriginRecovery ? 0 : Math.max(0, resume));
     return true;
   }
   function start(force, target) {
@@ -133,6 +138,11 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     const wrapped = {...callbacks,
       onReady() {
         if (!active()) return;
+        if (pendingSeek !== null) {
+          const target = pendingSeek;pendingSeek = null;
+          queueMicrotask(()=>{if (active()) controller?.seek(target);});
+          return;
+        }
         ready = true;
         media.playbackRate = rate;
         const preparingPause = internalPause;
@@ -172,7 +182,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     }
     internalPause = true;
     try {
-      controller = windowed ? ek(media, url, target, wrapped, force ? null : preparation, transport)
+      controller = windowed && !zeroOriginRecovery ? ek(media, url, target, wrapped, force ? null : preparation, transport)
         : desktopLegacyHls(media, url, target, wrapped, force ? null : preparation, false, transport);
     } finally {internalPause = false;}
   }
@@ -204,7 +214,9 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     media.removeEventListener('error', onError, true);
     media.removeEventListener('timeupdate', rememberTime);
   }, {seek(value) {if (!disposed) {
-      position = value; internalPause = true;
+      position = value;
+      if (pendingSeek !== null) {pendingSeek = value;return;}
+      internalPause = true;
       try {controller?.seek(value);} finally {internalPause = false; internalPlay = false;}
     }}});
 }
