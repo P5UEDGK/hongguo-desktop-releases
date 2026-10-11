@@ -11,6 +11,27 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_load_source_rejects_obsolete_or_closed_before_metadata(self):
+        for closed in (False,True):
+            calls=[];prefetch=EpisodePrefetcher(lambda _:None,lambda series:(calls.append(series),[{'index':n,'vid':str(123456780000+n)} for n in (1,2)]),self.root/('metadata-'+str(closed)),encoder=encoder,profile_files=PROFILE_FILES)
+            self.addCleanup(prefetch.close);prefetch.begin(Job(uuid.uuid4().hex,self.root/'job'), 'series',2)
+            if closed:prefetch.close()
+            with self.assertRaises(EncodingCancelled):prefetch.load_source('series',1 if not closed else 2)
+            self.assertEqual(calls,[])
+
+    def test_impossible_artifact_is_rejected_before_stage_or_copy(self):
+        from desktop_playable_cache import CacheQuotaExceeded
+        cache=self.cache();cache.quota_bytes=1
+        before=set(cache.root.iterdir())
+        with patch.object(cache,'_copy',side_effect=AssertionError('must not stage impossible artifact')) as copy:
+            with self.assertRaises(CacheQuotaExceeded):cache.store(self.source,self.output)
+            copy.assert_not_called()
+        self.assertEqual(set(cache.root.iterdir()),before)
+
+    def test_complete_cache_rejects_delta_update_tag(self):
+        path=self.output/'index.m3u8';s=path.read_text(encoding='utf8');path.write_text(s.replace('#EXTM3U\n','#EXTM3U\n#EXT-X-SKIP:SKIPPED-SEGMENTS=1\n',1),encoding='utf8')
+        with self.assertRaises(ValueError):self.cache().store(self.source,self.output)
+
     def test_cache_hit_callbacks_recheck_cancellation(self):
         cache=self.cache();cache.store(self.source,self.output)
         for during_window in (False,True):

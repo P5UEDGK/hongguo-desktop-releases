@@ -173,7 +173,7 @@ class PlayableEpisodeCache:
                 raise ValueError("Unsupported local artifact timeline")
             if line.startswith('#EXT-X-MEDIA-SEQUENCE') and segments:
                 raise ValueError("Late artifact media sequence")
-            if line.startswith(("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY")) or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
+            if line.startswith(("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY", "#EXT-X-SKIP")) or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
                 raise ValueError("Unsupported local artifact HLS tag")
             if line.startswith("#EXT-X-MAP:"):
                 if line != '#EXT-X-MAP:URI="init.mp4"':
@@ -379,6 +379,8 @@ class PlayableEpisodeCache:
             key, identity = _identity_result or self._identity(source, video_mode, cancelled)
             names = self._media_files(Path(directory))
             directory = Path(directory)
+            if sum((directory / name).stat().st_size for name in names) + 65536 > self.quota_bytes:
+                raise CacheQuotaExceeded("Playable artifact exceeds cache quota")
             adopt = (directory.parent == self.root
                      and re.fullmatch(r"stage-[0-9a-f]{32}", directory.name)
                      and plain(directory)

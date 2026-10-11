@@ -104,6 +104,8 @@ class EpisodePrefetcher:
 
     def load_source(self, series_id, episode):
         with self.condition:
+            if self.closed or self.current != {"seriesId": str(series_id), "episode": episode}:
+                raise EncodingCancelled()
             generation = self.generation
         _, metadata = self.episode_loader(series_id)
         items = self._episodes(metadata)
