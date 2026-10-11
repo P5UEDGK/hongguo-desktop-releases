@@ -61,6 +61,7 @@ function desktopSocialStore(endpoint) {
     entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal).then(result => {
       if (entry.abort.signal.aborted || entries.get(key) !== entry) throw new DOMException('Aborted', 'AbortError');
       const page = resource === 'comments' || resource === 'replies';
+      if (page && !cursor) entry.cursors.clear();
       entry.value = page ? {...result, has_more:result.has_more && result.cursor !== cursor,
         items:cursor && entry.value ? [...new Map([...entry.value.items, ...result.items].map(item => [item.id,item])).values()] : result.items} : result;
       entry.cursors.add(cursor); return entry.value;

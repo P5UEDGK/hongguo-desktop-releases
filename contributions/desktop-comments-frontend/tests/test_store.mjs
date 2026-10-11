@@ -50,6 +50,10 @@ assert.equal(calls.length,beforeFirst+1,'page one runs after the different pendi
 assert.equal(calls.at(-1).url.searchParams.get('cursor'),null);
 pending.shift().resolve(page(['first'],'p2',true));
 assert.deepEqual((await firstPending).items.map(x=>x.id),['first']);
+const beforeReload=calls.length, reloadSecond=inflight.read('comments',{kind:'episode',cursor:'p2'});
+assert.equal(calls.length,beforeReload+1,'replaced page one invalidates later cursor markers');
+pending.shift().resolve(page(['second']));
+assert.deepEqual((await reloadSecond).items.map(x=>x.id),['first','second']);
 const third=inflight.read('comments',{kind:'series',cursor:'later'});
 const queued=inflight.read('comments',{kind:'series'});
 inflight.dispose();await assert.rejects(third,{name:'AbortError'});await assert.rejects(queued,{name:'AbortError'});

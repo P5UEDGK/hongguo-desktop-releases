@@ -44,3 +44,10 @@ node contributions/desktop-comments-frontend/tests/test_store.mjs
 评论开关通过aria-pressed表示评论页签是否启用；不以aria-expanded描述仍展开的选集抽屉。选集按钮继续按实际抽屉状态报告展开/收起。浏览器回归覆盖记忆打开、启用、返回选集及关闭评论。
 
 不同cursor不共享pending结果，等待已有请求后再读取自己的分页；取消/清理会中止排队读取。旧实现的第一页重开并发输入失败，当前会话缓存/共享读取和79项Chrome组合通过。评论按钮改用aria-pressed表达评论页签启用状态，抽屉的实际展开状态由选集按钮报告。
+
+
+## 本轮二次反馈修复
+
+第一页覆盖 comments/replies 缓存时同时清空已访问 cursor，后续分页可以再次请求并合并，不会被旧标记拦截。新增第一页、第二页、重取第一页后再次取第二页的回归；旧实现失败，当前 store 与 shared 测试通过。
+
+本机完整候选、安装回读与反馈观察期仍待完成。
