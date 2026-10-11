@@ -20,6 +20,25 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_queued_hide_invalidates_old_visible_activation(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='native'
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='native';child.ready.set();child.activation_revision=1
+        jobs.native=SimpleNamespace(available=True,control=lambda *_:2,snapshot=lambda _:{'visible':True,'outputReady':True,'revision':1},release=lambda _:None)
+        endpoint=next(route.endpoint for route in make_router(jobs,lambda _:True).routes if route.path.endswith('/control'))
+        async def body():return {'visible':False,'paused':True}
+        asyncio.run(endpoint(child.id,SimpleNamespace(json=body)))
+        with self.assertRaises(HTTPException) as error:jobs.activate(child)
+        self.assertEqual(error.exception.status_code,409);self.assertEqual(child.prewarm_parent,parent.id)
+
+    def test_cancelled_pending_parent_cannot_create_standby(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
+        jobs.native=SimpleNamespace(release=lambda _:False);jobs.release(parent.id)
+        self.assertIn(parent.id,jobs.jobs)
+        with self.assertRaises(HTTPException) as error:jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        self.assertEqual(error.exception.status_code,404);self.assertEqual(set(jobs.jobs),{parent.id})
+        jobs.native=None
+
+
     def test_activation_commit_releases_parent_session_ownership(self):
         jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='native'
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='native';child.activation_revision=1
