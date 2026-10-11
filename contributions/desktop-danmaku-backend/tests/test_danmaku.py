@@ -7,7 +7,7 @@ from desktop_danmaku_track import DanmakuTrack
 
 ITEM={'text':'safe{\\pos(0,0)}[unknown]👍','offset_ms':1000,'lane':0}
 class Player:
-    def __init__(self): self.commands=[]; self.sid=0; self.fail=False; self.properties={'sid':'no','secondary-sid':'no','secondary-sub-ass-override':'strip','sub-ass-override':'scale','sub-delay':'0','secondary-sub-delay':'0','sub-visibility':'yes','secondary-sub-visibility':'yes'};self.fail_remove=False
+    def __init__(self): self.commands=[]; self.sid=0; self.fail=False; self.properties={'sid':'no','secondary-sid':'no','secondary-sub-ass-override':'strip','sub-ass-override':'scale','sub-delay':'0','secondary-sub-delay':'0','sub-visibility':'yes','secondary-sub-visibility':'yes','sub-pos':'100','secondary-sub-pos':'0'};self.fail_remove=False
     def command(self,*args):
         if self.fail: raise RuntimeError('test failure')
         if self.fail_remove and args[0]=='sub-remove':raise RuntimeError('remove failure')
@@ -19,6 +19,38 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_caption_change_and_schedule_replacement_in_same_iteration(self):
+        p=Player();track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        p.command('set','sid','7');track.update({'danmaku':[{**ITEM,'text':'changed'}]});track.apply(p)
+        self.assertFalse(track.failed);self.assertEqual(p.get('sid'),track.track_id);self.assertEqual(p.get('secondary-sid'),'7')
+        track.update({'danmaku':[]});track.apply(p);self.assertEqual(p.get('sid'),'7')
+
+    def test_caption_slot_position_is_transferred_and_restored(self):
+        p=Player();p.properties.update(sid='7',**{'sub-pos':'92','secondary-sub-pos':'8'})
+        original=dict(p.properties);track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertEqual(p.get('secondary-sub-pos'),'92')
+        track.update({'danmaku':[]});track.apply(p);self.assertEqual(p.properties,original)
+
+    def test_failed_clear_then_reenable_retains_caption_options(self):
+        clock=[0];p=Player();p.properties['sid']='7';original=dict(p.properties)
+        track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
+        p.fail_remove=True;track.update({'danmaku':[]});track.apply(p);self.assertTrue(track.failed)
+        p.fail_remove=False;clock[0]=2;track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertFalse(track.failed);self.assertEqual(p.get('secondary-sid'),'7');self.assertEqual(p.get('sid'),track.track_id)
+        track.update({'danmaku':[]});track.apply(p);self.assertEqual(p.properties,original)
+
+    def test_stale_remove_failure_does_not_block_active_updates_or_caption(self):
+        clock=[0];p=Player();track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
+        command=p.command
+        def failed_old(*args):
+            if args==('sub-remove','1'):raise RuntimeError('stale')
+            command(*args)
+        p.command=failed_old
+        track.update({'danmaku':[{**ITEM,'text':'second'}]});track.apply(p)
+        clock[0]=2;p.command('set','sid','7');track.update({'danmaku':[{**ITEM,'text':'third'}]});track.apply(p)
+        self.assertIn('third',track.document);self.assertEqual(track.track_id,'3')
+        self.assertEqual(p.get('sid'),'3');self.assertEqual(p.get('secondary-sid'),'7')
+
     def test_disabled_primary_caption_remains_hidden_after_overlay_and_restore(self):
         p=Player();p.properties.update({'sid':'7','sub-visibility':'no','secondary-sub-visibility':'yes'})
         original=dict(p.properties);track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)

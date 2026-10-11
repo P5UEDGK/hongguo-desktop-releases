@@ -54,7 +54,8 @@ class DanmakuTrack:
         self.saved_options = {name:player.get(name) or default for name,default in (
             ('sub-ass-override','scale'),('secondary-sub-ass-override','strip'),
             ('sub-delay','0'),('secondary-sub-delay','0'),
-            ('sub-visibility','yes'),('secondary-sub-visibility','yes'))}
+            ('sub-visibility','yes'),('secondary-sub-visibility','yes'),
+            ('sub-pos','100'),('secondary-sub-pos','0'))}
 
     def set_option(self, player, name, value):
         if str(player.get(name)) != str(value):
@@ -63,11 +64,11 @@ class DanmakuTrack:
             # mpv canonicalizes numeric properties (e.g. 0 -> 0.000000).
             self.modified_options[name] = str(player.get(name))
 
-    def restore_options(self, player):
+    def restore_options(self, player, *, retain=False):
         for name,value in self.modified_options.items():
             if str(player.get(name)) == value:
                 player.command('set', name, self.saved_options[name])
-        self.saved_options = None
+        if not retain: self.saved_options = None
         self.modified_options = {}
         self.reload_options = False
 
@@ -103,10 +104,11 @@ class DanmakuTrack:
         self.set_option(player, 'secondary-sub-ass-override', self.saved_options['sub-ass-override'])
         self.set_option(player, 'secondary-sub-delay', self.saved_options['sub-delay'])
         self.set_option(player, 'secondary-sub-visibility', self.saved_options['sub-visibility'])
+        self.set_option(player, 'secondary-sub-pos', self.saved_options['sub-pos'])
         if str(player.get('secondary-sid')) != str(primary):
             player.command('set', 'secondary-sid', primary)
 
-    def restore_captions(self, player):
+    def restore_captions(self, player, *, retain=False):
         if self.saved is None:
             if self.saved_options is not None: self.restore_options(player)
             return
@@ -115,7 +117,7 @@ class DanmakuTrack:
             player.command('set', 'secondary-sid', secondary)
         if str(player.get('sid')) == str(self.track_id):
             player.command('set', 'sid', primary)
-        self.restore_options(player)
+        self.restore_options(player, retain=retain)
 
     def remove_pending(self, player):
         for identifier in tuple(self.pending_removals):
@@ -133,9 +135,10 @@ class DanmakuTrack:
             document = ass_document(self.items, self.settings, assets=self.assets) if self.items else ''
             if not any(line.startswith('Dialogue:') for line in document.splitlines()):
                 document = ''
-            if document: self.remove_pending(player)
             if document == self.document:
-                if document: self.show_captions(player)
+                if document:
+                    self.show_captions(player)
+                    self.remove_pending(player)
                 else:
                     self.restore_captions(player)
                     self.saved = None
@@ -146,6 +149,7 @@ class DanmakuTrack:
             previous = self.track_id
             if document:
                 self.preserve_captions(player)
+                if previous: self.show_captions(player)
                 player.command('sub-add', 'memory://' + document, 'select', 'Hongguo danmaku')
                 selected = str(player.get('sid') or '')
                 if not selected.isdigit():
@@ -159,11 +163,12 @@ class DanmakuTrack:
                 if self.pending_removals:
                     self.remove_pending(player)
             else:
-                self.restore_captions(player)
+                self.restore_captions(player, retain=True)
                 # Keep the ID until removal succeeds, including transient errors.
                 if previous:
                     player.command('sub-remove', previous)
                 self.track_id, self.document, self.saved = None, '', None
+                self.saved_options = None
                 self.promoted = False
                 self.remove_pending(player)
             self.failed = False

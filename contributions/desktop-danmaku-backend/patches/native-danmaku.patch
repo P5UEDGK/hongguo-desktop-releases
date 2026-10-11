@@ -31,15 +31,15 @@
  
  
  class Event(C.Structure):
-@@ -428,6 +435,7 @@
+@@ -440,6 +447,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
 +        danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
+         output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
-         # Starting paused allows the frontend to place the surface and apply
-@@ -509,6 +517,8 @@
+@@ -523,6 +531,8 @@
                          break
                      if event.id == 21:  # MPV_EVENT_PLAYBACK_RESTART: first frame has restarted.
                          frame_ready = True
@@ -48,7 +48,7 @@
                      if event.id == 7 and event.data:
                          fields = C.cast(event.data, C.POINTER(C.c_int))
                          if fields[0] == 4 or fields[1] < 0:
-@@ -529,6 +539,7 @@
+@@ -543,6 +553,7 @@
                          user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
@@ -56,7 +56,7 @@
                      if command.get("paused") is True:
                          desired["paused"] = True
                          player.command("set", "pause", "yes")
-@@ -562,6 +573,7 @@
+@@ -577,6 +588,7 @@
                  # hardware capability string or successful loadfile command.
                  hwdec = player.get("hwdec-current")
                  position = player.number("time-pos", self.job.start_seconds)
@@ -64,7 +64,7 @@
                  paused = player.get("pause") == "yes"
                  seeking = player.get("seeking") == "yes"
                  eof = player.get("eof-reached") == "yes"
-@@ -617,7 +629,8 @@
+@@ -633,7 +645,8 @@
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
