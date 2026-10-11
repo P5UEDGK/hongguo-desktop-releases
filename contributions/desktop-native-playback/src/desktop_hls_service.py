@@ -46,6 +46,7 @@ class Job:
     source_description: dict | None = None
     video_mode: str = "h264"
     request_token: str | None = None
+    source_loader: object = field(default=None, repr=False)
     mode_selected: threading.Event = field(default_factory=threading.Event)
 
 
@@ -192,7 +193,7 @@ class HlsJobs:
         source = None
         encoder_acquired = False
         try:
-            source = self.source_loader(series_id, episode)
+            source = (job.source_loader or self.source_loader)(series_id, episode)
             job.source = source if isinstance(source, ProgressiveSource) else Path(source)
             if job.cancelled.is_set():
                 raise EncodingCancelled()

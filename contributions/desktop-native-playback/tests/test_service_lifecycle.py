@@ -21,6 +21,14 @@ def eventually(predicate, timeout=3):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_job_bound_source_loader_overrides_legacy_provider(self):
+        loaded=threading.Event();calls=[]
+        def begin(job,series,episode):
+            job.source_loader=lambda sid,ep:(calls.append((sid,ep)),loaded.set(),self.source)[2]
+        jobs=HlsJobs(self.root,lambda *_:self.fail('legacy source must not bypass job scope'),on_start=begin,negotiation_seconds=.01)
+        self.addCleanup(jobs.close);job=jobs.create('1234567890123456',1,negotiate_codec=True)
+        self.assertTrue(loaded.wait(2));self.assertTrue(job.done.wait(3));self.assertFalse(job.failed);self.assertEqual(calls,[('1234567890123456',1)])
+
     def test_creation_cancellation_covers_lost_response_and_early_delete(self):
         import uuid
         jobs=self.jobs();jobs._run=lambda job,*_:job.done.set()
