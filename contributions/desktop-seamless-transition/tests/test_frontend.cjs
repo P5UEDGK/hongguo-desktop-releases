@@ -28,13 +28,13 @@ async function scenario(native,fail=false,fault=null){
       callbacks={...callbacks}; // Production codec copies/enumerates callback keys.
       acceptanceCallback=callbacks.onAcceptanceHlsTransition;terminalCallback=callbacks.onError;
       assert.equal(state.paused,true);assert(video.paused&&video.muted&&video.volume===0);
-      queueMicrotask(()=>{callbacks.onAcceptanceHlsTransition({from:'copy',to:'h264'},7);callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault!=='no-frame')callbacks.onReady();});
+      queueMicrotask(()=>{callbacks.onAcceptanceHlsTransition({from:'copy',to:'h264'},7);callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault==='pre-adoption-error')callbacks.onError(Error('hidden decode failed'));else if(fault!=='no-frame')callbacks.onReady();});
       return Object.assign(()=>{stopped++;},{seek:value=>{video.currentTime=value;},sessionId:()=>controllerId});
     },
     fetch:async(url,init={})=>{
       url=String(url);calls.push({url,...init});let body={};
       if(init.method==='DELETE'){released++;return {ok:true,status:204};}
-      if(url.endsWith('/activate')){await activated;if(['activate','activate-paused'].includes(fault))throw Error('activation rejected');}
+      if(url.endsWith('/activate')){await activated;if(['activate','activate-paused','near-eof-activate'].includes(fault))throw Error('activation rejected');}
       if(url.endsWith('/status')&&fault==='hung-status')return new Promise(()=>{});
       if(url.endsWith('/capabilities'))body={standbyPlayback:1,nativePlayback:native?1:0};
       else if(url.endsWith('/mode')){selected=true;body=JSON.parse(init.body);}
@@ -52,7 +52,7 @@ async function scenario(native,fail=false,fault=null){
   assert.equal(context.desktopShouldPrewarm({duration:4,desktopTimelineDuration:90,currentTime:2,playbackRate:1,readyState:4}),false);
   assert.equal(context.desktopShouldPrewarm({duration:10,desktopTimelineDuration:90,desktopTimeOrigin:80,currentTime:2,playbackRate:1,readyState:4}),true);
   const prep=context.desktopPrepareNext(endpoint.url,current);
-  if(fail)prep.retain(()=>retired++);
+  if(fail||fault==='pre-adoption-error')prep.retain(()=>retired++);
   if(fault==='late-claim'||fault==='idle-expiry'){
     await tick();now=90001;if(fault==='idle-expiry')expire();
     const record=await prep.claimRecord(endpoint.url,0);await tick();
@@ -60,7 +60,7 @@ async function scenario(native,fail=false,fault=null){
     for(const timer of timers)clearTimeout(timer);return;
   }
   const record=await prep.claimRecord(endpoint.url,0);
-  if(fail||fault==='no-frame'||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);if(fail){assert.equal(retired,0,'failed claimed preparation retains picture until cold fallback readiness');prep.finishRetained();assert.equal(retired,1);}for(const timer of timers)clearTimeout(timer);return;}
+  if(fail||fault==='no-frame'||fault==='pre-adoption-error'||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);if(fail||fault==='pre-adoption-error'){assert.equal(retired,0,'failed claimed preparation retains picture until cold fallback readiness');prep.finishRetained();assert.equal(retired,1);}for(const timer of timers)clearTimeout(timer);return;}
   assert(record);assert.equal(record.settings.volume,.3);assert.equal(record.settings.rate,3);
   const create=calls.find(c=>c.headers?.['x-desktop-prewarm-parent']);
   assert(create);assert.equal(create.headers['x-desktop-prewarm-parent'],'a'.repeat(32));
@@ -78,7 +78,8 @@ async function scenario(native,fail=false,fault=null){
     if(fault==='replacement-id')controllerId='d'.repeat(32);
     if(fault==='pending-id')controllerId=null;
     const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d,onAcceptanceHlsTransition:(...args)=>acceptance.push(args)},intent=>{
-      if(['activate','activate-paused','play'].includes(fault))assert.equal(intent?.time,7,'failure fallback inherits the live adopted seek');
+      if(['activate','activate-paused','play','near-eof-activate'].includes(fault))assert.equal(intent?.time,fault==='near-eof-activate'?88:7,'failure fallback inherits the live adopted seek');
+      if(fault==='near-eof-activate')assert.equal(prep.resumePosition,88,'adopted near-EOF seek retains the cold resume marker');
       if(fault==='activate-paused')assert.equal(intent?.paused,true,'failed activation carries latest pause to cold fallback');
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);
@@ -99,7 +100,8 @@ async function scenario(native,fail=false,fault=null){
     assert.equal(media.volume,.3);assert.equal(media.playbackRate,3);assert.equal(media.paused,true);
     assert.equal(children[0].currentTime,0);assert.equal(children[0].style.opacity,'1');
     children[0].dispatchEvent(new Event('ended'));assert.equal(ended,1);
-    dispose.seek(7);assert.equal(media.currentTime,7);
+    dispose.seek(fault==='near-eof-activate'?88:7);assert.equal(media.currentTime,fault==='near-eof-activate'?88:7);
+    if(fault==='near-eof-activate'){assert.equal(prep.resumePosition,88,'adopted seek updates the resume marker');media.currentTime=87;assert.equal(prep.resumePosition,87,'adopted currentTime updates the resume marker');dispose.seek(88);}
     if(fault==='activation-timeout'){
       await tick();assert.equal(fallbacks,1);assert.equal(stopped,1);assert.equal(released,1);
       assert(activationBudget>0&&activationBudget<=2000,'activation uses the remaining handoff deadline');
@@ -134,8 +136,8 @@ async function scenario(native,fail=false,fault=null){
   }
   for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error'])await scenario(false,false,fault);
+(async()=>{if(process.argv[3]){await scenario(false,false,process.argv[3]);return;}await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
+  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -122,6 +122,9 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     disposed = true; abort.abort(); controller?.(); video?.remove(); release();
     if (!retainPicture) finishRetained();
   }
+  function rememberResume(position, duration) {
+    if(Number.isFinite(position)&&position>=0&&Number.isFinite(duration)&&duration>0&&position<duration)resumePosition=position;
+  }
   async function seekToResume(result, position) {
     const duration = result.mode === 'native' ? result.duration : known.onTimeline?.[0] || video.duration;
     if (!Number.isFinite(duration) || position >= duration) throw Error('Invalid standby resume position');
@@ -218,7 +221,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       }
       return {...result, seek:async position=>{
         const duration=result.mode==='native'?result.duration:known.onTimeline?.[0]||video?.duration;
-        if(Number.isFinite(position)&&position>=0&&Number.isFinite(duration)&&duration>0&&position<duration)resumePosition=position;
+        rememberResume(position,duration);
         return seekToResume(result,position);
       }, settings:preparation.settings, expiresAt:deadline};
     }
@@ -228,7 +231,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
   const callbacks = Object.fromEntries(['onTimeline','onPlayableRange','onComplete','onWindowOrigin',
     'onReady','onError','onAcceptanceHlsTransition'].map(name => [name, (...args) => {
     known[name] = args;
-    if (name === 'onError') {failed = true; if (claimed) finishRetained(); else cleanup(retained.length > 0);}
+    if (name === 'onError') {failed = true; if (consumer) finishRetained(); else cleanup(retained.length > 0);}
     consumer?.[name]?.(...args);
   }]));
   const prepared = (async () => {
@@ -310,7 +313,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
           Object.defineProperty(media,name,{configurable:true,...descriptor});
         };
         for (const name of ['currentTime','playbackRate','volume','muted'])
-          property(name,{get:()=>video[name],set:v=>{video[name]=v;}});
+          property(name,{get:()=>video[name],set:v=>{video[name]=v;if(name==='currentTime')rememberResume(video.currentTime+(known.onWindowOrigin?.[0]||0),known.onTimeline?.[0]||video.duration);}});
         for (const name of ['paused','ended','duration','readyState','videoWidth','videoHeight','buffered','seeking','error'])
           property(name,{get:()=>video[name]});
         property('play',{value:()=>{wantsPlayback=true;return activationComplete ? video.play() : Promise.resolve();}});
@@ -371,7 +374,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         });
         return Object.assign(() => {
           if(restoreAdoption())cleanup();
-        },{seek:value=>controller?.seek(value),sessionId:()=>controller?.sessionId?.() ?? null});
+        },{seek:value=>{rememberResume(value,known.onTimeline?.[0]||video.duration);controller?.seek(value);},sessionId:()=>controller?.sessionId?.() ?? null});
       }};
     } catch {
       failed = true; if (!claimed) cleanup(retained.length > 0); else {release();video?.remove();}
