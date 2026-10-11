@@ -11,6 +11,19 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_integration_worker_invokes_the_documented_job_bound_loader(self):
+        import re,ast
+        document=(Path(__file__).resolve().parents[1]/'INTEGRATION.md').read_text(encoding='utf8')
+        snippets=re.findall(r'```python\n(.*?)```',document,re.S)
+        statements=[node for code in snippets for node in ast.parse(code).body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='source' for t in node.targets)]
+        self.assertEqual(len(statements),1,'integration worker must explicitly call the job-bound loader')
+        expression=compile(ast.Expression(statements[0].value),'<documented-worker-load>','eval')
+        calls=[];prefetch=EpisodePrefetcher(lambda vid:(calls.append(vid),self.source)[1],lambda sid:(calls.append(sid),[{'index':1,'vid':'123456780001'}]),self.root/'documented-job',encoder=encoder,profile_files=PROFILE_FILES,ahead=0)
+        self.addCleanup(prefetch.close);old=Job(uuid.uuid4().hex,self.root/'old-doc');new=Job(uuid.uuid4().hex,self.root/'new-doc');prefetch.begin(old,'series',1);prefetch.begin(new,'series',1)
+        with self.assertRaises(EncodingCancelled):eval(expression,dict(job=old,series_id='series',episode=1,prefetch=prefetch))
+        self.assertEqual(calls,[]);self.assertEqual(eval(expression,dict(job=new,series_id='series',episode=1,prefetch=prefetch)),self.source)
+
+
     def test_same_episode_restart_rejects_old_job_before_loaders(self):
         calls=[];prefetch=EpisodePrefetcher(lambda vid:(calls.append(vid),self.source)[1],lambda series:(calls.append(series),[{'index':1,'vid':'123456780001'}]),self.root/'same-episode',encoder=encoder,profile_files=PROFILE_FILES,ahead=0)
         self.addCleanup(prefetch.close);old=Job(uuid.uuid4().hex,self.root/'old');new=Job(uuid.uuid4().hex,self.root/'new')
