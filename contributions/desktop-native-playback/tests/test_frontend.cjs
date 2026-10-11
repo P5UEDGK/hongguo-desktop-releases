@@ -65,6 +65,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     pause(){loadingPauses++;preparingEvents.pause?.()},
     addEventListener(n,f){preparingEvents[n]=f},removeEventListener(n){delete preparingEvents[n]}};
   const loadingDispose=c.desktopCodecHls(loading,'http://127.0.0.1',0,{onReady(){},onError(){}},null);
+  preparingEvents.playing();loading.pause();await flush();
   loading.pause();loading.playbackRate=3;preparingEvents.ratechange();
   controllers[0].callbacks.onReady();await flush();
   assert(loadingPauses>=2,'pause during source preparation survives autoplay');

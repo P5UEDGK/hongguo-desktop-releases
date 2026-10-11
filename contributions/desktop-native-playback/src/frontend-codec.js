@@ -73,7 +73,10 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (Date.now() < pauseUntil) {media.pause(); return;}
     wantedPlaying = true;
   };
-  const onPause = () => {if (!internalPause) wantedPlaying = false;};
+  const onPause = () => {if (ready && !internalPause) wantedPlaying = false;};
+  const onPreparingPlaying = () => {
+    if (!ready) {internalPause = true; queueMicrotask(() => {internalPause = false;});}
+  };
   const onRateChange = () => {rate = media.playbackRate || rate;};
   function fallback() {
     if (disposed || retried || !transport?.usedCopy() || transport.failureCode?.() === 'source-read') return false;
@@ -140,6 +143,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   };
   media.addEventListener('play', onPlay);
   media.addEventListener('pause', onPause);
+  media.addEventListener('playing', onPreparingPlaying);
   media.addEventListener('ratechange', onRateChange);
   media.addEventListener('error', onError, true);
   media.addEventListener('timeupdate', rememberTime);
@@ -151,6 +155,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     transport?.close(); controller?.(); preparation?.dispose();
     media.removeEventListener('play', onPlay);
     media.removeEventListener('pause', onPause);
+    media.removeEventListener('playing', onPreparingPlaying);
     media.removeEventListener('ratechange', onRateChange);
     if (media.pause === pause) {if (savedPause) Object.defineProperty(media, 'pause', savedPause); else delete media.pause;}
     media.removeEventListener('error', onError, true);
