@@ -22,6 +22,13 @@ from desktop_prefetch import EpisodePrefetcher
 
 
 class NativeTests(unittest.TestCase):
+    def test_display_capacity_drops_are_discounted_but_extra_loss_recovers(self):
+        for fps,rate,refresh in ((120,1,60),(60,2,60),(120,.5,30)):
+            watch=FrameDropWatch();unavoidable=fps*rate-refresh
+            for n in range(31):self.assertFalse(watch.observe(n/10,n/10*unavoidable,0,fps,rate,True,refresh))
+        watch=FrameDropWatch();self.assertTrue(any(watch.observe(n/10,n*15,0,120,1,True,60) for n in range(31)))
+        watch=FrameDropWatch();self.assertTrue(any(watch.observe(n/10,n*10,n*10,120,1,True,60) for n in range(31)))
+
     def test_expected_audio_requires_decoded_track_and_wasapi_output(self):
         from desktop_native import audio_output_ready
         values = {}

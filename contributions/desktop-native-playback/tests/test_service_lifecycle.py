@@ -21,6 +21,16 @@ def eventually(predicate, timeout=3):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_locked_output_release_remains_pending_until_removed(self):
+        from unittest.mock import patch
+        jobs=self.jobs();jobs._run=lambda job,*_:job.done.set()
+        job=jobs.create('1234567890123456',1);self.assertTrue(job.done.wait(1))
+        with patch.object(jobs,'_remove_output',side_effect=OSError('owned lock')):
+            self.assertIs(jobs.release(job.id),False);self.assertIn(job.id,jobs.jobs)
+            endpoint=next(r.endpoint for r in make_router(jobs,lambda _:True).routes if r.path.endswith('/{identifier}') and 'DELETE' in r.methods)
+            self.assertEqual(endpoint(job.id).status_code,202)
+        self.assertIsNot(jobs.release(job.id),False);self.assertNotIn(job.id,jobs.jobs)
+
     def test_job_bound_source_loader_overrides_legacy_provider(self):
         loaded=threading.Event();calls=[]
         def begin(job,series,episode):

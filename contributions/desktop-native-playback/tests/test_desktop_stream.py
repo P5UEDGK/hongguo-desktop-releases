@@ -50,6 +50,27 @@ def source_for(data, **kwargs):
 
 
 class StreamTests(unittest.TestCase):
+    def test_last_modified_needs_response_date_separation_before_stitching(self):
+        from email.utils import formatdate
+        payload=b'x'*150000
+        for separation in (None,0,1,59,60,120):
+            calls=[]
+            def request(*args,**kwargs):
+                headers=kwargs['headers'];calls.append(headers)
+                if 'Range' not in headers:
+                    response=Response(payload,0,len(payload)-1);response.status_code=200;response.headers={'Content-Length':str(len(payload))};return response
+                start,end=map(int,headers['Range'][6:].split('-'));response=Response(payload,start,min(end,len(payload)-1));response.headers.pop('ETag')
+                response.headers['Last-Modified']=formatdate(1000000000,usegmt=True)
+                if separation is not None:response.headers['Date']=formatdate(1000000000+separation,usegmt=True)
+                return response
+            source=ProgressiveSource('https://fixture.invalid/media',request=request,identity='date')
+            try:
+                source.block(0,lambda:False);source.block(1,lambda:False)
+                if separation is None or separation<60:
+                    self.assertTrue(source.validator.startswith('pinned-sha256:'));self.assertNotIn('Range',calls[1])
+                else:self.assertIn('If-Range',calls[1]);self.assertFalse(source.validator.startswith('pinned-sha256:'))
+            finally:source.close()
+
     def test_successful_source_retry_clears_previous_network_failure(self):
         payload=b'x'*131072;source,_=source_for(payload)
         with patch.object(source,'_range',side_effect=[requests.exceptions.ConnectionError()]*3+[(payload[:65536],len(payload),'"fixture"')]):

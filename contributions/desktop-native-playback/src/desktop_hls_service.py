@@ -323,8 +323,10 @@ class HlsJobs:
                 try:
                     self._remove_output(job)
                 except OSError:
-                    return
+                    return False
                 self.jobs.pop(identifier, None)
+                return True
+            return False
 
     def playlist(self, identifier, wait_seconds=90):
         job = self.get(identifier)

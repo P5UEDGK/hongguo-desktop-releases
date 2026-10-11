@@ -327,17 +327,18 @@ class FrameDropWatch:
         self.samples=deque()
         self.growth=None
 
-    def observe(self, now, output_drops, decoder_drops, fps, rate, active):
+    def observe(self, now, output_drops, decoder_drops, fps, rate, active, display_fps=0):
         decoder,output=max(0,decoder_drops),max(0,output_drops)
-        if not active or self.samples and (decoder<self.samples[-1][1] or output<self.samples[-1][2] or rate!=self.samples[-1][3]):
+        capacity = display_fps if display_fps > 0 and math.isfinite(display_fps) else max(1,fps)
+        if not active or self.samples and (decoder<self.samples[-1][1] or output<self.samples[-1][2] or rate!=self.samples[-1][3] or capacity!=self.samples[-1][4]):
             self.samples.clear();self.growth=None
         if not active:return False
         if self.samples and (decoder>self.samples[-1][1] or output>self.samples[-1][2]):self.growth=now
-        self.samples.append((now,decoder,output,rate))
+        self.samples.append((now,decoder,output,rate,capacity))
         while len(self.samples)>2 and self.samples[1][0]<=now-2:self.samples.popleft()
         first=self.samples[0];elapsed=now-first[0]
-        # Discount frames skipped by playback acceleration without hiding VO overload.
-        loss=max(decoder-first[1],output-first[2]-max(1,fps)*max(0,rate-1)*elapsed)
+        # Discount output frames that cannot fit the display, while counting decoder loss.
+        loss=max(decoder-first[1],output-first[2]-max(0,max(1,fps)*max(.25,rate)-capacity)*elapsed)
         return (elapsed>=2 and self.growth is not None and now-self.growth<=.5
                 and loss>=max(10,max(1,fps)*max(.25,rate)*elapsed*.5))
 
@@ -385,6 +386,8 @@ class NativeSession:
         if not widgets or not surfaces:
             return False
         widget = widgets[0]
+        for surface in tuple(self.input_hooks):
+            if not user.IsWindow(surface):self.input_hooks.pop(surface)
         for surface in surfaces:
             if surface in self.input_hooks:
                 continue
@@ -507,8 +510,8 @@ class NativeSession:
             per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
                         "volume": 100, "mute": "yes" if desired["muted"] else "no",
                         "hwdec": "auto-safe" if self.host.hardware else "no",
-                        "cache": "yes" if progressive else "auto", "cache-secs": "12",
-                        "demuxer-readahead-secs": "12", "demuxer-max-bytes": "32MiB",
+                        "cache": "yes" if progressive else "auto", "cache-secs": "10",
+                        "demuxer-readahead-secs": "10", "demuxer-max-bytes": "32MiB",
                         "cache-on-disk": "no", "cache-pause": "yes", "cache-pause-wait": "1",
                         "http-header-fields": "x-api-key: " + self.job.stream_key if progressive and self.job.stream_key else "",
                         "demuxer-lavf-format": "mov" if progressive else "",
@@ -589,7 +592,7 @@ class NativeSession:
                 seeking = player.get("seeking") == "yes"
                 eof = player.get("eof-reached") == "yes"
                 output_ready = frame_ready and width > 0 and height > 0 and player.get("current-vo") == "gpu" and player.get("video-out-params") is not None and audio_output_ready(getattr(self.job, "source_description", None), player)
-                if output_ready and not self.input_hooks:
+                if output_ready:
                     # Native renderer must not cover the existing trusted UI
                     # input surface without restoring click/key forwarding.
                     output_ready = self.forward_input(hwnd)
@@ -616,7 +619,7 @@ class NativeSession:
                 frame_drops=player.number("frame-drop-count")
                 decoder_drops=player.number("decoder-frame-drop-count")
                 dropping=drop_watch.observe(now,frame_drops,decoder_drops,
-                    player.number("container-fps",30),desired["rate"],unstable)
+                    player.number("container-fps",30),desired["rate"],unstable,player.number("display-fps",0))
                 if buffering:
                     last_progress = now
                 if unstable and abs(avsync) > .2:

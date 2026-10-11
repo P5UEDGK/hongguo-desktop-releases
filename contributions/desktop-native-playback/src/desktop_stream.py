@@ -150,7 +150,14 @@ class ProgressiveSource:
             if not etag:
                 modified = response.headers.get("Last-Modified")
                 try:
-                    if modified and parsedate_to_datetime(modified).tzinfo is not None:
+                    date = response.headers.get("Date")
+                    modified_time = parsedate_to_datetime(modified) if modified else None
+                    response_time = parsedate_to_datetime(date) if date else None
+                    # Without evidence of a shared clock, retain the conservative
+                    # 60-second separation before combining range responses.
+                    if (modified_time and response_time and modified_time.tzinfo is not None
+                            and response_time.tzinfo is not None
+                            and (response_time-modified_time).total_seconds() >= 60):
                         validator = modified
                 except (ValueError, TypeError, OverflowError):
                     pass
