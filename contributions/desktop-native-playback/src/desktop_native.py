@@ -359,6 +359,7 @@ class NativeSession:
         self.thread = (pool.task(self) if pool else
                        threading.Thread(target=self.run, name="desktop-native-player", daemon=True))
         self.input_hooks = {}
+        self.input_target = None
         self.queued_state = {"paused": True, "rate": 1, "volume": 1, "muted": False}
 
     def forward_input(self, container):
@@ -386,6 +387,7 @@ class NativeSession:
         if not widgets or not surfaces:
             return False
         widget = widgets[0]
+        self.input_target = widget
         for surface in tuple(self.input_hooks):
             if not user.IsWindow(surface):self.input_hooks.pop(surface)
         for surface in surfaces:
@@ -393,7 +395,8 @@ class NativeSession:
                 continue
             original = [None]
             @self.host.window_callback
-            def procedure(hwnd, message, wparam, lparam, target=widget, previous=original):
+            def procedure(hwnd, message, wparam, lparam, previous=original):
+                target = self.input_target
                 if message == 0x0084 and hwnd == container:  # WM_NCHITTEST
                     # STATIC defaults to HTTRANSPARENT without SS_NOTIFY.
                     # Own the hit so Windows delivers real pointer input here.

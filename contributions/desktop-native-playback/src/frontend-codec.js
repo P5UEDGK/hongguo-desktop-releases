@@ -137,6 +137,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
       }, 8000);
     };
     const wrapped = {...callbacks,
+      preserveResumePosition: callbacks.preserveResumePosition === true,
       onReady() {
         if (!active()) return;
         if (pendingSeek !== null) {

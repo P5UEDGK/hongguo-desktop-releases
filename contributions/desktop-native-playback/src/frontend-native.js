@@ -161,14 +161,15 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
                   dispose() {if (!claimed) {claimed = true; release(old);}}};
     }
     if (resetHlsOrigin && seekPending === null && state.time > 0) seekPending = state.time;
-    const hlsCallbacks = resetHlsOrigin ? {...callbacks, onReady() {
+    const resumeCallbacks = {...callbacks, preserveResumePosition: seekPending !== null || callbacks.preserveResumePosition === true};
+    const hlsCallbacks = resetHlsOrigin ? {...resumeCallbacks, onReady() {
       if (seekPending !== null) {
         const target = seekPending; seekPending = null;
         queueMicrotask(() => {if (!disposed) delegated?.seek(target);});
         return;
       }
       callbacks.onReady();
-    }} : callbacks;
+    }} : resumeCallbacks;
     delegated = desktopCodecHls(media, url, resetHlsOrigin ? 0 : Math.max(0, state.time), hlsCallbacks,
       transfer, windowed && !resetHlsOrigin, {forceH264, paused: state.paused});
   }
@@ -399,11 +400,13 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
           body: JSON.stringify({mode: 'native', ...(context ? {window:context} : {})})});
       } catch (error) {
+        if (disposed) return;
         if (error.status === 400) {delegate(false); return;}
-        if (error.status !== 409) throw error;
+        if (error.status && error.status !== 409) throw error;
         const latest = await request('/' + id + '/status');
-        if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
-        delegateCommittedHls(latest); return;
+        if (latest.state === 'failed') throw error;
+        if (['h264', 'copy'].includes(latest.videoMode)) {delegateCommittedHls(latest); return;}
+        if (latest.videoMode !== 'native') throw error;
       }
       if (disposed) return;
       const registeredUntil = Date.now() + 90000;
