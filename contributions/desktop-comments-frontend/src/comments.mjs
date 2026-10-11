@@ -267,7 +267,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     b.jsx('p', {children: b.jsx(DesktopEmojiText,{text:item.text || (item.image_count ? '[图片评论]' : '[无文字评论]')})}),
     b.jsx('small', {children: (item.created_at ? new Date(item.created_at * 1000).toLocaleDateString('zh-CN') + ' · ' : '') + '赞 ' + item.likes}),
     replies && item.replies > 0 && b.jsx('button', {'aria-expanded': open, onClick: () => {
-      setOpen(!open); if (open) {own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!busy) load();}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
+      setOpen(!open); if (open) {own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!busy && (store || !page)) load();}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
     open && b.jsxs('div', {className: 'desktop-social-replies', children: [
       page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, store, replies: false}, row.id)),
       page && !page.items.length && b.jsx('p', {children: '暂无回复'}),

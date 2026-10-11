@@ -38,3 +38,19 @@ console.log('PASS detached reply pagination reconciles on reopen before and afte
   button('重试').props.onClick();await flush();assert.deepEqual(calls,['','',''],'retry uses the failed first-page cursor');
 }
 console.log('PASS failed reply cursor is retained across stale-page retries');
+
+{
+ let slots=[],index=0,tree,calls=0;
+ const React={useState(v){const i=index++;if(!(i in slots))slots[i]=v;return [slots[i],n=>slots[i]=typeof n==='function'?n(slots[i]):n];},useRef(v){const i=index++;return slots[i]??={current:v};},useEffect(fn){const i=index++;if(!slots[i]){slots[i]=true;fn();}}};
+ const jsx=(type,props)=>({type,props});const api=createComments({React,jsxRuntime:{jsx,jsxs:jsx},resolveEndpoint(){},installStyles(){},danmaku:{},emojis:{}});
+ const endpoint={origin:'http://127.0.0.1:1234',key:'owned',series:'12345678',episode:'1'};
+ globalThis.fetch=async()=>{const second=++calls===2;return {ok:true,json:async()=>({items:[{id:second?'two':'one',author:'owned',text:second?'two':'one',likes:0,replies:0}],cursor:second?'':'p2',has_more:!second})};};
+ function render(){index=0;tree=api.Comment({item:{id:'parent',author:'owned',text:'parent',likes:0,replies:2},endpoint,replies:true});}
+ function nodes(n){return Array.isArray(n)?n.flatMap(nodes):n&&typeof n==='object'?[n,...nodes(n.props?.children)]:[];}
+ function button(t){render();const b=nodes(tree).find(n=>n.type==='button'&&String(n.props.children).includes(t));assert(b,t);return b;}
+ const flush=async()=>{await new Promise(setImmediate);render();};
+ button('查看').props.onClick();await flush();button('加载更多回复').props.onClick();await flush();
+ button('收起回复').props.onClick();button('查看').props.onClick();await flush();
+ assert.equal(calls,2,'standalone reopen preserves the merged reply pages');assert(nodes(tree).some(n=>n.props?.item?.text==='two'));
+}
+console.log('PASS standalone replies keep pagination on re-expansion');
