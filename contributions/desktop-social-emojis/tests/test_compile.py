@@ -14,6 +14,28 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_invalid_tag_rejected_before_any_image_open(self):
+        with patch('PIL.Image.open') as opened:
+            for tag in ('bad','[line\nfeed]','['+'x'*17+']',7):
+                with self.assertRaisesRegex(ValueError,'name'):compiler.compile_assets({tag:'unused.png'})
+            opened.assert_not_called()
+
+    def test_exif_orientation_normalizes_png_and_native_vectors(self):
+        from PIL import Image, ImageOps
+        with tempfile.TemporaryDirectory() as directory:
+            for orientation in (2,6):
+                path=Path(directory)/f'oriented-{orientation}.png'
+                image=Image.new('RGB',(8,4),'red')
+                for x in range(4):
+                    for y in range(4):image.putpixel((x,y),(0,0,255))
+                exif=image.getexif();exif[274]=orientation;image.save(path,exif=exif)
+                with Image.open(path) as source:expected=ImageOps.exif_transpose(source).convert('RGBA')
+                row=compiler.compile_assets({'[测试]':path})['[测试]']
+                with Image.open(io.BytesIO(base64.b64decode(row['src'].split(',',1)[1]))) as output:
+                    self.assertEqual(output.size,expected.size);self.assertEqual(output.convert('RGBA').tobytes(),expected.tobytes());self.assertIsNone(output.getexif().get(274))
+                points=[point for group in row['drawing'] if group['color'][2]>group['color'][0] for contour in group['paths'] for point in contour];xs,ys=zip(*points)
+                self.assertEqual((min(xs),max(xs),min(ys),max(ys)),(24,48,12,36) if orientation==2 else (12,36,0,24))
+
     def test_generated_png_strips_embedded_icc_profile(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:

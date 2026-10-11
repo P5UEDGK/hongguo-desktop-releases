@@ -7,6 +7,10 @@ import struct
 import zlib
 from pathlib import Path
 
+def validate_name(name):
+    if not isinstance(name,str) or not re.fullmatch(r'\[[^\[\]\r\n]{1,16}\]',name):
+        raise ValueError('Invalid emoji name')
+
 def load_assets(path):
     with Path(path).open("rb") as stream:
         data=stream.read(16*1024*1024+1)
@@ -85,7 +89,7 @@ def validate_assets(assets):
     if not isinstance(assets,dict) or len(assets)>256: raise ValueError('Invalid emoji assets')
     output={}; points_total=0
     for name,row in assets.items():
-        if not isinstance(name,str) or not re.fullmatch(r'\[[^\[\]\r\n]{1,16}\]',name): raise ValueError('Invalid emoji name')
+        validate_name(name)
         if not isinstance(row,dict) or set(row)!={'src','resolution','drawing'}: raise ValueError('Invalid emoji shape')
         src=row['src']; resolution=row['resolution']
         if not isinstance(src,str) or not src.startswith('data:image/png;base64,') or len(src)>1024*1024: raise ValueError('Invalid emoji PNG')

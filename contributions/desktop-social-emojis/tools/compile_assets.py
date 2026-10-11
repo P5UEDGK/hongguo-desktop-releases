@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from desktop_emoji_assets import validate_assets
+from desktop_emoji_assets import validate_assets, validate_name
 
 MAX_MAPPING_BYTES = 1024 * 1024
 
@@ -18,11 +18,12 @@ def load_mapping(path):
 def validate_mapping(mapping):
     if not isinstance(mapping,dict) or len(mapping)>256:
         raise ValueError('Emoji mapping must be an object with at most 256 tags')
+    for name in mapping: validate_name(name)
     return mapping
 
 def compile_assets(mapping):
     validate_mapping(mapping)
-    from PIL import Image
+    from PIL import Image, ImageOps
     result={}
     for name, source_path in mapping.items():
         with Image.open(source_path) as source:
@@ -30,7 +31,7 @@ def compile_assets(mapping):
             width,height=source.size
             if width<=0 or height<=0 or width*height>4096*4096:
                 raise ValueError('Emoji image dimensions exceed 16 megapixels')
-            image=source.convert('RGBA')
+            image=ImageOps.exif_transpose(source).convert('RGBA')
             image.thumbnail((256,256),Image.Resampling.LANCZOS)
             png=io.BytesIO(); image.save(png,format='PNG',optimize=True,icc_profile=None)
             ratio=48/max(image.size)
