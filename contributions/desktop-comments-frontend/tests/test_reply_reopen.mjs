@@ -25,3 +25,16 @@ for (const completeWhileHidden of [false,true]) {
   store.dispose();
 }
 console.log('PASS detached reply pagination reconciles on reopen before and after completion');
+{
+  let slots=[],index=0,tree,calls=[],fail=false;
+  const React={useState(v){const i=index++;if(!(i in slots))slots[i]=v;return [slots[i],n=>{slots[i]=typeof n==='function'?n(slots[i]):n;}];},useRef(v){const i=index++;return slots[i]??={current:v};},useEffect(fn){const i=index++;if(!slots[i]){slots[i]=true;fn();}}};
+  const jsx=(type,props)=>({type,props});const api=createComments({React,jsxRuntime:{jsx,jsxs:jsx},resolveEndpoint(){},installStyles(){},danmaku:{},emojis:{}});
+  const store={async read(resource,params){calls.push(params.cursor);if(fail){fail=false;throw Error('offline');}return {items:[{id:'one',author:'one',text:'one',likes:0,replies:0}],cursor:'p2',has_more:true};}};
+  function render(){index=0;tree=api.Comment({item:{id:'parent',author:'owned',text:'parent',likes:0,replies:2},endpoint:{},store,replies:true});}
+  function nodes(n){return Array.isArray(n)?n.flatMap(nodes):n&&typeof n==='object'?[n,...nodes(n.props?.children)]:[];}
+  function button(t){render();const b=nodes(tree).find(n=>n.type==='button'&&String(n.props.children).includes(t));assert(b,t);return b;}
+  const flush=async()=>{await new Promise(setImmediate);render();};
+  button('查看').props.onClick();await flush();button('收起回复').props.onClick();fail=true;button('查看').props.onClick();await flush();
+  button('重试').props.onClick();await flush();assert.deepEqual(calls,['','',''],'retry uses the failed first-page cursor');
+}
+console.log('PASS failed reply cursor is retained across stale-page retries');

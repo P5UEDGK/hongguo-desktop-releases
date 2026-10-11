@@ -132,7 +132,8 @@ function SocialSession({session, media}) {
   O.useEffect(() => () => store.dispose(), [store]);
   const [stats, setStats] = O.useState(null), [statsError, setStatsError] = O.useState('');
   const [tab, setTab] = O.useState('episodes'), [page, setPage] = O.useState(null);
-  const [error, setError] = O.useState(''), [busy, setBusy] = O.useState(false);
+    const [error, setError] = O.useState(''), [busy, setBusy] = O.useState(false);
+    const failedCursor = O.useRef('');
   const [refresh, setRefresh] = O.useState(0), [metricsRefresh, setMetricsRefresh] = O.useState(0);
   const consumedMetricsRefresh = O.useRef(0);
   const consumedCommentsRefresh = O.useRef(0);
@@ -189,7 +190,7 @@ function SocialSession({session, media}) {
   }, [key, tab, refresh, commenting]);
   async function load(cursor = '', own = current.current) {
     if (!own || own.busy || own.abort.signal.aborted) return;
-    own.busy = true; setBusy(true); setError('');
+    own.busy = true; failedCursor.current = cursor; setBusy(true); setError('');
     try {
       const result = await store.read('comments', {kind: tab, cursor});
       if (current.current !== own) return;
@@ -235,7 +236,7 @@ function SocialSession({session, media}) {
       page?.items.map(item => b.jsx(DesktopSocialComment, {item, endpoint, store, replies: tab === 'episode'}, key + tab + item.id)),
       page && !page.items.length && b.jsx('p', {className: 'desktop-social-status', children: '暂无评论'}),
       error && b.jsxs('p', {className: 'desktop-social-error', role: 'status', children: [error, ' ', b.jsx('button', {
-        onClick: () => load(page?.cursor || ''), children: '重试'})]}),
+        onClick: () => load(failedCursor.current), children: '重试'})]}),
       busy && b.jsx('p', {className: 'desktop-social-status', role: 'status', children: '正在加载…'}),
       page?.has_more && b.jsx('button', {disabled: busy, onClick: () => load(page.cursor), children: '加载更多评论'})]})]});
 }
@@ -244,6 +245,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
   const [open, setOpen] = O.useState(false), [page, setPage] = O.useState(null);
   const [busy, setBusy] = O.useState(false), [error, setError] = O.useState('');
   const own = O.useRef(null);
+  const failedCursor = O.useRef('');
   O.useEffect(() => {
     own.current = {abort: new AbortController(), busy: false};
     return () => {own.current.abort.abort();};
@@ -251,7 +253,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
   async function load(cursor = '') {
     const request = own.current;
     if (!request || request.busy || request.abort.signal.aborted) return;
-    request.busy = true; setBusy(true); setError('');
+    request.busy = true; failedCursor.current = cursor; setBusy(true); setError('');
     try {
       const params = {comment_id:item.id, cursor};
       const result = await (store ? store.read('replies', params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
@@ -270,7 +272,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
       page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, store, replies: false}, row.id)),
       page && !page.items.length && b.jsx('p', {children: '暂无回复'}),
       busy && b.jsx('p', {role: 'status', children: '正在加载回复…'}),
-      error && b.jsxs('p', {role: 'status', children: [error, ' ', b.jsx('button', {onClick: () => load(page?.cursor || ''), children: '重试'})]}),
+      error && b.jsxs('p', {role: 'status', children: [error, ' ', b.jsx('button', {onClick: () => load(failedCursor.current), children: '重试'})]}),
       page?.has_more && b.jsx('button', {disabled: busy, onClick: () => load(page.cursor), children: '加载更多回复'})]})]});
 }
 
