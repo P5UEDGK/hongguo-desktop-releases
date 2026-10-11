@@ -30,8 +30,8 @@ function DesktopDanmakuSettings({media, sessionKey}) {
   const control = O.useRef(null), hovered = O.useRef(false), pointerFocus = O.useRef(false);
   const dismiss = () => {
     const active = document.activeElement;
-    const keepFocus = panel.current?.contains(active) ||
-      (!pointerFocus.current && control.current?.contains(active));
+    const keepFocus = !pointerFocus.current &&
+      (panel.current?.contains(active) || control.current?.contains(active));
     if (!hovered.current && !keepFocus) setOpen(false);
   };
   O.useEffect(() => () => clearTimeout(hoverTimer.current), []);
