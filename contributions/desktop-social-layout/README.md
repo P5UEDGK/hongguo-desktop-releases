@@ -27,7 +27,7 @@ const {Drawer,Controls,Selection}=createSocialUI({React,jsxRuntime,resolveEndpoi
 
 底部控制栏始终单行。按 `.player-stage` 可用宽度使用容器查询缩小按钮、音量滑条和间距，保留全部控制；宽屏图标按钮32×32 CSS像素，窄视频区域缩至28或20像素宽，SVG 与悬停背景居中。宿主需保留 `.player-clock`、`.player-toolbar-spacer`，倍速 select 和音量 range 作为控制栏直接子节点。原生表面按 `.player-chrome` 实际顶部预留空间，并观察控制栏高度变化，避免固定84像素造成遮挡；宿主必须把进度条和按钮放在这个容器内。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
 
-tests/run.mjs 是跨包唯一浏览器回归入口，覆盖评论前端和布局，不在两个 PR 重复维护测试。真实 Chrome headless 使用匿名 HTTP fixture；不能替代 Tauri 原生 Win32 接入验收。
+tests/run.mjs 是跨包唯一浏览器回归入口，覆盖评论前端和布局，不在两个 PR 重复维护测试。评论关闭时仅隐藏页面，后台读取及会话缓存由评论包统一管理；测试覆盖重开复用、请求合并、分页、刷新和换集取消。真实 Chrome headless 使用匿名 HTTP fixture；不能替代 Tauri 原生 Win32 接入验收。
 
 ## 验证
 
