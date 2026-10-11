@@ -105,3 +105,6 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 本轮审查回归（2026-10-12，第四批）：4242218253：MEDIA-SEQUENCE必须位于第一个媒体URI之前。
 
 修改后公共回归、待机组合180项、Chrome87项和真实libmpv字幕检查通过。暂停预加载实测触及8MiB硬上限并稳定，2x/3x恢复及释放通过。本机候选融合与安装尚未完成，上游PR尚未合并；公共测试通过不等于安装验收通过。
+
+
+时间线声明回归（2026-10-12）：4242511867：固定本机fMP4不支持DISCONTINUITY/DISCONTINUITY-SEQUENCE，拒绝其有效或异常声明，避免灰条报可播。旧代码回放失败，修改后缓存85项、可播范围31项通过。此策略适用于本包固定生成器的单时间线fMP4，本机融合与安装仍待验收。

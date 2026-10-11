@@ -9,6 +9,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from desktop_playable_range import playable_range
 
 class RangeTests(unittest.TestCase):
+    def test_discontinuous_timelines_are_unsupported(self):
+        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
+        for tag in ('#EXT-X-DISCONTINUITY','#EXT-X-DISCONTINUITY-SEQUENCE:0',
+                    '#EXT-X-DISCONTINUITY-SEQUENCE:bad','#EXT-X-DISCONTINUITY-SEQUENCE',
+                    '#EXT-X-DISCONTINUITY-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:1'):
+            for body in (original.replace('#EXTM3U\n','#EXTM3U\n'+tag+'\n',1),original+tag+'\n'):
+                with self.subTest(tag=tag):
+                    playlist.write_text(body,encoding='utf8');self.assertEqual(playable_range(self.job),[0,0])
+
     def test_media_sequence_must_be_unique_unsigned_decimal(self):
         self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
         for tag in ('#EXT-X-MEDIA-SEQUENCE:bad', '#EXT-X-MEDIA-SEQUENCE',
