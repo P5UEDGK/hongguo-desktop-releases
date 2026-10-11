@@ -14,6 +14,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     }};
   const fake=(media,url,target,callbacks,prep,transport)=>{
     const index=controllers.length;
+    media.pause?.(); // Existing windowed controller pauses synchronously at construction.
     const dispose=()=>{};dispose.seek=()=>{};
     controllers.push({target,callbacks,transport});
     // The wrapper must preserve selected transport and callback ownership.

@@ -92,7 +92,8 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     clearTimeout(watchdog);
     ready = false;
     transport?.close();
-    controller?.();
+    internalPause = true;
+    try {controller?.();} finally {internalPause = false;}
     position = target;
     origin = 0;
     transport = desktopCreateCodecFetch(force);
@@ -132,8 +133,11 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
         if (active()) callbacks[name](...args);
       };
     }
-    controller = windowed ? ek(media, url, target, wrapped, force ? null : preparation, transport)
-      : desktopLegacyHls(media, url, target, wrapped, force ? null : preparation, false, transport);
+    internalPause = true;
+    try {
+      controller = windowed ? ek(media, url, target, wrapped, force ? null : preparation, transport)
+        : desktopLegacyHls(media, url, target, wrapped, force ? null : preparation, false, transport);
+    } finally {internalPause = false;}
   }
   const onError = event => {
     if (!disposed && !retried && transport?.usedCopy() && transport.failureCode?.() !== 'source-read') {
