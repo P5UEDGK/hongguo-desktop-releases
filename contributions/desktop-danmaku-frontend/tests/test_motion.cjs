@@ -49,7 +49,7 @@ async function step(time){media.currentTime=time;frames.shift()?.();await new Pr
   assert.equal(requests.at(-1).url.searchParams.get('offset_ms'),'60000');
   assert.equal(requests.at(-1).url.searchParams.get('cursor'),'');
   stop();assert.equal(media.desktopDanmaku.length,0);assert.equal(layer.removed,true);assert.equal(events.size,0);
-  const rows=run(`desktopDanmakuRows(Array.from({length:100},(_,i)=>({id:String(i),text:'x',offset_ms:1000})))`);
+  const rows=run(`desktopDanmakuRows(Array.from({length:100},(_,i)=>({id:String(i),text:'x'+i,offset_ms:1000})))`);
   assert.equal(rows.length,3);assert.equal(new Set(rows.map(r=>r.lane)).size,3);
   const retained = run(`(()=>{const all=Array.from({length:12},(_,i)=>({id:String(i),text:'x',offset_ms:i*1600}));
     const first=desktopDanmakuRows(all);const second=desktopDanmakuRows(all.slice(3).concat({id:'late',text:'late',offset_ms:7000}),desktopDanmakuSettings(),first);

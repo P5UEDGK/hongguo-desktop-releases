@@ -93,9 +93,20 @@ function DesktopDanmakuSettings({media, sessionKey}) {
         !rows.length&&b.jsx('p',{children:enabled?'暂未加载到弹幕':'开启弹幕后加载列表'})]})]})]});
 }
 
+function desktopUniqueDanmaku(items) {
+  const ids = new Map(), seen = new Set();
+  for (const item of items) if (item.id && item.text && Number.isInteger(item.offset_ms)) ids.set(item.id, item);
+  return [...ids.values()].filter(item => {
+    // Compare full source text, before display truncation. Keep the first ID
+    // across pages so an alias cannot replace a comment already in flight.
+    const key = JSON.stringify([item.offset_ms, item.text]);
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+}
+
 function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous = [], viewportWidth = 1000, notBefore = 0) {
-  const unique = new Map();
-  for (const item of items) if (item.id && item.text && Number.isInteger(item.offset_ms)) unique.set(item.id, item);
+  const unique = new Map(desktopUniqueDanmaku(items).map(item => [item.id, item]));
   const kept = new Map(previous.filter(row => unique.has(row.id) && row.lane < settings.lanes).map(row=>[row.id,row]));
   const lanes = Array.from({length:settings.lanes},()=>[]);
   const width = text => Math.max(60,[...String(text)].slice(0,160).length*settings.fontSize);
@@ -162,8 +173,7 @@ function desktopStartDanmaku(media, endpoint, status) {
       const page = await desktopSocialRead(endpoint, 'danmaku', {offset_ms: offset, cursor: ownCursor}, request.signal);
       if (stopped || own !== generation) return;
       const receivedAt = Math.max(0, media.currentTime || 0) * 1000;
-      raw = raw.filter(item => item.offset_ms >= receivedAt - 24000).concat(page.items).slice(-600);
-      raw = [...new Map(raw.map(item=>[item.id,item])).values()];
+      raw = desktopUniqueDanmaku(raw.filter(item => item.offset_ms >= receivedAt - 24000).concat(page.items)).slice(-600);
       rows = desktopDanmakuRows(raw, settings, rows, viewport(), receivedAt); publish();
       const advance = page.next_offset_ms > offset;
       if (advance) {next = page.next_offset_ms; cursor = page.cursor;}
