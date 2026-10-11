@@ -19,6 +19,32 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_partial_caption_slot_transitions_preserve_primary_on_retry(self):
+        for phase in ('promote','restore'):
+            with self.subTest(phase=phase):
+                clock=[0];p=Player();p.properties.update({'sid':'7','sub-delay':'2'})
+                track=DanmakuTrack(clock=lambda:clock[0]);command=p.command;rejected=[False]
+                def transient(*args):
+                    target=('set','secondary-sub-delay','2') if phase=='promote' else ('set','sid','7')
+                    if args==target and not rejected[0]:rejected[0]=True;raise RuntimeError('partial transition')
+                    command(*args)
+                track.update({'danmaku':[ITEM]})
+                if phase=='promote':p.command=transient
+                track.apply(p)
+                if phase=='restore':p.command=transient;track.update({'danmaku':[]});track.apply(p)
+                self.assertTrue(track.failed);self.assertTrue(rejected[0]);clock[0]=2;track.apply(p)
+                self.assertFalse(track.failed)
+                if phase=='promote':track.close(p)
+                self.assertEqual(p.get('sid'),'7');self.assertEqual(p.get('secondary-sid'),'no')
+
+    def test_expired_vector_rows_cannot_exhaust_live_event_budget(self):
+        group={'color':[255,0,0],'alpha':1,'paths':[[[0,0],[48,0],[48,48],[0,48]]]}
+        asset={'resolution':48,'drawing':[group]*7}
+        rows=[{'text':'[x]','offset_ms':0,'motion_start_ms':-24000,'lane':0} for _ in range(293)]
+        rows.append({'text':'still visible','offset_ms':1000,'lane':0})
+        document=ass_document(rows,{**DEFAULT_SETTINGS,'duration':4},assets={'[x]':asset})
+        self.assertEqual(document.count('Dialogue:'),1);self.assertIn('still visible',document)
+
     def test_conflict_close_failure_releases_active_id_before_retry(self):
         clock=[0];p=Player();p.properties['secondary-sid']='7';track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p);old=track.track_id
         p.command('set','sid','8');p.fail_remove=True;track.apply(p)

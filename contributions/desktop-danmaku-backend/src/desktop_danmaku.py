@@ -70,6 +70,10 @@ def ass_document(items, settings=None, *, assets=None):
     for row in items:
         if row["lane"] >= settings["lanes"]:
             continue
+        origin = row.get('motion_start_ms', row['offset_ms'])
+        start, end = max(0, origin), origin + duration * 1000
+        if end <= start:
+            continue
         # ASS syntax cannot be supplied by comment text. Fullwidth equivalents
         # preserve readability, including literal backslashes and braces.
         text = row["text"].replace("\\", "＼").replace("{", "｛").replace("}", "｝")
@@ -83,10 +87,6 @@ def ass_document(items, settings=None, *, assets=None):
         event_count+=events
         width = max(60,sum(size+4 if part in assets else len(part)*size for part in parts))
         y = 25 + row["lane"] * (size + 15)
-        origin = row.get('motion_start_ms', row['offset_ms'])
-        start, end = max(0, origin), origin + duration * 1000
-        if end <= start:
-            continue
         progress = (start - origin) / (duration * 1000)
         prefix=f'Dialogue: 0,{stamp(start)},{stamp(end)},Default,,0,0,0,,'
         def movement(x,top):

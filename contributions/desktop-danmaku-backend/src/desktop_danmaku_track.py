@@ -108,13 +108,13 @@ class DanmakuTrack:
             raise RuntimeError('Secondary subtitle slot changed')
         # mpv refuses the same track in both slots. Select the overlay first,
         # then move the saved caption; assigning it before sub-add loses it.
-        self.promoted = True
         self.set_option(player, 'secondary-sub-ass-override', self.saved_options['sub-ass-override'])
         self.set_option(player, 'secondary-sub-delay', self.saved_options['sub-delay'])
         self.set_option(player, 'secondary-sub-visibility', self.saved_options['sub-visibility'])
         self.set_option(player, 'secondary-sub-pos', self.saved_options['sub-pos'])
         if str(player.get('secondary-sid')) != str(primary):
             player.command('set', 'secondary-sid', primary)
+        self.promoted = True
 
     def restore_captions(self, player, *, retain=False):
         if self.saved is None:
@@ -127,6 +127,7 @@ class DanmakuTrack:
             self.promoted = False
         if self.promoted and str(player.get('secondary-sid')) in (str(primary),str(secondary)):
             player.command('set', 'secondary-sid', secondary)
+            self.promoted = False
         if str(player.get('sid')) == str(self.track_id):
             player.command('set', 'sid', primary)
         self.restore_options(player, retain=retain)
