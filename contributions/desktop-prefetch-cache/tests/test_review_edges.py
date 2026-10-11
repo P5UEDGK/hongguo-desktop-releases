@@ -23,10 +23,10 @@ class ReviewEdges(unittest.TestCase):
         def status(_):
             entered.set();release.wait(2);return {'complete':False}
         prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',
-            encoder=encoder,source_status=status,profile_files=PROFILE_FILES)
+            encoder=encoder,source_status=status,profile_files=PROFILE_FILES,status_path=self.root/"status.json")
         self.addCleanup(prefetch.close)
         prefetch.current_source=object()
-        reader=threading.Thread(target=prefetch.snapshot);reader.start()
+        reader=threading.Thread(target=prefetch._report);reader.start()
         self.assertTrue(entered.wait(1))
         writer=threading.Thread(target=lambda:(prefetch.begin(Job('new',self.root/'job'),'1234567890123456',2),changed.set()))
         writer.start()

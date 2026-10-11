@@ -301,9 +301,15 @@ class EpisodePrefetcher:
         if self.status_path is None:
             return
         try:
+            with self.condition:
+                generation = self.generation
+            value = self.snapshot()  # Host I/O must not hold the report writer lock either.
             with self.report_guard:
+                with self.condition:
+                    if generation != self.generation:
+                        return  # Do not publish a diagnostic from an older episode.
                 temporary = self.status_path.with_suffix(".json.tmp")
-                temporary.write_text(json.dumps(self.snapshot(), ensure_ascii=False), encoding="utf-8")
+                temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
                 os.replace(temporary, self.status_path)
         except Exception:
             pass
