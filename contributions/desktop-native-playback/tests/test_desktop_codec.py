@@ -9,6 +9,8 @@ import urllib.request
 import urllib.error
 from fractions import Fraction
 from types import SimpleNamespace
+from contextlib import contextmanager
+from unittest.mock import patch
 
 import av
 from fastapi import FastAPI
@@ -83,6 +85,30 @@ class CodecTests(unittest.TestCase):
             encode_hls(self.source, self.root / 'budget', video_mode='copy', max_output_bytes=1)
         with self.assertRaises(ValueError):
             encode_hls(self.source, self.root / 'window', video_mode='copy', start_seconds=1)
+    def test_packet_copy_never_writes_past_the_hard_disk_limit(self):
+        target=self.root/'hard-limit';limit=1000
+        with self.assertRaises(EncodingBudgetExceeded):
+            encode_hls(self.source,target,video_mode='copy',max_output_bytes=limit)
+        self.assertLessEqual(sum(p.stat().st_size for p in target.iterdir() if p.is_file()),limit)
+        self.assertFalse((target/'complete.marker').exists())
+    def test_one_giant_copy_packet_is_rejected_before_disk_growth(self):
+        @contextmanager
+        def reader(*args,**kwargs):
+            with av.open(str(self.source)) as source:
+                def packets():
+                    for packet in source.demux():
+                        if packet.dts is not None:
+                            large=av.Packet(bytes(packet)*1000)
+                            large.pts,large.dts,large.time_base=packet.pts,packet.dts,packet.time_base
+                            large.stream=packet.stream;large.is_keyframe=packet.is_keyframe
+                            yield large
+                        else:yield packet
+                yield SimpleNamespace(streams=source.streams,duration=source.duration,demux=packets)
+        target=self.root/'large-packet';limit=10000
+        with patch('desktop_codec.open_media',reader),self.assertRaises(EncodingBudgetExceeded):
+            encode_hls(self.source,target,video_mode='copy',max_output_bytes=limit)
+        self.assertLessEqual(sum(p.stat().st_size for p in target.iterdir() if p.is_file()),limit)
+        self.assertFalse((target/'complete.marker').exists())
         self.assertFalse((self.root / 'cancel/complete.marker').exists())
         self.assertFalse((self.root / 'budget/complete.marker').exists())
 

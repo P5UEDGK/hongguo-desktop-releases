@@ -54,11 +54,25 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     controllers[0].callbacks.onError();assert.equal(errors,0);
     controllers[1].callbacks.onError();assert.equal(errors,1);assert.equal(controllers.length,2);
     dispose();assert.deepEqual(Object.keys(listeners),[]);
-    controllers=[];timers.clear();media.videoWidth=0;
+    controllers=[];timers.clear();media.videoWidth=1920;
+    media.getVideoPlaybackQuality=()=>({totalVideoFrames:0});
     const end=c.desktopCodecHls(media,'http://127.0.0.1',0,{onReady(){},onError(){}},null,windowed);
     controllers[0].callbacks.onReady();
     [...timers.values()].find(t=>t.delay===8000).fn();
     assert.equal(controllers.length,2,'audio-only success must fall back');end();
+    for(const proof of ['quality','callback','paused','stale-counter']){
+      controllers=[];timers.clear();let frame;
+      let frames=proof==='stale-counter'?7:0;
+      media.getVideoPlaybackQuality=()=>({totalVideoFrames:frames});
+      media.requestVideoFrameCallback=fn=>{frame=fn;return 1;};media.cancelVideoFrameCallback=()=>{};
+      const close=c.desktopCodecHls(media,'http://127.0.0.1',0,{onReady(){},onError(){}},null,windowed);
+      controllers[0].callbacks.onReady();
+      if(proof==='quality')frames=1;
+      if(proof==='callback')frame();
+      if(proof==='paused')media.pause();
+      [...timers.values()].find(t=>t.delay===8000).fn();
+      assert.equal(controllers.length,proof==='stale-counter'?2:1,proof+' must verify frames from this playback');close();
+    }
   }
   controllers=[];
   const preparingEvents={};let loadingPauses=0;
@@ -90,6 +104,14 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   await explicit.play();await flush();
   assert.equal(explicitPauses,seekPauses,'play immediately after synchronous seek/onReady is explicit user intent');
   closeExplicit();assert.equal(explicit.play,explicitPlay);
+  controllers=[];timers.clear();
+  const closeReadyPlay=c.desktopCodecHls(explicit,'http://127.0.0.1',0,{onReady(){explicit.play();},onError(){}},null);
+  explicit.pause();const readyPauses=explicitPauses;
+  controllers[0].callbacks.onReady();await flush();
+  assert.equal(explicitPauses,readyPauses,'host onReady explicit play overrides the previous pause');
+  explicit.pause();closeReadyPlay.seek(24);const afterSeekPauses=explicitPauses;await flush();
+  assert.equal(explicitPauses,afterSeekPauses,'host onReady play during synchronous seek also overrides pause');
+  closeReadyPlay();
   console.log('PASS: codec detection, negotiation, position/rate/pause, one retry, stale callbacks and missing video');
   // HLS audio copy restrictions must not prevent native HEVC selection.
   const nativeCalls=[],nativeTimers=new Map(),nativeStyles=[];let delegated=0,nativeTid=0;
@@ -181,23 +203,25 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   assert(seeks.length>0&&seeks.every(value=>value===25),'play must not replace the accepted target with seek(0)');
   assert.equal(nativeMedia.currentTime,25);stopAfterEof();await flush();
   console.log('PASS: EOF seek preserves the selected target when play resumes');
-  for (const kind of ['pause-native','pause-hls','committed-hls','mode-conflict']) {
-    nativeCalls.length=0;nativeTimers.clear();delegated=0;let selected=false,delegatedArgs;
+  for (const kind of ['pause-native','pause-hls','committed-hls','mode-conflict','committed-window-seek','conflict-window-seek']) {
+    nativeCalls.length=0;nativeTimers.clear();delegated=0;let selected=false,delegatedArgs,activeEnd;
+    const windowSeek=kind.endsWith('window-seek');
     nc.desktopCodecHls=(...args)=>{delegated++;delegatedArgs=args;return ()=>{}};
     nativeMedia.pause=function(){this.paused=true};nativeMedia.play=function(){this.paused=false;return Promise.resolve()};
     nc.fetch=async(url,init={})=>{
       url=String(url);nativeCalls.push([url,init]);let body;
       if(url.endsWith('/capabilities'))body={nativePlayback:1};
       else if(init.method==='DELETE')return {ok:true,status:204};
-      else if(url.endsWith('/mode')){selected=true;if(kind==='mode-conflict')return {ok:false,status:409};body={mode:'native'}}
+      else if(url.endsWith('/mode')){selected=true;if(kind==='mode-conflict'||kind==='conflict-window-seek')return {ok:false,status:409};body={mode:'native'}}
       else if(url.endsWith('/control'))body={revision:1};
-      else if(init.method==='POST')body={id:'d'.repeat(32)};
+      else if(init.method==='POST'){body={id:'d'.repeat(32)};if(windowSeek)activeEnd.seek(20);}
       else body={state:'complete',source:kind==='pause-hls'?{...desc,video:{contentType:'video/mp4; codecs="avc1.64001f"'}}:desc,
-        videoMode:kind==='committed-hls'||kind==='mode-conflict'&&selected?'h264':null,
+        videoMode:kind==='committed-hls'||kind==='committed-window-seek'||(kind==='mode-conflict'||kind==='conflict-window-seek')&&selected?'h264':null,
+        startSeconds:windowSeek?90:0,windowOrigin:windowSeek?90:0,
         native:selected?{state:'ready',outputReady:true,width:1920,height:1080,time:0,duration:90,paused:true,revision:100}:null};
       return {ok:true,status:200,json:async()=>body};
     };
-    const end=nc.desktopNativePlayback(nativeMedia,'http://127.0.0.1',0,{onReady(){}},null);
+    const end=nc.desktopNativePlayback(nativeMedia,'http://127.0.0.1',windowSeek?90:0,{onReady(){}},null);activeEnd=end;
     nativeMedia.pause();await flush();
     for(let n=0;n<2;n++){const entries=[...nativeTimers];nativeTimers.clear();for(const [,entry] of entries)await entry.fn();await flush()}
     if(kind==='pause-native') {
@@ -205,7 +229,11 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
       assert(controls.some(c=>c.paused===true));assert(!controls.some(c=>c.paused===false));
     } else {
       assert.equal(delegated,1,kind);assert.equal(delegatedArgs[6].paused,true);
-      if(kind!=='pause-hls') {
+      if(windowSeek){
+        assert.equal(delegatedArgs[2],20,'latest seek target is retained');
+        assert.equal(delegatedArgs[4],null,'window before target must be rebuilt instead of transferring old session');
+        assert(nativeCalls.some(([,init])=>init.method==='DELETE'),'unusable committed window is released');
+      }else if(kind!=='pause-hls') {
         assert.equal(await delegatedArgs[4].claim(),'d'.repeat(32));
         assert(!nativeCalls.some(([,init])=>init.method==='DELETE'),'committed HLS job must be transferred');
       }

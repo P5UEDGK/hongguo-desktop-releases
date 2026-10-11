@@ -50,6 +50,68 @@ def source_for(data, **kwargs):
 
 
 class StreamTests(unittest.TestCase):
+    def test_lost_validator_after_a_cached_block_rejects_new_representation(self):
+        payload = b'x' * 131072
+        first = Response(payload, 0, 65535)
+        changed = Response(b'y' * 131072, 65536, 131071)
+        changed.headers.pop('ETag')
+        source = ProgressiveSource('https://fixture.invalid/changed',
+                                   request=lambda *a, **k: next(responses), identity='changed')
+        responses = iter((first, changed))
+        self.assertEqual(source.block(0, lambda: False), payload[:65536])
+        with self.assertRaises(SourceReadError):
+            source.block(1, lambda: False)
+        self.assertTrue(changed.closed)
+        self.assertIsNone(source.pinned)
+
+    def test_validatorless_complete_response_checks_bounds_and_closes_partial_file(self):
+        for payload in (b'x' * 65535, b'x' * 65537):
+            initial = Response(b'x' * 65536, 0, 65535)
+            initial.headers.pop('ETag')
+            full = Response(payload, 0, len(payload) - 1)
+            full.status_code = 200
+            full.headers = {}
+            responses = iter((initial, full))
+            source = ProgressiveSource('https://fixture.invalid/unversioned',
+                                       request=lambda *a, **k: next(responses), identity='bounded')
+            with self.assertRaises(SourceReadError):
+                source.block(0, lambda: False)
+            self.assertTrue(initial.closed and full.closed)
+            self.assertIsNone(source.pinned)
+            self.assertFalse(source.snapshot()['complete'])
+
+    def test_validatorless_ranges_pin_one_complete_representation(self):
+        old=b'a'*131072;pinned=b'b'*131072;calls=[];responses=[]
+        def request(*args,**kwargs):
+            headers=kwargs['headers'];calls.append(dict(headers))
+            if 'Range' in headers:
+                start,end=map(int,headers['Range'][6:].split('-'))
+                response=Response(old,start,min(end,len(old)-1));response.headers.pop('ETag')
+            else:
+                response=Response(pinned,0,len(pinned)-1);response.status_code=200
+                response.headers={'Content-Length':str(len(pinned))}
+            responses.append(response);return response
+        source=ProgressiveSource('https://fixture.invalid/no-validator',request=request,identity='stable')
+        try:
+            self.assertEqual(source.block(0,lambda:False),pinned[:65536])
+            self.assertEqual(source.block(1,lambda:False),pinned[65536:])
+            self.assertEqual(len(calls),2);self.assertNotIn('Range',calls[1])
+            self.assertTrue(source.snapshot()['complete']);self.assertEqual(source.snapshot()['receivedBytes'],len(pinned))
+            self.assertTrue(all(r.closed for r in responses))
+        finally:
+            if hasattr(source,'close'):source.close()
+
+    def test_validatorless_full_input_cancel_discards_partial_pin(self):
+        stopped=threading.Event();partial=Response(b'x'*131072,0,65535);partial.headers.pop('ETag')
+        full=Response(b'x'*131072,0,131071);full.status_code=200;full.headers={}
+        def chunks(_):
+            yield b'x'*65536;stopped.set();yield b'x'*65536
+        full.iter_content=chunks
+        responses=iter((partial,full))
+        source=ProgressiveSource('https://fixture.invalid/no-validator',request=lambda *a,**k:next(responses),identity='cancel')
+        with self.assertRaises(InterruptedError):source.block(0,stopped.is_set)
+        self.assertTrue(partial.closed and full.closed);self.assertFalse(source.network_failed.is_set())
+        self.assertIsNone(source.pinned)
 
     def test_real_http_stall_over_old_three_second_timeout(self):
         payload = b'x' * 65536

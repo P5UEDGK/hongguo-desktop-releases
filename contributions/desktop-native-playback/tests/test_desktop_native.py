@@ -288,8 +288,10 @@ class NativeTests(unittest.TestCase):
 
     def test_seek_with_stale_eof_does_not_reload_or_discard_target(self):
         self.hardware_recovery(empty_eof=True,stale_seek=True)
+    def test_timeout_without_first_frame_retries_from_requested_position(self):
+        self.hardware_recovery(empty_timeout=True)
 
-    def hardware_recovery(self,empty_eof=False,stale_seek=False):
+    def hardware_recovery(self,empty_eof=False,stale_seek=False,empty_timeout=False):
         # This fault cannot be reliably provoked on every physical GPU. The
         # production NativeSession recovery is exercised with a bounded driver.
         class Driver:
@@ -308,14 +310,14 @@ class NativeTests(unittest.TestCase):
                 self.commands.append(args)
                 if args[0]=='loadfile':
                     self.loads+=1
-                    if not empty_eof:driver.events.append(Event(21,0,0,None))
-                    if self.loads==1 and not empty_eof:
+                    if not empty_eof and not empty_timeout:driver.events.append(Event(21,0,0,None))
+                    if self.loads==1 and not empty_eof and not empty_timeout:
                         def error():
                             fields=(C.c_int*2)(4,-12); driver.holds.append(fields)
                             driver.events.append(Event(7,0,0,C.cast(fields,C.c_void_p).value))
                         threading.Timer(.15,error).start()
             def get(self,key):
-                return {'hwdec-current':'d3d11va' if self.loads==1 else 'no','pause':'yes',
+                return {'hwdec-current':'d3d11va' if self.loads==1 else 'no','pause':'no' if empty_timeout else 'yes',
                         'current-vo':'gpu','video-out-params':'frame','audio-device':'auto',
                         'audio-exclusive':'no','seeking':'yes' if stale_seek else 'no',
                         'eof-reached':'yes' if empty_eof else 'no'}.get(key)
@@ -329,12 +331,16 @@ class NativeTests(unittest.TestCase):
         job=SimpleNamespace(start_seconds=0,source=self.source,duration=87,cancelled=threading.Event())
         session=NativeSession(host,job,1)
         session.forward_input=lambda _:True
-        with patch('desktop_native.Mpv',Player):
+        real_monotonic=time.monotonic;clock=[real_monotonic()]
+        def monotonic():
+            if empty_timeout:clock[0]+=1;return clock[0]
+            return real_monotonic()
+        with patch('desktop_native.Mpv',Player),patch('desktop_native.time.monotonic',monotonic):
             session.thread.start()
-            session.submit({'rate':3,'paused':True,'volume':.4})
+            session.submit({'rate':3,'paused':not empty_timeout,'volume':.4})
             if stale_seek:session.submit({'seek':25})
-            until=time.monotonic()+(.2 if stale_seek else 2)
-            while not session.snapshot().get('softwareRetried') and time.monotonic()<until: time.sleep(.01)
+            until=real_monotonic()+(.2 if stale_seek else 2)
+            while not session.snapshot().get('softwareRetried') and real_monotonic()<until: time.sleep(.01)
             session.close()
         if stale_seek:
             self.assertFalse(session.data['softwareRetried'])
@@ -345,9 +351,10 @@ class NativeTests(unittest.TestCase):
         self.assertTrue(session.data['softwareRetried'])
         player=created[0]
         self.assertEqual(player.loads,2)
-        if empty_eof:
-            self.assertIn(('set','start',job.start_seconds),player.commands)
-            self.assertEqual(session.data['state'],'failed')
+        if empty_eof or empty_timeout:
+            starts = [command[2] for command in player.commands if command[:2] == ('set','start')]
+            self.assertEqual(starts[-1],job.start_seconds,'software reload must keep the unseen requested target')
+            if not empty_timeout:self.assertEqual(session.data['state'],'failed')
             self.assertFalse(session.data.get('outputReady'))
             return
         self.assertIn(('set','start',12.5),player.commands)

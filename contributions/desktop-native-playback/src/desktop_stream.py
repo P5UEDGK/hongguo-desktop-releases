@@ -10,6 +10,7 @@ import io
 import re
 import threading
 import time
+import tempfile
 from email.utils import parsedate_to_datetime
 
 import requests
@@ -44,6 +45,8 @@ class ProgressiveSource:
         self.received = 0
         self.validator = None
         self.if_range = None
+        self.pinned = None
+        self.closed = threading.Event()
         self.network_failed = threading.Event()
         self.reading = threading.Event()
 
@@ -60,11 +63,15 @@ class ProgressiveSource:
     def snapshot(self):
         with self.guard:
             return {"kind": "progressive", "receivedBytes": self.received,
-                    "totalBytes": self.size, "complete": bool(self.size and self.received == self.size),
+                    "totalBytes": self.size, "complete": bool(not self.closed.is_set() and self.size and self.received == self.size),
                     "cachedBytes": sum(len(v) for v in self.blocks.values())}
 
     def block(self, index, cancelled):
+        caller_cancelled = cancelled
+        cancelled = lambda: self.closed.is_set() or caller_cancelled()
         with self.fetch_guard:
+            if self.closed.is_set():
+                raise SourceReadError("Media input is closed")
             if cancelled():
                 raise InterruptedError("Media read cancelled")
             with self.guard:
@@ -74,6 +81,9 @@ class ProgressiveSource:
             start = index * self.block_size
             if self.size and start >= self.size:
                 return b""
+            if self.pinned is not None:
+                self.pinned.seek(start)
+                return self.pinned.read(self.block_size)
             end = start + self.block_size - 1
             headers = {"Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"}
             if self.if_range:
@@ -104,7 +114,7 @@ class ProgressiveSource:
                 with self.guard:
                     self.size, self.validator = total, validator
                     self.blocks[index] = value
-                    if index not in self.seen:
+                    if self.pinned is None and index not in self.seen:
                         self.seen.add(index)
                         self.received += len(value)
                     while len(self.blocks) > self.max_blocks:
@@ -134,6 +144,13 @@ class ProgressiveSource:
             validator = response.headers.get("ETag") or response.headers.get("Last-Modified")
             if self.validator and validator != self.validator:
                 raise SourceReadError("Provider media changed")
+            if not validator:
+                # Length alone cannot identify a representation. Discard the
+                # unversioned range and pin a single complete HTTP response.
+                response.close();response=None
+                self._pin(total,cancelled)
+                self.pinned.seek(start)
+                return self.pinned.read(last-first+1),total,self.validator
             data = bytearray()
             for chunk in response.iter_content(16384):
                 if cancelled():
@@ -156,6 +173,46 @@ class ProgressiveSource:
         finally:
             if response is not None:
                 response.close()
+
+    def _pin(self, total, cancelled):
+        response = None
+        pinned = tempfile.TemporaryFile(mode="w+b")
+        try:
+            response = self._request("GET",self._url,headers={"Accept-Encoding":"identity"},
+                                     stream=True,timeout=(3,10))
+            if response.status_code != 200:
+                raise SourceReadError("Provider complete media unavailable")
+            length = response.headers.get("Content-Length")
+            if length is not None and (not re.fullmatch(r"[0-9]+",length) or int(length)!=total):
+                raise SourceReadError("Provider media length changed")
+            received = 0;digest = hashlib.sha256()
+            for chunk in response.iter_content(self.block_size):
+                if cancelled():
+                    raise InterruptedError("Media read cancelled")
+                if len(chunk)>total-received:
+                    raise SourceReadError("Provider complete media exceeded its bounds")
+                pinned.write(chunk);digest.update(chunk);received+=len(chunk)
+            if cancelled():
+                raise InterruptedError("Media read cancelled")
+            if received!=total:
+                raise SourceReadError("Incomplete provider media")
+            with self.guard:
+                self.pinned = pinned
+                self.received = total
+                self.validator = "pinned-sha256:"+digest.hexdigest()
+                self.if_range = None
+        except BaseException:
+            pinned.close()
+            raise
+        finally:
+            if response is not None:response.close()
+
+    def close(self):
+        """The source owner calls this after its last reader/job is released."""
+        self.closed.set()
+        with self.fetch_guard,self.guard:
+            if self.pinned is not None:self.pinned.close();self.pinned=None
+            self.blocks.clear()
 
     def reader(self, cancelled=lambda: False):
         return RangeReader(self, cancelled)

@@ -7,7 +7,7 @@ from pathlib import Path
 from fractions import Fraction
 import math
 from desktop_stream import open_media
-from desktop_hls_budget import EncodingBudgetExceeded, video_budget_options
+from desktop_hls_budget import EncodingBudgetExceeded, video_budget_options, OutputBudget
 from desktop_codec import aac_lc
 
 
@@ -73,7 +73,8 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
             if movie_clock > 2147483647:
                 raise ValueError("Unsupported desktop movie clock")
             options["hls_segment_options"] = f"movie_timescale={movie_clock}"
-        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options) as writer:
+        budget = OutputBudget(directory,max_output_bytes,cancelled)
+        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options,io_open=budget.open) as writer:
             video = writer.add_stream("libx264", rate=rate)
             video.width = original.codec_context.width
             video.height = original.codec_context.height
@@ -88,7 +89,8 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
             }
             video.codec_context.options.update(video_budget_options(
                 max(0, full_duration - start_seconds) if full_duration else None,
-                [stream.codec_context.bit_rate for stream in reader.streams.audio],
+                [stream.codec_context.bit_rate if aac_lc(stream.codec_context) else 128000
+                 for stream in reader.streams.audio],
                 max_output_bytes))
             buffered_video = None
             def push_video(encoded):
@@ -110,7 +112,8 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
                     audio[stream.index] = writer.add_stream_from_template(stream)
                 else:
                     output = writer.add_stream("aac", rate=48000)
-                    output.layout = stream.codec_context.layout.name
+                    layout = stream.codec_context.layout
+                    output.layout = {1:"mono",2:"stereo"}.get(len(layout.channels),layout.name)
                     output.bit_rate = 128000
                     output.codec_context.options = {"profile": "aac_low"}
                     audio[stream.index] = output
@@ -206,6 +209,7 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
                 if not buffered_video.duration:
                     buffered_video.duration = max(1, round(float(1 / rate / buffered_video.time_base)))
                 writer.mux(buffered_video)
+    budget.check()
     playlist = (directory / "index.m3u8").read_text(encoding="utf-8")
     if "#EXT-X-ENDLIST" not in playlist or not (directory / "seg000000.m4s").is_file():
         raise ValueError("No complete desktop segments")

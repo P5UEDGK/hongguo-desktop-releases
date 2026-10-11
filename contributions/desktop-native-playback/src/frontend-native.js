@@ -1,3 +1,17 @@
+function desktopNativeSurfaceRect(media) {
+  const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
+  const stage = media.closest('.player-stage') || media.parentElement;
+  const chrome = stage?.querySelector?.('.player-chrome');
+  const style = chrome && typeof getComputedStyle === 'function' ? getComputedStyle(chrome) : null;
+  const hidden = chrome?.hidden || style?.display === 'none' || style?.visibility === 'hidden' ||
+    style?.visibility === 'collapse' || style?.opacity === '0';
+  const controls = chrome?.getBoundingClientRect();
+  const reserved = hidden ? 0 : controls?.height > 0 ? rect.top + rect.height - controls.top : 84;
+  const bar = Math.min(Math.max(0, reserved), Math.max(0, rect.height - 1));
+  return [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+    Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
+}
+
 function desktopNativePlayback(media, url, initialPosition, callbacks, preparation, windowed = false) {
   if (typeof ResizeObserver !== 'function') return desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed);
   const endpoint = w0(url);
@@ -5,11 +19,12 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   let disposed = false, delegated = null, id = null, native = false, restored = false;
   let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
   let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
-  let resize = null, lastRect = '', generation = 0, seekPending = null;
+  let resize = null, chromeChanges = null, lastRect = '', generation = 0, seekPending = null;
   let reportedSeek = false, fallbackStarted = false;
   let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
     rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
     seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
+  let requestedStart = state.time;
   const negotiationMethods = new Map();
   const negotiationPause = () => {if (!native) state.paused = true;};
   const negotiationPlay = () => {if (!native) state.paused = false;};
@@ -63,6 +78,8 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     restored = true;
     clearTimeout(timer); clearTimeout(controlTimer);
     resize?.disconnect();
+    chromeChanges?.disconnect();
+    stage?.removeEventListener?.('transitionend', layout);
     document.removeEventListener('fullscreenchange', layout);
     document.removeEventListener('visibilitychange', layout);
     stage?.classList.remove('desktop-native-playback');
@@ -108,6 +125,12 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     await release(old);
     if (!disposed) {callbacks.onComplete?.(false); callbacks.onError?.();}
   }
+  function delegateCommittedHls(status) {
+    const start = Math.max(requestedStart, ...[status.startSeconds,status.windowOrigin].filter(Number.isFinite));
+    const usable = state.time + .05 >= start;
+    if (!usable) {preparation?.dispose();preparation=null;}
+    return delegate(false,usable);
+  }
   function queue(command) {
     if (disposed || !native || fallbackStarted) return;
     Object.assign(pending, command);
@@ -131,11 +154,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   function layout() {
     if (!native || !stage) return;
     const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
-    // Keep the existing timeline, volume, speed and fullscreen buttons above
-    // the native surface; the reserved band is part of the current stage.
-    const bar = Math.min(84, Math.max(0, rect.height - 1));
-    const bounds = [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
-      Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
+    const bounds = desktopNativeSurfaceRect(media);
     const visible = !document.hidden && rect.width > 0 && rect.height > 0;
     const signature = JSON.stringify([bounds, visible]);
     if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible});}
@@ -190,6 +209,13 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     }});
     stage?.classList.add('desktop-native-playback');
     resize = new ResizeObserver(layout); resize.observe(media);
+    const chrome = stage?.querySelector?.('.player-chrome');
+    if (chrome) resize.observe(chrome);
+    if (stage && typeof MutationObserver === 'function') {
+      chromeChanges = new MutationObserver(layout);
+      chromeChanges.observe(stage, {attributes:true, subtree:true, attributeFilter:['class','style','hidden']});
+    }
+    stage?.addEventListener?.('transitionend', layout);
     document.addEventListener('fullscreenchange', layout);
     document.addEventListener('visibilitychange', layout);
     layout();
@@ -255,6 +281,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       if (disposed) return;
       if (capability.nativePlayback !== 1) {delegate(false); return;}
       const sourceUrl = new URL(endpoint.url);
+      requestedStart = state.time;
       if (state.time > 0) sourceUrl.searchParams.set('start_seconds', state.time);
       const created = await fetch(sourceUrl, {...options, method: 'POST',
         headers: {...headers, 'x-desktop-codec-negotiation': '1'}});
@@ -269,7 +296,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         const result = await request('/' + id + '/status');
         if (result.state === 'failed') throw Error('Source preparation failed');
         if (result.source) {
-          if (['h264', 'copy'].includes(result.videoMode)) {delegate(false, true); return;}
+          if (['h264', 'copy'].includes(result.videoMode)) {delegateCommittedHls(result); return;}
           metadata = result.source; break;
         }
         await new Promise(resolve => setTimeout(resolve, 250));
@@ -285,7 +312,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         if (error.status !== 409) throw error;
         const latest = await request('/' + id + '/status');
         if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
-        delegate(false, true); return;
+        delegateCommittedHls(latest); return;
       }
       if (disposed) return;
       preparation?.dispose();

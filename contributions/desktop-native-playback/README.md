@@ -10,6 +10,8 @@ HEVC 先实际尝试硬解，失败后只重试一次软解；软解失败或持
 
 宿主只在后台解析媒体，返回已完成本地 Path 或 `ProgressiveSource(url, request=authorized_request, identity=stable_id, key=authorized_content_key)`。本包不实现上游 API 或密钥获取。复用完整原片前必须确认写入已完成；不能把后台正在写的非空文件当缓存，也不要等待旧下载锁才能启动新选的一集。Range 内存16MiB、原生包内存32MiB；第三方临时磁盘缓存由后续暂停补丁开启。
 
+源缺少 ETag 和 Last-Modified 时，不拼接多次 Range 响应：丢弃探测块，从单次完整响应写入临时文件，再供同一源的 reader 读取。文件最多为已校验的输入长度（上限2GiB），取消、短读或超长响应会丢弃未完成文件。这种源需要先完成下载，不能承诺渐进首帧。宿主若长期保留 source，最后一个使用者退出后调用 `source.close()`；共享源仍有 reader/job 时不能提前关闭。
+
 用 `NativeHost(parent_pid=owned_desktop_pid, dll_path=verified_dll)` 创建原生宿主，交给 `HlsJobs(..., native=native)`；`make_router` 必须使用宿主会话鉴权并仅监听本机回环。source接口、控制、status、DELETE都属于该job。所有成功、失败、切集、超时和退出路径必须释放原生音频/窗口、Range源及会话目录。不得接收客户端指定进程、HWND、文件、设备、mpv命令或解密密钥。
 
 需共同接入 #187 的两个模块。渐进当前源使用 `source_loader`；后三集使用完整文件 `download_loader`，并传 `source_status=desktop_stream.source_progress`。source加载、描述轨道及native模式选择都发生在编码槽之前；原生播放不占编码槽。只有copy/h264编码前取得槽，finally始终调用finish，取消旧会话先于启动新会话。
@@ -27,6 +29,7 @@ Windows x64、Python3.11、Node18+。安装 `requirements-test.txt`；将 #187 �
 ```pwsh
 pwsh -NoProfile -Command "python -I contributions/desktop-native-playback/tests/run.py --prefetch-package <prefetch-contribution-dir>"
 pwsh -NoProfile -Command "node contributions/desktop-native-playback/tests/test_frontend.cjs"
+pwsh -NoProfile -Command "node contributions/desktop-native-playback/tests/test_native_geometry.cjs"
 ```
 
 Node覆盖轨道协商、位置/暂停/倍速恢复、只回退一次、旧回执与源失败不误转码。新增真实合成Opus输入转AAC-LC、seek共同时间原点、取消和预算回归；已有AAC继续直拷。新增两个确定性取消竞争测试，防止DELETE后prepare注册残留会话。公开fixture是合成媒体及公开测试密钥，不含提供方视频。硬解失败由受控驱动测试，未人为破坏真实GPU。
@@ -64,3 +67,9 @@ HLS准备中的播放器自动暂停不改变用户意图；显式暂停调用�
 画面单击修复：输入桥同时接管外层 STATIC 与渲染子窗口，外层 WM_NCHITTEST 返回 HTCLIENT，避免默认 HTTRANSPARENT 让真实点击穿透。事件仍转交宿主已有 WebView 播放处理。Python 53 项中 52 通过、1 项可选样例跳过；真实 Windows SendInput 验证暂停、继续及窗口模式通过，桌面社交组合回归 81 项通过。
 
 控制栏自动显隐修复：移除原生激活时强制控制栏永久显示的样式及其节点，沿用宿主已有的鼠标、暂停与键盘聚焦状态。Node 回归通过；候选 WebView2 91 项通过，覆盖真实鼠标移动显示、播放静止后隐藏、暂停显示、键盘聚焦，以及普通和播放窗口的置顶状态。社交布局补丁需使用 #210 同步适配后的版本。
+
+本轮继续修复：宿主 `onReady` 内显式播放生效；copy watchdog 使用本轮解码帧或帧回调，旧画面的尺寸和计数不能证明新视频已显示。无首帧超时重试保留请求位置，协商中向前面的时间点 seek 会释放不覆盖该位置的 HLS 窗口。PCM 等非直拷音频按 AAC 输出码率规划预算，单/双声道布局规范化。copy 与编码输出均由 I/O sink 在每次写盘前限制总预算，包含超大单包及 trailer；失败不产生完整标记。
+
+原生表面通过 `desktopNativeSurfaceRect` 读取实际控制栏位置和可见状态，隐藏后填满媒体区域；观察尺寸、class/style/hidden 与 transitionend，恢复播放或全屏时沿用同一算法。#213 和 #210 的下游补丁需同步适配本轮基线，避免覆盖此几何算法。
+
+本轮公开 Python 61 项均有通过记录（默认全量中1项 HEVC 可选测试另以已有自有素材补测通过），两组 Node 回归通过；五个缺陷输入和前端回归在旧 HEAD 失败。新改动尚待完整下游组合、本机候选和安装验证，不能据此宣称发行版已修复。

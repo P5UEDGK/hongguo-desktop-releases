@@ -533,7 +533,7 @@ class NativeSession:
                         or not output_ready and not buffering and now - initial > 10):
                     if progressive and self.job.source.network_failed.is_set():
                         raise SourceReadError("Native media input timed out")
-                    retry_software()
+                    retry_software(no_frame=not frame_ready)
                     continue
                 with self.guard:
                     self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",

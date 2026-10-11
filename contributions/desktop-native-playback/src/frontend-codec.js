@@ -58,11 +58,11 @@ function desktopCreateCodecFetch(forceH264 = false) {
 function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
   let disposed = false, retried = false, epoch = 0, controller, transport;
   let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
-  let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false, internalPlay = false;
+  let rate = media.playbackRate || 1, watchdog, frameToken, watchPlayback = () => {}, pauseUntil = 0, internalPause = false, internalPlay = false;
   const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
   const savedPlay = Object.getOwnPropertyDescriptor(media, "play"), originalPlay = media.play;
   const play = function(...args) {
-    if (!internalPause && !internalPlay) {wantedPlaying = true; pauseUntil = 0;}
+    if (!internalPause && !internalPlay) {wantedPlaying = true; pauseUntil = 0; if (ready) watchPlayback();}
     return originalPlay.apply(media, args);
   };
   if (typeof originalPlay === "function") Object.defineProperty(media, "play", {configurable:true, writable:true, value:play});
@@ -78,6 +78,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (!ready || internalPlay) return;
     if (Date.now() < pauseUntil) {media.pause(); return;}
     wantedPlaying = true;
+    watchPlayback();
   };
   const onPause = () => {if (ready && !internalPause) wantedPlaying = false;};
   const onPreparingPlaying = () => {
@@ -96,6 +97,8 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   function start(force, target) {
     const ownEpoch = ++epoch;
     clearTimeout(watchdog);
+    if (frameToken !== undefined) media.cancelVideoFrameCallback?.(frameToken);
+    frameToken = undefined;
     ready = false;
     transport?.close();
     internalPause = true;
@@ -104,24 +107,40 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     origin = 0;
     transport = desktopCreateCodecFetch(force);
     const active = () => !disposed && epoch === ownEpoch;
+    let decoded = false;
+    const frameCount = () => {
+      try {return media.getVideoPlaybackQuality?.().totalVideoFrames ?? media.webkitDecodedFrameCount ?? 0;}
+      catch {return media.webkitDecodedFrameCount || 0;}
+    };
+    const previousFrames = frameCount();
+    watchPlayback = () => {
+      clearTimeout(watchdog);
+      if (transport.usedCopy()) watchdog = setTimeout(() => {
+        const frames = frameCount();
+        const newFrames = frames > 0 && frames !== previousFrames;
+        if (active() && wantedPlaying && !decoded && !newFrames) fallback();
+      }, 8000);
+    };
     const wrapped = {...callbacks,
       onReady() {
         if (!active()) return;
         ready = true;
-        // The legacy controller invokes play synchronously after onReady.
+        media.playbackRate = rate;
+        const preparingPause = internalPause;
+        internalPause = false;
+        try {callbacks.onReady();} finally {internalPause = preparingPause;}
+        // Only the legacy controller's following startup play is internal;
+        // explicit play inside the host callback must update user intent.
         internalPlay = true;
         queueMicrotask(() => {internalPlay = false;});
-        media.playbackRate = rate;
-        callbacks.onReady();
         if (!wantedPlaying) {
           pauseUntil = Date.now() + 500;
           queueMicrotask(() => {if (active() && !wantedPlaying) media.pause();});
         }
         // A media element can play audio while silently failing video decoding.
-        clearTimeout(watchdog);
-        if (transport.usedCopy()) watchdog = setTimeout(() => {
-          if (active() && !media.videoWidth) fallback();
-        }, 8000);
+        if (frameToken !== undefined) media.cancelVideoFrameCallback?.(frameToken);
+        frameToken = media.requestVideoFrameCallback?.(() => {if (active()) decoded = true;});
+        watchPlayback();
       },
       onWindowOrigin(value) {if (active()) {origin = value; callbacks.onWindowOrigin?.(value);}},
       onAcceptanceHlsTransition(event) {
@@ -165,6 +184,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (disposed) return;
     disposed = true; epoch++;
     clearTimeout(watchdog);
+    if (frameToken !== undefined) media.cancelVideoFrameCallback?.(frameToken);
     transport?.close(); controller?.(); preparation?.dispose();
     media.removeEventListener('play', onPlay);
     media.removeEventListener('pause', onPause);

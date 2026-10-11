@@ -12,6 +12,27 @@ from desktop_codec import aac_lc
 
 
 class AudioFallbackTests(unittest.TestCase):
+    def test_pcm_input_uses_aac_output_bitrate_for_budget(self):
+        pcm=self.root/'pcm.mkv'
+        with av.open(str(self.source)) as reader,av.open(str(pcm),'w') as writer:
+            video=writer.add_stream_from_template(reader.streams.video[0])
+            audio=writer.add_stream('pcm_s16le',rate=48000);audio.layout='stereo'
+            resampler=av.AudioResampler(format='s16',layout='stereo',rate=48000)
+            for packet in reader.demux():
+                if packet.stream.type=='video':
+                    if packet.dts is not None:packet.stream=video;writer.mux(packet)
+                else:
+                    for frame in packet.decode():
+                        for converted in resampler.resample(frame):
+                            for encoded in audio.encode(converted):writer.mux(encoded)
+            for converted in resampler.resample(None):
+                for encoded in audio.encode(converted):writer.mux(encoded)
+            for encoded in audio.encode(None):writer.mux(encoded)
+        with av.open(str(pcm)) as reader:self.assertGreater(reader.streams.audio[0].codec_context.bit_rate,128000)
+        target=self.root/'pcm-output';encode_hls(pcm,target,max_output_bytes=512*1024)
+        with av.open(str(target/'index.m3u8')) as media:
+            self.assertEqual(media.streams.audio[0].codec_context.name,'aac')
+            self.assertTrue(list(media.decode(audio=0)))
     def test_only_qualified_aac_lc_can_be_copied(self):
         self.assertTrue(aac_lc(SimpleNamespace(name='aac',extradata=b'\x12\x10',profile='LC')))
         for extra,profile in ((b'',None),(b'\x12',None),(b'\x2b\x92','HE-AAC'),

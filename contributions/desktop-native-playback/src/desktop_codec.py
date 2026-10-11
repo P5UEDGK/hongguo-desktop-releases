@@ -58,7 +58,7 @@ def copy_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fals
         raise ValueError("Packet copy requires a full source window")
     import av
     from desktop_hls import EncodingCancelled
-    from desktop_hls_budget import EncodingBudgetExceeded
+    from desktop_hls_budget import EncodingBudgetExceeded, OutputBudget
 
     directory = Path(directory)
     directory.mkdir(parents=False, exist_ok=False)
@@ -79,7 +79,8 @@ def copy_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fals
             raise ValueError("Unsupported desktop movie clock")
         options.update(avoid_negative_ts="disabled",
                        hls_segment_options=f"avoid_negative_ts=disabled:movie_timescale={clock}")
-        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options) as writer:
+        budget = OutputBudget(directory,max_output_bytes,cancelled)
+        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options,io_open=budget.open) as writer:
             streams = {}
             for stream in reader.streams:
                 if stream.type not in ("video", "audio"):
@@ -104,6 +105,7 @@ def copy_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fals
                 if not ready and (directory / "index.m3u8").is_file():
                     ready = True
                     on_ready()
+    budget.check()  # FFmpeg may suppress a callback error while writing trailers.
     if cancelled():
         raise EncodingCancelled()
     playlist = (directory / "index.m3u8").read_text(encoding="utf-8")
