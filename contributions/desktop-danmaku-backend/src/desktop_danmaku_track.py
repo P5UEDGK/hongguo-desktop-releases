@@ -24,10 +24,11 @@ class DanmakuTrack:
     def update(self, command):
         items = validate_danmaku(command['danmaku']) if 'danmaku' in command else self.items
         settings = validate_settings(command['danmakuSettings']) if 'danmakuSettings' in command else self.settings
+        cleared = 'danmaku' in command and bool(self.items) and not items
         if items != self.items or settings != self.settings or self.failed:
             self.items, self.settings = items, settings
             self.dirty = True
-            if not items: self.retry_at = 0
+            if cleared: self.retry_at = 0
 
     def source_reloaded(self):
         # Old IDs belong to the discarded file, never remove them in the new one.
@@ -77,9 +78,13 @@ class DanmakuTrack:
             return
         live = player.get('sid') or 'no'
         secondary = player.get('secondary-sid') or 'no'
+        if self.promoted and not self.selected(secondary):
+            self.saved = ('no', self.saved[1], self.saved[2])
+            self.promoted = False
         if str(live) != str(self.track_id):
             if self.selected(live) and self.selected(secondary) and (
                     not self.promoted or str(secondary) != str(self.saved[0])):
+                self.close(player)
                 raise RuntimeError('Both subtitle slots are in use')
             if self.promoted and str(secondary) == str(self.saved[0]):
                 player.command('set', 'secondary-sid', self.saved[1])
@@ -116,6 +121,10 @@ class DanmakuTrack:
             if self.saved_options is not None: self.restore_options(player)
             return
         primary, secondary, override = self.saved
+        if self.promoted and not self.selected(player.get('secondary-sid')):
+            primary = 'no'
+            self.saved = (primary, secondary, override)
+            self.promoted = False
         if self.promoted and str(player.get('secondary-sid')) in (str(primary),str(secondary)):
             player.command('set', 'secondary-sid', secondary)
         if str(player.get('sid')) == str(self.track_id):
@@ -143,6 +152,8 @@ class DanmakuTrack:
 
     def apply(self, player):
         if self.track_id and str(player.get('sid')) != str(self.track_id):
+            self.dirty = True
+        if self.promoted and self.saved and str(player.get('secondary-sid')) != str(self.saved[0]):
             self.dirty = True
         if not self.dirty or self.clock() < self.retry_at and (self.track_id or self.items or self.pending_removals or self.saved_options or self.reload_options):
             return

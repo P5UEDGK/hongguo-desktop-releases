@@ -80,7 +80,7 @@ try:
         track=DanmakuTrack();track.update({'danmaku':[{'text':'relinquish overlay','offset_ms':0,'lane':1}]});track.apply(player)
         assert not track.failed and player.get('secondary-sid')==replacement
         player.command('set','secondary-sid',secondary)
-        track.update({'danmaku':[{'text':'schedule changed','offset_ms':0,'lane':1}]});track.apply(player)
+        track.apply(player)  # clean overlay must observe the changed secondary selection
         assert track.track_id is None and player.get('sid')==replacement and player.get('secondary-sid')==secondary
         assert {name:player.get(name) for name in original_options}==original_options
         print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration; no pixel or Win32 claim'}))

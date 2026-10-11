@@ -19,6 +19,39 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_clean_overlay_reconciles_changed_secondary(self):
+        p=Player();p.properties['sid']='7';track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertFalse(track.dirty);p.command('set','secondary-sid','8');track.apply(p)
+        self.assertEqual(p.get('sid'),'7');self.assertEqual(p.get('secondary-sid'),'8');self.assertIsNone(track.track_id)
+
+    def test_clearing_promoted_caption_stays_off_through_update_and_close(self):
+        for action in ('apply','clear','close'):
+            with self.subTest(action=action):
+                p=Player();p.properties['sid']='7';track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+                p.command('set','secondary-sid','no')
+                if action=='apply':track.apply(p);track.close(p)
+                elif action=='clear':track.update({'danmaku':[]});track.apply(p)
+                else:track.close(p)
+                self.assertEqual(p.get('sid'),'no');self.assertEqual(p.get('secondary-sid'),'no')
+
+    def test_two_slot_conflict_relinquishes_overlay_and_restores_options(self):
+        p=Player();p.properties.update({'secondary-sid':'7','sub-delay':'2','sub-visibility':'no'})
+        track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p);owned=track.track_id
+        p.command('set','sid','8');track.apply(p)
+        self.assertEqual(p.get('sid'),'8');self.assertEqual(p.get('secondary-sid'),'7');self.assertIsNone(track.track_id)
+        self.assertEqual(p.get('sub-delay'),'2');self.assertEqual(p.get('sub-visibility'),'no');self.assertEqual(p.get('sub-ass-override'),'scale')
+        self.assertIn(('sub-remove',owned),p.commands)
+
+    def test_unrelated_controls_preserve_failed_restore_backoff(self):
+        clock=[0];p=Player();track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
+        track.source_reloaded();track.update({'danmaku':[]});command=p.command;attempts=[]
+        def reject(*args):
+            if args[:2]==('set','sub-ass-override'):attempts.append(args);raise RuntimeError('unavailable')
+            command(*args)
+        p.command=reject;track.apply(p)
+        for n in range(1,25):clock[0]=n*.04;track.update({'volume':.2,'paused':True});track.apply(p)
+        self.assertEqual(len(attempts),1);clock[0]=1.01;track.apply(p);self.assertEqual(len(attempts),2)
+
     def test_secondary_caption_change_relinquishes_owned_overlay(self):
         p=Player();p.properties['sid']='7';track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p);owned=track.track_id
         p.command('set','secondary-sid','8');track.update({'danmaku':[{**ITEM,'text':'updated'}]});track.apply(p)
