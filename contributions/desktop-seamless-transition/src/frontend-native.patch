@@ -1,8 +1,8 @@
 --- a/frontend/frontend-native.js
 +++ b/frontend/frontend-native.js
-@@ -11,13 +11,23 @@
-     rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
-     seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
+@@ -33,13 +33,23 @@
+     negotiationMethods.clear();
+   }
    const headers = {'x-api-key': endpoint.key};
 +  media.desktopSessionId = () => id || delegated?.sessionId?.();
    const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
@@ -10,7 +10,7 @@
 -  async function request(path, init = {}) {
 -    const response = await fetch(endpoint.origin + '/desktop/hls' + path,
 -      {...options, ...init, headers: {...headers, ...init.headers}});
--    if (!response.ok) throw Error('Desktop native session unavailable');
+-    if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
 -    return response.status === 204 ? null : response.json();
 +  async function request(path, init = {}, timeoutMs = 15000) {
 +    const abort = new AbortController();
@@ -20,7 +20,7 @@
 +        (async () => {
 +          const response = await fetch(endpoint.origin + '/desktop/hls' + path,
 +            {...options,...init,signal:abort.signal,headers:{...headers,...init.headers}});
-+          if (!response.ok) throw Error('Desktop native session unavailable');
++          if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
 +          return response.status === 204 ? null : response.json();
 +        })(),
 +        new Promise((_,reject)=>{timeout=setTimeout(()=>{abort.abort();reject(Error('Desktop request timed out'));},Math.max(1,timeoutMs));})
@@ -29,7 +29,7 @@
    }
    async function release(identifier) {
      if (!identifier) return true;
-@@ -45,7 +55,7 @@
+@@ -68,7 +78,7 @@
        if (descriptor) Object.defineProperty(media, key, descriptor);
        else delete media[key];
      }
@@ -38,16 +38,16 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -63,7 +73,7 @@
-     const stopped = await release(old);
-     if (disposed) return;
-     if (!stopped) {callbacks.onComplete?.(false);callbacks.onError?.();return;}
+@@ -93,7 +103,7 @@
+       transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
+                   dispose() {if (!claimed) {claimed = true; release(old);}}};
+     }
 -    delegated = desktopCodecHls(media, url, Math.max(0, state.time), callbacks,
 +    delegated = desktopCodecHls(media, url, Math.max(0, state.time), {...callbacks, onReady() { preparation?.finishRetained?.(); callbacks.onReady?.(); }},
-       forceH264 ? null : preparation, windowed, {forceH264, paused: state.paused});
+       transfer, windowed, {forceH264, paused: state.paused});
    }
    async function failPreparation() {
-@@ -72,7 +82,7 @@
+@@ -102,7 +112,7 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -56,7 +56,7 @@
    }
    function queue(command) {
      if (disposed || !native || fallbackStarted) return;
-@@ -120,13 +130,13 @@
+@@ -151,13 +161,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -72,7 +72,7 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -213,20 +223,31 @@
+@@ -244,20 +254,31 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -108,7 +108,7 @@
        if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid native session');
        if (disposed) {await release(identifier); return;}
        id = identifier;
-@@ -247,12 +268,34 @@
+@@ -288,12 +309,35 @@
        if (disposed) return;
        preparation?.dispose();
        patch(); poll(generation);
@@ -136,6 +136,7 @@
 -    delegated?.(); preparation?.dispose(); restore();
 -    const old = id; id = null; release(old);
 +    const retained = typeof desktopRetainPicture === 'function' && desktopRetainPicture(media);
++    preparation?.finishRetained?.();
 +    if (!id && !delegated) preparation?.cancelClaim?.();
 +    if (retained && delegated) retained(delegated); else delegated?.();
 +    preparation?.dispose(); restore();

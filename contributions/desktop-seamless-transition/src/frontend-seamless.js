@@ -38,7 +38,7 @@ function desktopPrepareNext(url, currentMedia) {
   const previous = desktopStandbys.get(currentMedia);
   previous?.dispose();
   let disposed = false, claimed = false, id = null, controller = null, video = null;
-  let mode = null, consumer = null, retained = [], retireTimer = null;
+  let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null;
   let known = {}, failed = false;
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
@@ -81,6 +81,7 @@ function desktopPrepareNext(url, currentMedia) {
     if (desktopStandbys.get(currentMedia) === preparation) desktopStandbys.delete(currentMedia);
   }
   function cleanup() {
+    clearTimeout(expiryTimer); expiryTimer = null;
     disposed = true; abort.abort(); controller?.(); video?.remove(); release(); finishRetained();
   }
   const preparation = {
@@ -95,14 +96,15 @@ function desktopPrepareNext(url, currentMedia) {
     cancelClaim: cleanup,
     claim: async () => null,
     async claimRecord(wanted, position) {
-      if (disposed || claimed || wanted !== url || position > .05) {preparation.dispose(); return null;}
-      claimed = true;
+      if (disposed || claimed || Date.now() >= deadline || wanted !== url || position > .05) {preparation.dispose(); return null;}
+      claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
       const result = await prepared;
       if (!result || disposed) {cleanup(); return null;}
       return {...result, settings:{rate:currentMedia.playbackRate || 1,
         volume:currentMedia.volume,muted:currentMedia.muted}};
     }
   };
+  expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup();}}, 90000);
   desktopStandbys.set(currentMedia, preparation);
   const callbacks = Object.fromEntries(['onTimeline','onPlayableRange','onComplete','onWindowOrigin',
     'onReady','onError','onAcceptanceHlsTransition'].map(name => [name, (...args) => {
@@ -195,7 +197,7 @@ function desktopPrepareNext(url, currentMedia) {
           for(const [name,descriptor] of saved){if(descriptor)Object.defineProperty(media,name,descriptor);else delete media[name];}
           return true;
         };
-        request('/'+id+'/activate',{method:'POST'}).then(() => {
+        request('/'+(controller?.sessionId?.() || id)+'/activate',{method:'POST'}).then(() => {
           if (disposed) return;
           return video.play();
         }).then(() => {

@@ -16,7 +16,7 @@ async function scenario(fault){
   const context={URL,Event,Number,Math,Map,AbortController,window:{devicePixelRatio:1},
     Date:{now:()=>now},ResizeObserver:class{observe(){}disconnect(){}},
     document:{hidden:false,head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
-    setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000)return 999;const id=setTimeout(()=>{now+=250;fn()},1);timers.add(id);return id;},
+    setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000||(fault==='cancel-pending'&&delay>10000))return 999;const id=setTimeout(()=>{now+=250;fn()},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id)},
     w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
     desktopCodecHls(target){
@@ -30,7 +30,7 @@ async function scenario(fault){
       if(url.endsWith('/capabilities'))body={nativePlayback:1};
       else if(url.endsWith('/mode')){selected=true;body={mode:'native'}}
       else if(url.endsWith('/control'))body={revision:10};
-      else if(url.endsWith('/activate')){activated=true;body={activated:true}}
+      else if(url.endsWith('/activate')){if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}activated=true;body={activated:true}}
       else if(url.endsWith('/status')){
         if(selected&&fault==='hung')return new Promise(()=>{});
         body={state:'complete',source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},
@@ -42,7 +42,8 @@ async function scenario(fault){
   vm.createContext(context);vm.runInContext(source,context);
   const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',0,{onReady(){},onError(){errors++}},prep);
   for(let n=0;n<80&&!errors&&!activated;n++){await tick();await new Promise(r=>setTimeout(r,1))}
-  if(fault==='success'){
+  if(fault==='cancel-pending'){dispose();await tick();assert.equal(errors,0);assert(finished>0,'cancelled adoption releases retained old picture');assert.equal(released,1);}
+  else if(fault==='success'){
     assert(activated);assert.equal(errors,0);assert.equal(released,0);assert(finished>0);
     media.currentTime=89.8;media.pause();scheduled.length=0;
     await new Promise(r=>setTimeout(r,5));await tick();
@@ -53,6 +54,6 @@ async function scenario(fault){
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of ['visible','frame','revision','hung','success','copy-fallback'])await scenario(fault);
+(async()=>{for(const fault of ['visible','frame','revision','hung','success','copy-fallback','cancel-pending'])await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exitCode=1});

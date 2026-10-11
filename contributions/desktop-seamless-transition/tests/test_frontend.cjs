@@ -13,14 +13,14 @@ class Video extends EventTarget {
 }
 async function scenario(native,fail=false,fault=null){
   const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0;
-  let confirmActivation,controllerId;
+  let confirmActivation,controllerId,now=0,expire;
   const activated=new Promise(resolve=>confirmActivation=resolve);
   const current=new Video();current.volume=.3;current.playbackRate=3;current.paused=false;
   current.desktopSessionId=()=> 'a'.repeat(32);current.stage={append:v=>{v.stage=current.stage;children.push(v);}};
   const endpoint={origin:'http://127.0.0.1:23456',url:'http://127.0.0.1:23456/desktop/hls?series_id=1234567890123456&ep=2',key:'b'.repeat(64)};
-  const context={URL,Event,Number,Math,Date,WeakMap,Proxy,Map,AbortController,window:{devicePixelRatio:1},
+  const context={URL,Event,Number,Math,Date:{now:()=>now},WeakMap,Proxy,Map,AbortController,window:{devicePixelRatio:1},
     w0:()=>endpoint,ik(){},desktopSupportsSource:async()=>true,
-    setTimeout(fn,ms){if(ms>=15000&&!fault?.startsWith('hung'))return 999;const id=setTimeout(fn,1);timers.add(id);return id;},
+    setTimeout(fn,ms){if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;const id=setTimeout(fn,1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id);},requestAnimationFrame:fn=>queueMicrotask(fn),
     document:{createElement:()=>new Video()},
     desktopCodecHls(video,url,start,callbacks,prep,windowed,state){
@@ -50,6 +50,12 @@ async function scenario(native,fail=false,fault=null){
   assert.equal(context.desktopShouldPrewarm({duration:4,desktopTimelineDuration:90,currentTime:2,playbackRate:1,readyState:4}),false);
   assert.equal(context.desktopShouldPrewarm({duration:10,desktopTimelineDuration:90,desktopTimeOrigin:80,currentTime:2,playbackRate:1,readyState:4}),true);
   const prep=context.desktopPrepareNext(endpoint.url,current);
+  if(fault==='late-claim'||fault==='idle-expiry'){
+    await tick();now=90001;if(fault==='idle-expiry')expire();
+    const record=await prep.claimRecord(endpoint.url,0);await tick();
+    assert.equal(record,null);assert.equal(released,1);if(!native)assert(children[0].removed);
+    for(const timer of timers)clearTimeout(timer);return;
+  }
   const record=await prep.claimRecord(endpoint.url,0);
   if(fail||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);for(const timer of timers)clearTimeout(timer);return;}
   assert(record);assert.equal(record.settings.volume,.3);assert.equal(record.settings.rate,3);
@@ -66,6 +72,7 @@ async function scenario(native,fail=false,fault=null){
     media.addEventListener('ended',()=>ended++);
     prep.retain(()=>started++);
     let timeline;
+    if(fault==='replacement-id')controllerId='d'.repeat(32);
     const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d},()=>{
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);
@@ -79,7 +86,8 @@ async function scenario(native,fail=false,fault=null){
     children[0].dispatchEvent(new Event('ended'));assert.equal(ended,1);
     dispose.seek(7);assert.equal(media.currentTime,7);
     await tick();assert.equal(media.paused,true);assert.equal(started,1,'retain old picture until activation is acknowledged');
-    if(fault){
+    if(fault==='replacement-id')assert(calls.some(c=>c.url.endsWith('/'+'d'.repeat(32)+'/activate')));
+    if(fault&&fault!=='replacement-id'){
       if(fault==='cancel')dispose();
       confirmActivation();await tick();
       assert.equal(errors,0);assert.equal(fallbacks,fault==='cancel'?0:1);
@@ -93,7 +101,7 @@ async function scenario(native,fail=false,fault=null){
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['activate','play','cancel','hung-status','hung-json'])await scenario(false,false,fault);
+  for(const fault of ['activate','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});
