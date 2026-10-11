@@ -64,7 +64,7 @@ function DesktopSocialControls({media, sessionKey}) {
       'aria-controls': 'desktop-social-drawer', title: '评论、点赞数和收藏数',
       onClick: async () => {
         if (!social && document.fullscreenElement) try {await document.exitFullscreen();} catch {}
-        desktopSocialSet(media.current, {social: !social, tab: 'episode'});
+        desktopSocialSet(media.current, {social: true, tab: social ? 'episodes' : 'episode'});
       }, children: '评论'}),
   ]});
 }
@@ -146,12 +146,13 @@ function SocialSession({session, media}) {
     b.jsxs('div', {className: 'desktop-social-tabs', role: 'tablist', 'aria-label': '抽屉内容', children: [
       ...[['episodes', '选集'], ['episode', '本集评论'], ['series', '整剧剧评']].map(([name, label]) => b.jsx('button', {
         role: 'tab', 'aria-selected': tab === name, onClick: () => desktopSocialSet(media.current, {social: true, tab: name}), children: label}, name))]}),
-    b.jsx('button', {className: 'desktop-social-close', 'aria-label': '关闭右侧抽屉', title: '关闭右侧抽屉',
+    b.jsx('button', {className: 'desktop-social-close', 'aria-label': tab === 'episodes' ? '关闭右侧抽屉' : '关闭评论页面',
+      title: tab === 'episodes' ? '关闭右侧抽屉' : '关闭评论页面，返回选集',
       onClick: () => {
         const video = media.current, wasEpisodes = tab === 'episodes';
-        desktopSocialSet(video, {social: false, tab: 'episodes'});
+        desktopSocialSet(video, {social: !wasEpisodes, tab: 'episodes'});
         const player = video?.closest('.desktop-player');
-        player?.querySelector(wasEpisodes ? '.desktop-selection-open' : '.desktop-social-toggle')?.focus();
+        player?.querySelector(wasEpisodes ? '.desktop-selection-open' : '.desktop-social-tabs [role=tab]')?.focus();
       }, children: '×'})]}),
     tab !== 'episodes' && b.jsxs('div', {className: 'desktop-social-toolbar', children: [
       b.jsx('span', {children: '本集赞 ' + (stats ? stats.likes.toLocaleString('zh-CN') : '…')}),
