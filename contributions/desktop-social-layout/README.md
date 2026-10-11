@@ -23,7 +23,7 @@ const {Drawer,Controls,Selection}=createSocialUI({React,jsxRuntime,resolveEndpoi
 
 原生模式依次应用 patches/native-layout.patch、patches/native-layout-events.patch（前提为弹幕后端两个补丁）。rect/occlusion 改动立即 flush，忙碌时下一轮不延迟250ms；设置弹层在现有原生表面切出可见区域，关闭恢复。SetWindowRgn 成功后所有权交给 Windows，失败路径释放本包 GDI 对象。不复制 #204/#205 的整个播放器。
 
-抽屉取消独立标题行，关闭按钮与页签同排，在选集和两个评论页均可收起整层右列。底部直接图标按钮固定为32×32 CSS像素，SVG 与悬停背景居中；空间不足时控制栏换行，避免按钮伸入评论区。原生表面按 `.player-chrome` 实际顶部预留空间，并观察控制栏高度变化，避免固定84像素造成遮挡；宿主必须把进度条和按钮放在这个容器内。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
+抽屉取消独立标题行，关闭按钮与页签同排。仅选集页可收起整层右列；两个评论页关闭后返回选集并保持右列展开，底部评论开关再次点击也返回选集。底部直接图标按钮固定为32×32 CSS像素，SVG 与悬停背景居中；空间不足时控制栏换行，避免按钮伸入评论区。原生表面按 `.player-chrome` 实际顶部预留空间，并观察控制栏高度变化，避免固定84像素造成遮挡；宿主必须把进度条和按钮放在这个容器内。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
 
 tests/run.mjs 是跨包唯一浏览器回归入口，覆盖评论前端和布局，不在两个 PR 重复维护测试。真实 Chrome headless 使用匿名 HTTP fixture；不能替代 Tauri 原生 Win32 接入验收。
 
