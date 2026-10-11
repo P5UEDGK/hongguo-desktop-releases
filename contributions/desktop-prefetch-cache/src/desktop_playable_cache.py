@@ -60,6 +60,7 @@ class PlayableEpisodeCache:
             host = identity()
             if not isinstance(host, dict):
                 raise ValueError("Invalid source cache identity")
+            host = json.loads(json.dumps(host, sort_keys=True, allow_nan=False))
             value = {"host": host, "profile": self.profile}
         else:
             source = Path(source)
@@ -110,7 +111,7 @@ class PlayableEpisodeCache:
             raise ValueError("Artifact playlist is incomplete")
         mapped, ended, segments, pending = False, False, [], None
         for line in lines:
-            if line == "#EXT-X-GAP" or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
+            if line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
                 raise ValueError("Unsupported local artifact HLS tag")
             if line.startswith("#EXT-X-MAP:"):
                 if line != '#EXT-X-MAP:URI="init.mp4"':
@@ -217,13 +218,19 @@ class PlayableEpisodeCache:
             raise ValueError("Unowned playable cache directory")
         return children
 
-    def _remove_owned(self, directory):
+    def _remove_owned(self, directory, cancelled=lambda: False):
         children = self._owned_children(directory)
         for path in children:
+            if cancelled():
+                raise EncodingCancelled()
             path.unlink()
+        if cancelled():
+            raise EncodingCancelled()
         directory.rmdir()
 
-    def _reserve(self, needed, *, replacing=None):
+    def _reserve(self, needed, *, replacing=None, cancelled=lambda: False):
+        if cancelled():
+            raise EncodingCancelled()
         if not self.available:
             raise OSError("Playable cache is unavailable")
         if not 0 <= needed <= self.quota_bytes:
@@ -233,11 +240,15 @@ class PlayableEpisodeCache:
         entries = []
         total = 0
         for directory in self.root.iterdir():
+            if cancelled():
+                raise EncodingCancelled()
             if not re.fullmatch(r"(?:[0-9a-f]{64}|stage-[0-9a-f]{32})", directory.name) or not plain(directory) or not directory.is_dir():
                 continue
             # Unknown nested content still occupies disk, but is never evicted.
             # Fail closed on unreadable content or links rather than count it as zero.
             def size_of(path):
+                if cancelled():
+                    raise EncodingCancelled()
                 if not plain(path):
                     raise OSError("Cannot account for a linked cache entry")
                 if path.is_dir():
@@ -265,9 +276,11 @@ class PlayableEpisodeCache:
         if total + needed - sum(size for _, _, size in entries) > self.quota_bytes:
             raise OSError("Playable cache reservation cannot fit")
         for _, directory, size in sorted(entries):
+            if cancelled():
+                raise EncodingCancelled()
             if total + needed <= self.quota_bytes:
                 return
-            self._remove_owned(directory)
+            self._remove_owned(directory, cancelled)
             total -= size
         if total + needed > self.quota_bytes:
             raise OSError("Playable cache budget is exhausted")
@@ -312,9 +325,14 @@ class PlayableEpisodeCache:
                 # Stage bytes are already counted. Evict only at commit, after
                 # all cancellable copying/hashing and manifest construction.
                 metadata_bytes = sum((stage / name).stat().st_size for name in ("owner.marker", "cache.json"))
-                self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target.exists() else None)
+                self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target.exists() else None,
+                              cancelled=cancelled)
+                if cancelled():
+                    raise EncodingCancelled()
                 if target.exists():
-                    self._remove_owned(target)
+                    self._remove_owned(target, cancelled)
+                if cancelled():
+                    raise EncodingCancelled()
                 os.replace(stage, target)
                 return target
             finally:
@@ -324,14 +342,16 @@ class PlayableEpisodeCache:
     def encode(self, source, directory, on_ready=lambda: None, *, cancelled=lambda: False,
                start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264"):
         if not start_seconds:
+            restored = False
             try:
-                if self.restore(source, directory, cancelled, video_mode=video_mode):
-                    on_ready()
-                    return
+                restored = self.restore(source, directory, cancelled, video_mode=video_mode)
             except EncodingCancelled:
                 raise
             except Exception:
                 pass
+            if restored:
+                on_ready()
+                return
         if start_seconds:
             extra = {"video_mode": "copy"} if video_mode == "copy" else {}
             self.encoder(source, directory, on_ready, cancelled=cancelled,

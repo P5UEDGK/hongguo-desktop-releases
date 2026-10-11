@@ -23,6 +23,48 @@ class ReviewEdges(unittest.TestCase):
         cache.encode(Source(),target)
         self.assertTrue((target/'complete.marker').exists())
 
+    def test_json_identity_roundtrip_remains_a_cache_hit(self):
+        class Source:
+            def cache_identity(self):return {'tracks':(1,2),'rendition':{7:'HD'}}
+        cache=self.cache();source=Source();cache.store(source,self.output)
+        self.assertTrue(cache.contains(source))
+        self.assertTrue(cache.restore(source,self.root/'restored-json'))
+
+    def test_hit_ready_callback_error_does_not_encode_again(self):
+        cache=self.cache();cache.store(self.source,self.output)
+        def ready():raise RuntimeError('ready failed')
+        with patch.object(cache,'encoder') as encode:
+            with self.assertRaisesRegex(RuntimeError,'ready failed'):
+                cache.encode(self.source,self.root/'restored-callback',ready)
+            encode.assert_not_called()
+
+    def test_cancel_during_quota_scan_preserves_existing_entries(self):
+        cache=self.cache();target=cache.store(self.source,self.output)
+        cache.quota_bytes=sum(p.stat().st_size for p in target.iterdir())+65536
+        before={p.name:p.read_bytes() for p in target.iterdir()}
+        self.source.write_bytes(b'changed');stopped=threading.Event();original=Path.iterdir
+        def scan(path):
+            children=list(original(path))
+            if path==cache.root:stopped.set()
+            return iter(children)
+        with patch.object(Path,'iterdir',scan):
+            with self.assertRaises(EncodingCancelled):
+                cache.store(self.source,self.output,cancelled=stopped.is_set)
+        self.assertEqual(before,{p.name:p.read_bytes() for p in target.iterdir()})
+
+    def test_cancel_after_reservation_does_not_replace_target(self):
+        cache=self.cache();target=cache.store(self.source,self.output)
+        before={p.name:p.read_bytes() for p in target.iterdir()};stopped=threading.Event()
+        with patch.object(cache,'_reserve',side_effect=lambda *a,**k:stopped.set()):
+            with self.assertRaises(EncodingCancelled):
+                cache.store(self.source,self.output,cancelled=stopped.is_set)
+        self.assertEqual(before,{p.name:p.read_bytes() for p in target.iterdir()})
+
+    def test_iframe_only_artifact_is_not_stored_as_normal_playback(self):
+        cache=self.cache();playlist=self.output/'index.m3u8'
+        playlist.write_text(playlist.read_text(encoding='utf-8').replace('#EXTM3U\n','#EXTM3U\n#EXT-X-I-FRAMES-ONLY\n'),encoding='utf-8')
+        with self.assertRaises(ValueError):cache.store(self.source,self.output)
+
     def test_completion_callback_failure_always_releases_encoder_ownership(self):
         value=EpisodePrefetcher(lambda _:self.source,lambda _:({},[{'index':1,'vid':'10000001'}]),self.root/'cache',encoder=encoder,profile_files=PROFILE_FILES)
         self.addCleanup(value.close)
