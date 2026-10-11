@@ -283,7 +283,9 @@ class NativeSession:
         Both targets are discovered exclusively inside the owned desktop root.
         """
         user = self.host.user
-        widgets, surfaces = [], []
+        # Windows hit testing can return the outer STATIC container itself,
+        # including when the renderer has no child HWND under the pointer.
+        widgets, surfaces = [], [container]
         @self.host.enum_callback
         def collect(hwnd, _):
             name = C.create_unicode_buffer(256)
