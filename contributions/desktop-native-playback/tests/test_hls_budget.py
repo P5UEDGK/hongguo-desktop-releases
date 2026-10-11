@@ -25,3 +25,13 @@ class OutputBudgetTests(unittest.TestCase):
                 output.seek(100)
                 with self.assertRaises(EncodingBudgetExceeded):output.write(b'x')
             self.assertEqual((root/'init.mp4').stat().st_size,30)
+
+    def test_four_hour_fixed_aac_rate_preserves_viable_video_budget(self):
+        from desktop_hls_budget import video_budget_options
+        output=video_budget_options(14400,[],512*1024*1024,fixed_audio_bitrates=[128000])
+        rate=int(output['x264-params'].split(':')[0].split('=')[1])
+        self.assertGreaterEqual(rate,64)
+        with self.assertRaises(EncodingBudgetExceeded):
+            video_budget_options(14400,[128000],512*1024*1024)
+        with self.assertRaises(ValueError):
+            video_budget_options(14400,[],512*1024*1024,fixed_audio_bitrates=[True])

@@ -44,12 +44,16 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(session.desired_state(),{"paused":True})
 
     def test_sustained_output_or_decoder_frame_loss_is_detected_with_moving_clock(self):
-        for decoder in (False,True):
-            watch=FrameDropWatch();values=[]
-            for n in range(26):
-                values.append(watch.observe(n/10,0 if decoder else n*3,n*3 if decoder else 0,30,1,True))
-            self.assertTrue(any(values),'moving audio clock cannot hide sustained video loss')
-            self.assertFalse(any(values[:20]),'one early burst cannot trigger recovery')
+        watch=FrameDropWatch();values=[]
+        for n in range(26):values.append(watch.observe(n/10,0,n*3,30,1,True))
+        self.assertTrue(any(values),'moving audio clock cannot hide sustained decoder loss')
+        self.assertFalse(any(values[:20]))
+
+    def test_rate_induced_vo_drops_do_not_trigger_decoder_recovery(self):
+        for fps,rate in [(60,2),(30,4),(30,1)]:
+            watch=FrameDropWatch()
+            for n in range(31):
+                self.assertFalse(watch.observe(n/10,n*6,0,fps,rate,True))
 
     def test_drop_watch_ignores_pause_counter_reset_and_normal_low_loss(self):
         watch=FrameDropWatch()
@@ -294,7 +298,10 @@ class NativeTests(unittest.TestCase):
     def test_audio_and_seek_are_applied_before_unpause_and_software_resume(self):
         self.hardware_recovery(ordered_controls=True)
 
-    def hardware_recovery(self,empty_eof=False,stale_seek=False,empty_timeout=False,ordered_controls=False):
+    def test_end_file_before_first_frame_keeps_requested_origin(self):
+        self.hardware_recovery(empty_error=True)
+
+    def hardware_recovery(self,empty_eof=False,stale_seek=False,empty_timeout=False,ordered_controls=False,empty_error=False):
         # This fault cannot be reliably provoked on every physical GPU. The
         # production NativeSession recovery is exercised with a bounded driver.
         class Driver:
@@ -313,14 +320,14 @@ class NativeTests(unittest.TestCase):
                 self.commands.append(args)
                 if args[0]=='loadfile':
                     self.loads+=1
-                    if not empty_eof and not empty_timeout:driver.events.append(Event(21,0,0,None))
+                    if not empty_eof and not empty_timeout and not empty_error:driver.events.append(Event(21,0,0,None))
                     if self.loads==1 and not empty_eof and not empty_timeout:
                         def error():
                             fields=(C.c_int*2)(4,-12); driver.holds.append(fields)
                             driver.events.append(Event(7,0,0,C.cast(fields,C.c_void_p).value))
                         threading.Timer(.15,error).start()
             def get(self,key):
-                return {'hwdec-current':'d3d11va' if self.loads==1 else 'no','pause':'no' if empty_timeout else 'yes',
+                return {'hwdec-current':'d3d11va' if self.loads==1 else 'no','pause':'no' if empty_timeout or empty_error else 'yes',
                         'current-vo':'gpu','video-out-params':'frame','audio-device':'auto',
                         'audio-exclusive':'no','seeking':'yes' if stale_seek else 'no',
                         'eof-reached':'yes' if empty_eof else 'no'}.get(key)
@@ -340,7 +347,7 @@ class NativeTests(unittest.TestCase):
             return real_monotonic()
         with patch('desktop_native.Mpv',Player),patch('desktop_native.time.monotonic',monotonic):
             session.thread.start()
-            session.submit({'rate':3,'paused':False if ordered_controls else not empty_timeout,'volume':.4,
+            session.submit({'rate':3,'paused':False if ordered_controls or empty_error else not empty_timeout,'volume':.4,
                             **({'muted':True,'seek':25} if ordered_controls else {})})
             if stale_seek:session.submit({'seek':25})
             until=real_monotonic()+(.2 if stale_seek else 2)
@@ -364,13 +371,13 @@ class NativeTests(unittest.TestCase):
                 self.assertLess(commands.index(('set','mute','yes')),unpause)
                 self.assertLess(commands.index(('set','speed',3)),unpause)
                 if begin==loads[0]:self.assertLess(commands.index(('seek',25,'absolute+exact')),unpause)
-        if empty_eof or empty_timeout:
+        if empty_eof or empty_timeout or empty_error:
             starts = [command[2] for command in player.commands if command[:2] == ('set','start')]
             self.assertEqual(starts[-1],job.start_seconds,'software reload must keep the unseen requested target')
-            if not empty_timeout:self.assertEqual(session.data['state'],'failed')
+            if empty_eof:self.assertEqual(session.data['state'],'failed')
             self.assertFalse(session.data.get('outputReady'))
             return
-        self.assertIn(('set','start',12.5),player.commands)
+        self.assertIn(('set','start',25 if ordered_controls else 12.5),player.commands)
         self.assertIn(('set','speed',3),player.commands)
         self.assertIn(('set','volume',40.0),player.commands)
         self.assertEqual(player.commands.count(('set','hwdec','no')),1)

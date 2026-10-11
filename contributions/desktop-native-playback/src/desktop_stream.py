@@ -141,7 +141,15 @@ class ProgressiveSource:
             if (first != start or last != min(end, total - 1)
                     or not 0 < total <= 2 * 1024 ** 3 or self.size and self.size != total):
                 raise SourceReadError("Invalid provider byte range")
-            validator = response.headers.get("ETag") or response.headers.get("Last-Modified")
+            etag = response.headers.get("ETag")
+            validator = etag if etag and re.fullmatch(r'"[\x21\x23-\x7e\x80-\xff]*"', etag) else None
+            if not etag:
+                modified = response.headers.get("Last-Modified")
+                try:
+                    if modified and parsedate_to_datetime(modified).tzinfo is not None:
+                        validator = modified
+                except (ValueError, TypeError, OverflowError):
+                    pass
             if self.validator and validator != self.validator:
                 raise SourceReadError("Provider media changed")
             if not validator:
@@ -160,15 +168,7 @@ class ProgressiveSource:
                     raise SourceReadError("Provider range exceeded its bounds")
             if len(data) != last - first + 1:
                 raise SourceReadError("Incomplete provider byte range")
-            etag = response.headers.get("ETag")
-            last_modified = response.headers.get("Last-Modified")
-            self.if_range = etag if etag and not etag.startswith("W/") else None
-            if self.if_range is None and last_modified:
-                try:
-                    if parsedate_to_datetime(last_modified).tzinfo is not None:
-                        self.if_range = last_modified
-                except (ValueError, TypeError, OverflowError):
-                    pass
+            self.if_range = validator
             return bytes(data), total, validator
         finally:
             if response is not None:

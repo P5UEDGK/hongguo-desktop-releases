@@ -67,20 +67,27 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
   const event = name => {if (!disposed && native) media.dispatchEvent(new Event(name));};
+  const pendingRequests = new Set();
   async function request(path, init = {}, timeoutMs = 15000) {
     const abort = new AbortController();
-    let timeout;
+    pendingRequests.add(abort);
+    let timeout, cancel;
     try {
       return await Promise.race([
         (async () => {
-          const response = await fetch(endpoint.origin + '/desktop/hls' + path,
+          const response = await fetch(path instanceof URL ? path : endpoint.origin + '/desktop/hls' + path,
             {...options,...init,signal:abort.signal,headers:{...headers,...init.headers}});
           if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
           return response.status === 204 ? null : response.json();
         })(),
-        new Promise((_,reject)=>{timeout=setTimeout(()=>{abort.abort();reject(Error('Desktop request timed out'));},Math.max(1,timeoutMs));})
+        new Promise((_,reject)=>{
+          cancel=()=>reject(Error('Desktop request cancelled'));
+          abort.signal.addEventListener('abort',cancel,{once:true});
+          timeout=setTimeout(()=>{abort.abort();},Math.max(1,timeoutMs));
+          if(abort.signal.aborted)cancel();
+        })
       ]);
-    } finally {clearTimeout(timeout);}
+    } finally {clearTimeout(timeout);abort.signal.removeEventListener('abort',cancel);pendingRequests.delete(abort);}
   }
   async function release(identifier) {
     if (!identifier) return true;
@@ -316,10 +323,9 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       requestedStart = state.time;
       if (state.time > 0) sourceUrl.searchParams.set('start_seconds', state.time);
       async function createSession() {
-        const created = await fetch(sourceUrl, {...options, method: 'POST',
-          headers: {...headers, 'x-desktop-codec-negotiation': '1'}});
-        if (!created.ok) throw Error('Native session preparation failed');
-        const identifier = (await created.json()).id;
+        const created = await request(sourceUrl, {method: 'POST',
+          headers: {'x-desktop-codec-negotiation': '1'}});
+        const identifier = created.id;
         if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid native session');
         if (disposed) {await release(identifier); return null;}
         return identifier;
@@ -395,6 +401,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   return Object.assign(() => {
     if (disposed) return;
     disposed = true; generation++;
+    for (const request of pendingRequests) request.abort();
     delegated?.(); preparation?.dispose(); restore();
     const old = id; id = null; release(old);
   }, {seek});

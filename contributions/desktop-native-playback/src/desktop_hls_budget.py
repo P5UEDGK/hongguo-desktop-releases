@@ -78,7 +78,7 @@ class OutputBudget:
         return path.open("rb", buffering=0)
 
 
-def video_budget_options(duration_seconds, audio_bitrates, max_output_bytes):
+def video_budget_options(duration_seconds, audio_bitrates, max_output_bytes, *, fixed_audio_bitrates=()):
     """Leave 10% plus 64 KiB for muxing, copy audio, and a two-second VBV.
 
     This is a rate-control plan, not a replacement for actual byte checks.
@@ -95,6 +95,10 @@ def video_budget_options(duration_seconds, audio_bitrates, max_output_bytes):
     # Metadata can omit AAC bitrates. Reserve at least 256 kbit/s per track;
     # retain the byte guard if metadata or the actual stream exceeds estimates.
     audio_rate = 0
+    for rate in fixed_audio_bitrates:
+        if type(rate) is not int or rate <= 0:
+            raise ValueError("Invalid fixed audio bitrate")
+        audio_rate += rate
     for rate in audio_bitrates:
         if not isinstance(rate, int) or isinstance(rate, bool) or rate <= 0:
             rate = 256_000

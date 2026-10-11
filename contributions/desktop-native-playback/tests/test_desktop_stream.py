@@ -101,6 +101,28 @@ class StreamTests(unittest.TestCase):
         finally:
             if hasattr(source,'close'):source.close()
 
+    def test_weak_or_invalid_validator_pins_complete_response(self):
+        for validator in ({'ETag':'W/"fixture"'},{'Last-Modified':'invalid-date'},{'ETag':'not-quoted'}):
+            old=b'a'*131072;pinned=b'b'*131072;calls=[];responses=[]
+            def request(*args,**kwargs):
+                headers=kwargs['headers'];calls.append(dict(headers))
+                if 'Range' in headers:
+                    start,end=map(int,headers['Range'][6:].split('-'))
+                    response=Response(old,start,min(end,len(old)-1));response.headers={'Content-Range':response.headers['Content-Range'],**validator}
+                else:
+                    response=Response(pinned,0,len(pinned)-1);response.status_code=200
+                    response.headers={'Content-Length':str(len(pinned))}
+                responses.append(response);return response
+            source=ProgressiveSource('https://fixture.invalid/no-validator',request=request,identity='stable')
+            try:
+                self.assertEqual(source.block(0,lambda:False),pinned[:65536])
+                self.assertEqual(source.block(1,lambda:False),pinned[65536:])
+                self.assertEqual(len(calls),2);self.assertNotIn('Range',calls[1])
+                self.assertTrue(source.snapshot()['complete']);self.assertEqual(source.snapshot()['receivedBytes'],len(pinned))
+                self.assertTrue(all(r.closed for r in responses))
+            finally:
+                if hasattr(source,'close'):source.close()
+
     def test_validatorless_full_input_cancel_discards_partial_pin(self):
         stopped=threading.Event();partial=Response(b'x'*131072,0,65535);partial.headers.pop('ETag')
         full=Response(b'x'*131072,0,131071);full.status_code=200;full.headers={}
@@ -177,11 +199,14 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(request.call_count,2);self.assertTrue(first.closed and second.closed)
         self.assertEqual(source.received,65536);self.assertFalse(source.network_failed.is_set())
 
-    def test_weak_etag_is_compared_but_not_sent_as_if_range(self):
+    def test_weak_etag_pins_without_range_stitching(self):
         for date in (None,'invalid','Wed, 21 Oct 2015 07:28:00 GMT'):
             headers=[];payload=b'x'*150000
             def request(*args,**kwargs):
                 headers.append(dict(kwargs['headers']))
+                if 'Range' not in kwargs['headers']:
+                    response=Response(payload,0,len(payload)-1);response.status_code=200
+                    response.headers={'Content-Length':str(len(payload))};return response
                 start,end=map(int,kwargs['headers']['Range'][6:].split('-'))
                 response=Response(payload,start,min(end,len(payload)-1))
                 response.headers['ETag']='W/"version"'
@@ -189,8 +214,9 @@ class StreamTests(unittest.TestCase):
                 return response
             source=ProgressiveSource('https://fixture.invalid/media',request=request,identity='weak')
             source.block(0,lambda:False);source.block(1,lambda:False)
-            self.assertEqual(source.validator,'W/"version"')
-            self.assertEqual(headers[1].get('If-Range'),date if date and date!='invalid' else None)
+            self.assertTrue(source.validator.startswith('pinned-sha256:'))
+            self.assertNotIn('Range',headers[1]);self.assertNotIn('If-Range',headers[1])
+            source.close()
             self.assertFalse(source.network_failed.is_set())
 
     def test_persistent_timeout_is_bounded_and_sanitized(self):

@@ -89,9 +89,10 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
             }
             video.codec_context.options.update(video_budget_options(
                 max(0, full_duration - start_seconds) if full_duration else None,
-                [stream.codec_context.bit_rate if aac_lc(stream.codec_context) else 128000
-                 for stream in reader.streams.audio],
-                max_output_bytes))
+                [stream.codec_context.bit_rate for stream in reader.streams.audio
+                 if aac_lc(stream.codec_context)],
+                max_output_bytes, fixed_audio_bitrates=[128000 for stream in reader.streams.audio
+                                                       if not aac_lc(stream.codec_context)]))
             buffered_video = None
             def push_video(encoded):
                 nonlocal buffered_video

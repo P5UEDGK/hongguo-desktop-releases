@@ -328,7 +328,9 @@ class FrameDropWatch:
         self.growth=None
 
     def observe(self, now, output_drops, decoder_drops, fps, rate, active):
-        total=max(0,output_drops)+max(0,decoder_drops)
+        # VO drops include frames intentionally omitted at high playback rates.
+        # Decoder drops provide recovery evidence; stalled output has its own watch.
+        total=max(0,decoder_drops)
         if not active or self.samples and total < self.samples[-1][1]:
             self.samples.clear();self.growth=None
         if not active:
@@ -535,7 +537,7 @@ class NativeSession:
                         if fields[0] == 4 or fields[1] < 0:
                             if progressive and self.job.source.network_failed.is_set():
                                 raise SourceReadError("Native media input unavailable")
-                            retry_software()
+                            retry_software(no_frame=not frame_ready)
                 for _ in range(64):
                     try:
                         revision, command = self.commands.get_nowait()
