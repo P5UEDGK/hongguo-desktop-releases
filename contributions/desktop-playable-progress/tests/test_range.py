@@ -9,6 +9,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from desktop_playable_range import playable_range
 
 class RangeTests(unittest.TestCase):
+    def test_media_sequence_must_be_unique_unsigned_decimal(self):
+        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
+        for tag in ('#EXT-X-MEDIA-SEQUENCE:bad', '#EXT-X-MEDIA-SEQUENCE',
+                    '#EXT-X-MEDIA-SEQUENCE:-1', '#EXT-X-MEDIA-SEQUENCE:1.5',
+                    '#EXT-X-MEDIA-SEQUENCE:18446744073709551616',
+                    '#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MEDIA-SEQUENCE:1'):
+            with self.subTest(tag=tag):
+                playlist.write_text(original+tag+'\n',encoding='utf8')
+                self.assertEqual(playable_range(self.job),[0,0])
+        playlist.write_text(original+'#EXT-X-MEDIA-SEQUENCE:0\n',encoding='utf8')
+        self.assertEqual(playable_range(self.job),[0,2])
     def test_master_tags_cannot_enter_local_media_coverage(self):
         self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
         for tag in ('#EXT-X-SESSION-DATA:DATA-ID="fixture",VALUE="x"',

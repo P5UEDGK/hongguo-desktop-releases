@@ -43,6 +43,11 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
         if any(line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-SESSION-DATA:", "#EXT-X-MEDIA:", "#EXT-X-STREAM-INF:", "#EXT-X-I-FRAME-STREAM-INF:", "#EXT-X-BYTERANGE:")) for line in lines):
             return [0, 0]
         parameters = {}
+        sequences = [line for line in lines if line.startswith('#EXT-X-MEDIA-SEQUENCE')]
+        if (len(sequences) > 1 or sequences and
+                (not re.fullmatch(r'#EXT-X-MEDIA-SEQUENCE:[0-9]{1,20}', sequences[0])
+                 or int(sequences[0].split(':', 1)[1]) > 2**64 - 1)):
+            return [0, 0]
         for tag, minimum in (("TARGETDURATION", 1), ("VERSION", 6)):
             prefix = "#EXT-X-" + tag + ":"
             values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
