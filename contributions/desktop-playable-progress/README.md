@@ -79,3 +79,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 本地fMP4仅支持完整片段URI，含EXT-X-BYTERANGE的清单拒绝报告可播；完整缓存校验同步拒绝该标签，防止超出EOF仍显示整集。扩展不支持标签回归。 Python22项及Node6项通过。
 
 可选full_cache_ready索引失败（含sqlite异常）降级实际会话范围。 Python23项及Node6项通过。
+
+普通可播覆盖拒绝I-FRAMES-ONLY清单，单帧trick-play片段不能算整集音视频。当前Python24项及Node6项通过。

@@ -39,6 +39,11 @@ class RangeTests(unittest.TestCase):
         self.job.source.write_bytes(b"raw")
         self.assertEqual(playable_range(self.job), [0, 0])
 
+    def test_iframe_only_playlist_has_no_normal_coverage(self):
+        self.output();self.job.done.set();playlist=self.path/'index.m3u8'
+        playlist.write_text(playlist.read_text(encoding='utf-8').replace('#EXTM3U\n','#EXTM3U\n#EXT-X-I-FRAMES-ONLY\n'),encoding='utf-8')
+        self.assertEqual(playable_range(self.job),[0,0])
+
     def test_optional_cache_backend_failure_falls_back_to_session_range(self):
         import sqlite3
         self.output();self.job.source=self.path/'source.mp4'
