@@ -19,6 +19,23 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_expired_activation_does_not_replace_newer_generation_or_clear_parent(self):
+        prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)
+        self.addCleanup(prefetch.close)
+        jobs,_=self.jobs();jobs.on_start=prefetch.begin;jobs.on_activate=prefetch.promote
+        parent=jobs.create('1234567890123456',1)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        child.video_mode='copy';child.source=self.root/'prepared.mp4'
+        newer=jobs.create(parent.series_id,3)
+        generation=prefetch.generation
+        with self.assertRaises(HTTPException) as error:jobs.activate(child)
+        self.assertEqual(error.exception.status_code,409)
+        self.assertEqual(child.prewarm_parent,parent.id)
+        self.assertEqual(prefetch.generation,generation)
+        self.assertEqual(prefetch.current['episode'],3)
+        prefetch.before_work(newer)
+        self.assertEqual(prefetch.busy,newer.id)
+
     def test_child_control_failure_restores_queued_parent_intent(self):
         host=object.__new__(NativeHost);host.guard=threading.RLock()
         calls=[];data={"paused":False,"revision":0}

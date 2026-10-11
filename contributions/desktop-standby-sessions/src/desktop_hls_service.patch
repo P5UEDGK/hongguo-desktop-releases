@@ -77,7 +77,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -287,6 +307,28 @@
+@@ -287,6 +307,30 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -97,16 +97,18 @@
 +                        or job.activation_revision is None
 +                        or value.get("revision", -1) < job.activation_revision):
 +                    raise HTTPException(409, "Standby activation not applied")
-+            job.prewarm_parent = None
 +            if self.on_activate:
 +                try:
-+                    self.on_activate(job, job.series_id, job.episode)
++                    accepted = self.on_activate(job, job.series_id, job.episode)
 +                except Exception:
-+                    pass  # Optional queue refresh cannot stop presentation.
++                    accepted = None  # Optional queue refresh cannot stop presentation.
++                if accepted is False:
++                    raise HTTPException(409, "Standby generation expired")
++            job.prewarm_parent = None
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -384,7 +426,7 @@
+@@ -384,7 +428,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -115,7 +117,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -395,7 +437,11 @@
+@@ -395,7 +439,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -128,7 +130,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -486,6 +532,7 @@
+@@ -486,6 +534,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -136,7 +138,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -509,7 +556,20 @@
+@@ -509,7 +558,20 @@
              raise HTTPException(400, "Invalid native control")
          except queue.Full:
              raise HTTPException(429, "Native control queue is busy")

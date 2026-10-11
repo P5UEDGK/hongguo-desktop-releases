@@ -1,14 +1,22 @@
 --- a/backend/desktop_prefetch.py
 +++ b/backend/desktop_prefetch.py
-@@ -60,6 +60,7 @@
-         with self.condition:
+@@ -56,10 +56,13 @@
+                 by_index.setdefault(index, vid)
+         return sorted(by_index.items())
+ 
+-    def begin(self, job, series_id, episode):
+-        with self.condition:
++    def begin(self, job, series_id, episode, *, expected_generation=None):
++        with self.condition:
++            if expected_generation is not None and (self.closed or expected_generation != self.generation):
++                return None
              self.generation += 1
              self.foreground[job.id] = self.generation
 +            job.prefetch_generation = self.generation
              self.pending = []
              self.download_pending = []
              self.sources = {}
-@@ -74,15 +75,25 @@
+@@ -74,15 +77,25 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
@@ -37,7 +45,7 @@
                      self.busy = job.id
                      return
                  self.condition.wait(0.1)
-@@ -95,7 +106,7 @@
+@@ -95,7 +108,7 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
@@ -46,7 +54,7 @@
          with self.condition:
              generation = self.generation
          _, metadata = self.episode_loader(series_id)
-@@ -103,7 +114,7 @@
+@@ -103,7 +116,7 @@
          vid = next((vid for index, vid in items if index == episode), None)
          if vid is None:
              raise ValueError("Episode media identity unavailable")
@@ -55,16 +63,19 @@
          source_complete = self._source_complete(source)
          with self.condition:
              if (generation == self.generation and not self.closed
-@@ -130,6 +141,50 @@
+@@ -130,6 +143,53 @@
          self._report()
          return source
  
 +    def promote(self, job, series_id, episode):
 +        if job.cancelled.is_set():
-+            return
++            return False
 +        # Called under HlsJobs.guard: transfer the generation before a later
 +        # foreground create can overtake this activation.
-+        generation = self.begin(job, series_id, episode)
++        generation = self.begin(job, series_id, episode,
++            expected_generation=getattr(job, "prefetch_generation", self.generation))
++        if generation is None:
++            return False
 +        try:
 +            threading.Thread(target=self._load_promoted,
 +                args=(job, series_id, episode, generation),
@@ -106,7 +117,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -154,6 +209,7 @@
+@@ -154,6 +214,7 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -114,7 +125,7 @@
              expected = self.foreground.get(job.id)
          mode = getattr(job, "video_mode", "h264")
          # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
-@@ -168,6 +224,9 @@
+@@ -168,6 +229,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -124,3 +135,11 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
+@@ -297,6 +361,7 @@
+ 
+         result["currentSourceComplete"] = self._source_complete(source)
+         return result
++
+     def _report(self):
+         if self.status_path is None:
+             return
