@@ -177,7 +177,7 @@ function desktopPrepareNext(url, currentMedia) {
           property(name,{get:()=>video[name]});
         property('play',{value:()=>video.play()}); property('pause',{value:()=>video.pause()});
         property('desktopDisplayMedia',{value:video});
-        property('desktopSessionId',{value:()=>id});
+        property('desktopSessionId',{value:()=>controller?.sessionId?.() || id});
         for (const name of ['play','playing','pause','ended','timeupdate','waiting','seeking','seeked','progress','volumechange','ratechange','error','loadedmetadata','durationchange']) {
           const forward=()=>{if(!closed)media.dispatchEvent(new Event(name));};
           video.addEventListener(name,forward);listeners.push([name,forward]);
@@ -209,7 +209,7 @@ function desktopPrepareNext(url, currentMedia) {
         });
         return Object.assign(() => {
           if(restoreAdoption())cleanup();
-        },{seek:value=>controller?.seek(value),sessionId:()=>id});
+        },{seek:value=>controller?.seek(value),sessionId:()=>controller?.sessionId?.() || id});
       }};
     } catch {
       failed = true; if (!claimed) cleanup(); else {release();video?.remove();}

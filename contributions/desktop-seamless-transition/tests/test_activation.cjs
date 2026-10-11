@@ -3,19 +3,27 @@ const source=fs.readFileSync(process.argv[2],'utf8');
 const tick=async()=>{for(let n=0;n<30;n++)await new Promise(setImmediate)};
 async function scenario(fault){
   let now=0,errors=0,released=0,finished=0,cancelled=0,selected=false,activated=false;
-  const timers=new Set();
+  const timers=new Set(),scheduled=[];
   const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.4,muted:false,
     closest:()=>({classList:{add(){},remove(){}}}),
     getBoundingClientRect:()=>({left:0,top:0,width:800,height:600})});
-  const prep={claimRecord:async()=>({id:'a'.repeat(32),mode:'native',dispose(){}}),dispose(){},
+  const prep={claimRecord:async()=>fault==='copy-fallback'?{mode:'copy',settings:{rate:3,volume:.2,muted:true},
+      adopt(target,handlers,onFailure){
+        assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);
+        queueMicrotask(onFailure);return ()=>{};
+      }}:{id:'a'.repeat(32),mode:'native',dispose(){}},dispose(){},
     finishRetained(){if(fault==='success')assert(activated,'old picture retained until activate ACK');finished++},cancelClaim(){cancelled++}};
   const context={URL,Event,Number,Math,Map,AbortController,window:{devicePixelRatio:1},
     Date:{now:()=>now},ResizeObserver:class{observe(){}disconnect(){}},
     document:{hidden:false,head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
-    setTimeout(fn,delay){if(delay>=15000)return 999;const id=setTimeout(()=>{now+=250;fn()},1);timers.add(id);return id;},
+    setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000)return 999;const id=setTimeout(()=>{now+=250;fn()},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id)},
     w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
-    desktopCodecHls(){throw Error('should report activation failure')},
+    desktopCodecHls(target){
+      assert.equal(fault,'copy-fallback');assert.equal(target.playbackRate,3);
+      assert.equal(target.volume,.2);assert.equal(target.muted,true);activated=true;
+      return ()=>{};
+    },
     fetch:async(url,init={})=>{
       let body={};url=String(url);
       if(init.method==='DELETE'){released++;return {ok:true,status:204}}
@@ -34,11 +42,17 @@ async function scenario(fault){
   vm.createContext(context);vm.runInContext(source,context);
   const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',0,{onReady(){},onError(){errors++}},prep);
   for(let n=0;n<80&&!errors&&!activated;n++){await tick();await new Promise(r=>setTimeout(r,1))}
-  if(fault==='success'){assert(activated);assert.equal(errors,0);assert.equal(released,0);assert(finished>0)}
+  if(fault==='success'){
+    assert(activated);assert.equal(errors,0);assert.equal(released,0);assert(finished>0);
+    media.currentTime=89.8;media.pause();scheduled.length=0;
+    await new Promise(r=>setTimeout(r,5));await tick();
+    assert(!scheduled.includes(40),'paused tail must retain normal polling rate');
+  }
+  else if(fault==='copy-fallback'){assert(activated);assert.equal(errors,0);assert.equal(released,0)}
   else {assert.equal(errors,1,fault+' must report bounded activation failure');
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of ['visible','frame','revision','hung','success'])await scenario(fault);
+(async()=>{for(const fault of ['visible','frame','revision','hung','success','copy-fallback'])await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exitCode=1});

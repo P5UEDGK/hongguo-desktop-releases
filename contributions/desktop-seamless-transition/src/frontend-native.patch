@@ -28,8 +28,8 @@
 +    } finally {clearTimeout(timeout);}
    }
    async function release(identifier) {
-     if (!identifier) return;
-@@ -36,7 +46,7 @@
+     if (!identifier) return true;
+@@ -45,7 +55,7 @@
        if (descriptor) Object.defineProperty(media, key, descriptor);
        else delete media[key];
      }
@@ -38,16 +38,16 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -53,7 +63,7 @@
-     // Stop the native audio before the HLS element is allowed to autoplay.
-     await release(old);
+@@ -63,7 +73,7 @@
+     const stopped = await release(old);
      if (disposed) return;
+     if (!stopped) {callbacks.onComplete?.(false);callbacks.onError?.();return;}
 -    delegated = desktopCodecHls(media, url, Math.max(0, state.time), callbacks,
 +    delegated = desktopCodecHls(media, url, Math.max(0, state.time), {...callbacks, onReady() { preparation?.finishRetained?.(); callbacks.onReady?.(); }},
        forceH264 ? null : preparation, windowed, {forceH264, paused: state.paused});
    }
    async function failPreparation() {
-@@ -62,7 +72,7 @@
+@@ -72,7 +82,7 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -56,7 +56,7 @@
    }
    function queue(command) {
      if (disposed || !native || fallbackStarted) return;
-@@ -110,13 +120,13 @@
+@@ -120,13 +130,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -72,18 +72,19 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -203,20 +213,31 @@
+@@ -213,20 +223,31 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
 -      if (!disposed && !fallbackStarted && ownGeneration === generation) timer = setTimeout(() => poll(ownGeneration), 250);
-+      if (!disposed && !fallbackStarted && ownGeneration === generation) { const nearEnd = state.duration > 0 && (state.duration - state.time) / Math.max(.25, state.rate) < 1; timer = setTimeout(() => poll(ownGeneration), nearEnd ? 40 : 250); }
++      if (!disposed && !fallbackStarted && ownGeneration === generation) { const nearEnd = !state.paused && !state.ended && state.duration > 0 && (state.duration - state.time) / Math.max(.25, state.rate) < 1; timer = setTimeout(() => poll(ownGeneration), nearEnd ? 40 : 250); }
      }
    }
    (async () => {
      try {
 +      const standby = await preparation?.claimRecord?.(url, initialPosition);
 +      if (disposed) {standby?.dispose(); return;}
++      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
 +      if (standby?.mode !== 'native' && standby?.adopt) {
 +        delegated = standby.adopt(media, callbacks, () => {
 +          delegated = null;
@@ -92,7 +93,6 @@
 +        });
 +        return;
 +      }
-+      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
        const capability = await request('/capabilities');
        if (disposed) return;
        if (capability.nativePlayback !== 1) {delegate(false); return;}
@@ -108,7 +108,7 @@
        if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid native session');
        if (disposed) {await release(identifier); return;}
        id = identifier;
-@@ -237,12 +258,34 @@
+@@ -247,12 +268,34 @@
        if (disposed) return;
        preparation?.dispose();
        patch(); poll(generation);

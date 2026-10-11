@@ -1,10 +1,10 @@
 {
-  "nativeHead": "b330417cd2ab9ddc1a558cd897ffb423b7f407fc",
+  "nativeHead": "fae4eedc309bbc1a69865cfd153eaa86b10074df",
   "files": [
     {
       "path": "frontend/frontend-native.js",
-      "baseSha256": "c6b475ec7096b11ee70bb420685efd2b82eaa2822e2263de46528b3f5140cb83",
-      "patchedSha256": "3849b66d82b80351c4799170669af163a8fe23fcd687b7e28914d066397ec6eb"
+      "baseSha256": "2c3e7f6970e9f21f66c750580b309b5fe639b22625e54effeeaa504cfefeb95e",
+      "patchedSha256": "835528606ffcb3b99b330b5f8339cd596a57d52b8da89da8ab442732c5243d47"
     },
     {
       "path": "frontend/frontend-codec.js",

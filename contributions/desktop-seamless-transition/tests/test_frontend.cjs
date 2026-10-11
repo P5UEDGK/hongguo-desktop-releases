@@ -13,7 +13,7 @@ class Video extends EventTarget {
 }
 async function scenario(native,fail=false,fault=null){
   const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0;
-  let confirmActivation;
+  let confirmActivation,controllerId;
   const activated=new Promise(resolve=>confirmActivation=resolve);
   const current=new Video();current.volume=.3;current.playbackRate=3;current.paused=false;
   current.desktopSessionId=()=> 'a'.repeat(32);current.stage={append:v=>{v.stage=current.stage;children.push(v);}};
@@ -27,7 +27,7 @@ async function scenario(native,fail=false,fault=null){
       callbacks={...callbacks}; // Production codec copies/enumerates callback keys.
       assert.equal(state.paused,true);assert(video.paused&&video.muted&&video.volume===0);
       queueMicrotask(()=>{callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);callbacks.onReady();});
-      return Object.assign(()=>{stopped++;},{seek:value=>{video.currentTime=value;}});
+      return Object.assign(()=>{stopped++;},{seek:value=>{video.currentTime=value;},sessionId:()=>controllerId});
     },
     fetch:async(url,init={})=>{
       url=String(url);calls.push({url,...init});let body={};
@@ -70,6 +70,9 @@ async function scenario(native,fail=false,fault=null){
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);
     });
+    controllerId='d'.repeat(32);
+    assert.equal(media.desktopSessionId(),controllerId,'adopted media follows replacement codec sessions');
+    assert.equal(dispose.sessionId(),controllerId);
     assert.equal(timeline,90);
     assert.equal(media.volume,.3);assert.equal(media.playbackRate,3);assert.equal(media.paused,true);
     assert.equal(children[0].currentTime,0);assert.equal(children[0].style.opacity,'1');
