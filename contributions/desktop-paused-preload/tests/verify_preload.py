@@ -261,13 +261,15 @@ def main():
                 # Resuming software output can take longer than a fixed sleep.
                 # This checks eventual progress/sync, not real-time throughput.
                 state=wait(identifier,lambda s:s['native']['rate']==rate and s['native']['time']>position+advance and
-                           not s['native']['buffering'],timeout=6)['native']
+                           not s['native']['buffering'],timeout=timeout)['native']
                 check(str(rate)+'x-resumes-default-audio',state['time']>position+advance and abs(state['avsync'])<.1 and
                       state['audioDevice']=='auto' and state['audioOutput']=='wasapi' and
                       (not args.software or state['hwdec']=='no'),state)
+                check(str(rate)+'x-reuses-preload-cache',preload_outcome({'native':state})==('limited' if limited else 'complete'),state)
             target=seek_target(value['duration'])
             request('/'+identifier+'/control','POST',{'paused':True,'seek':target})
-            wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time']-target)<.15)
+            seek_state=wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time']-target)<.15,timeout=timeout)['native']
+            check('seek-reuses-preload-cache',preload_outcome({'native':seek_state})==('limited' if limited else 'complete'),seek_state)
             check('future-three-downloads-zero-encoding',prefetch.wait_idle(3) and
                   prefetch.snapshot()['downloadCompletedEpisodes']==[2,3,4] and not encodes,prefetch.snapshot())
             directory=jobs.get(identifier).directory

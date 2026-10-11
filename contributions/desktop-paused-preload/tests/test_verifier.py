@@ -26,6 +26,24 @@ class ProbeTests(unittest.TestCase):
         expression=compile(ast.fix_missing_locations(ast.Expression(call.args[1])),'<actual-startup-preload-gate>','eval');event=threading.Event()
         self.assertTrue(eval(expression,{'preload_entered':event}));event.set();self.assertFalse(eval(expression,{'preload_entered':event}))
 
+    def test_replay_checks_reject_cache_io_after_successful_preload(self):
+        tree=ast.parse(inspect.getsource(probe))
+        checks=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and 'preload_outcome' in ast.unparse(n)]
+        self.assertEqual(len(checks),2,'rate and final seek must verify cache health')
+        for check in checks:
+            expr=compile(ast.fix_missing_locations(ast.Expression(check.args[1])),'<actual-replay-cache-check>','eval')
+            for limited in (False,True):
+                healthy={'cacheComplete':not limited,'preloadLimited':limited,'preloadReason':'budget' if limited else None}
+                self.assertTrue(eval(expr,dict(vars(probe),state=healthy,seek_state=healthy,limited=limited)))
+                failed={**healthy,'cacheComplete':False,'preloadLimited':True,'preloadReason':'cache-io'}
+                self.assertFalse(eval(expr,dict(vars(probe),state=failed,seek_state=failed,limited=limited)))
+
+    def test_final_seek_wait_uses_scaled_timeout(self):
+        tree=ast.parse(inspect.getsource(probe))
+        call=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='wait' and 'target' in ast.unparse(n))
+        timeout=next((k.value for k in call.keywords if k.arg=='timeout'),ast.Constant(15))
+        self.assertEqual(eval(compile(ast.fix_missing_locations(ast.Expression(timeout)),'<actual-seek-budget>','eval'),{'timeout':60}),60)
+
     def test_actual_rate_loop_accepts_one_second_fixture_twice(self):
         tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
         loop=next(n for n in ast.walk(scenario) if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='rate')
@@ -42,9 +60,10 @@ class ProbeTests(unittest.TestCase):
                 if not native['paused']:native['time']=min(1,native['time']+.05)
             raise AssertionError('no progress within one-second clip')
         def check(name,condition,*_):self.assertTrue(condition,name);checks.append(name)
-        scope=dict(vars(probe),identifier='owned',request=request,wait=wait,check=check,value={'duration':1},args=SimpleNamespace(software=False))
+        native.update(cacheComplete=True,preloadLimited=False)
+        scope=dict(vars(probe),identifier='owned',request=request,wait=wait,check=check,value={'duration':1},args=SimpleNamespace(software=False),limited=False,timeout=60)
         exec(compile(ast.fix_missing_locations(ast.Module(body=[loop],type_ignores=[])),'<actual-one-second-rate-loop>','exec'),scope)
-        self.assertEqual(checks,['2x-resumes-default-audio','3x-resumes-default-audio']);self.assertEqual(seeks,[0,0])
+        self.assertEqual(checks,['2x-resumes-default-audio','2x-reuses-preload-cache','3x-resumes-default-audio','3x-reuses-preload-cache']);self.assertEqual(seeks,[0,0])
 
     def test_actual_scenario_accepts_bootstrap_eof_without_claiming_pause_fill(self):
         tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
