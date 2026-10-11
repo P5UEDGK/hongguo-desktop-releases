@@ -35,6 +35,32 @@ class RangeCacheTests(unittest.TestCase):
         with patch('desktop_range_cache.preload') as fill:
             worker.tick();worker.thread.join(1);fill.assert_called_once();self.assertIsNone(worker.failure)
 
+    def test_restart_skips_cached_prefix_without_reading_payload(self):
+        class Source:
+            size=65536*4;block_size=65536
+            def __init__(self):self.calls=[]
+            def block(self,index,cancelled):self.calls.append(index);return b'x'*65536
+            def reader(self,stopped,cache=None):return RangeReader(self,stopped,cache=cache)
+        source=Source();cache=RangeDiskCache(self.path,source.size,source.size);self.addCleanup(cache.close)
+        cache.store(0,b'x'*65536,lambda:False);cache.store(2,b'x'*65536,lambda:False)
+        with patch.object(cache,'read',wraps=cache.read) as read:
+            preload(source,cache,lambda:False)
+        self.assertEqual(source.calls,[1,3]);self.assertEqual([c.args[0] for c in read.call_args_list],[1,3])
+        self.assertTrue(cache.snapshot()['cacheComplete'])
+
+    def test_close_retains_blocked_reader_until_it_actually_exits(self):
+        entered,release,closed=threading.Event(),threading.Event(),threading.Event()
+        cache=RangeDiskCache(self.path,100,100);self.addCleanup(cache.close)
+        worker=PreloadWorker(None,cache,lambda:False)
+        def blocked(*args):entered.set();release.wait(3)
+        with patch('desktop_range_cache.preload',side_effect=blocked):
+            worker.tick();self.assertTrue(entered.wait(1))
+            closer=threading.Thread(target=lambda:(worker.close(),closed.set()));closer.start()
+            try:self.assertFalse(closed.wait(1.1));self.assertTrue(worker.thread.is_alive())
+            finally:release.set();closer.join(2)
+        self.assertTrue(closed.is_set());self.assertFalse(worker.thread.is_alive())
+        previous=worker.thread;worker.tick();self.assertIs(worker.thread,previous)
+
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         self.path=Path(temp.name)/'cache'

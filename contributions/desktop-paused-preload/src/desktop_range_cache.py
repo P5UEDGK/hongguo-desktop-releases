@@ -10,6 +10,7 @@ class RangeDiskCache:
         self.guard = threading.Lock()
         self.budget, self.total = budget, total
         self.entries = {}
+        self.next_missing = 0
         self.bytes = 0
         self.limited = False
         self.closed = False
@@ -43,6 +44,14 @@ class RangeDiskCache:
                 self.limited = True
                 return False
             return True
+
+    def first_missing(self, block_size):
+        with self.guard:
+            if self.closed or self.failed:
+                return None
+            while self.next_missing in self.entries:
+                self.next_missing += 1
+            return self.next_missing if self.next_missing * block_size < self.total else None
 
     def store(self, index, value, cancelled):
         with self.guard:
@@ -86,11 +95,15 @@ def preload(source, cache, stopped):
     """Sequential background fill shares the source's bounded request cache."""
     try:
         with source.reader(stopped, cache=cache) as reader:
-            while reader.tell() < source.size and not stopped():
-                index = reader.tell() // source.block_size
-                length = min(source.block_size, source.size - reader.tell())
+            while not stopped():
+                index = cache.first_missing(source.block_size)
+                if index is None:
+                    return
+                position = index * source.block_size
+                length = min(source.block_size, source.size - position)
                 if not cache.can_store(index, length):
                     return
+                reader.seek(position)
                 if not reader.read(length):
                     return
     except (OSError, InterruptedError):
@@ -102,7 +115,9 @@ def preload(source, cache, stopped):
 class PreloadWorker:
     """Restart an interrupted optional fill without overlapping workers."""
     def __init__(self, source, cache, stopped):
-        self.source,self.cache,self.stopped=source,cache,stopped
+        self.source,self.cache=source,cache
+        self.halt=threading.Event()
+        self.stopped=lambda:self.halt.is_set() or stopped()
         self.thread=None
         self.next_start=0
         self.failure=None
@@ -122,5 +137,8 @@ class PreloadWorker:
             self.failure='worker-start'
 
     def close(self):
+        self.halt.set()
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=1)
+            # Keep the owning native task alive until bounded source IO exits.
+            # The host then returns pending instead of detaching a live reader.
+            self.thread.join()

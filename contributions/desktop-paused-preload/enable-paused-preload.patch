@@ -42,7 +42,7 @@
      stream_url: str | None = None
      stream_key: str | None = field(default=None, repr=False)
      negotiate_codec: bool = False
-@@ -425,7 +426,7 @@
+@@ -437,7 +438,7 @@
          response_headers.pop("Content-Length", None)
          def chunks():
              try:
@@ -60,10 +60,10 @@
 +from desktop_range_cache import RangeDiskCache, PreloadWorker
 +
 +CACHE_FILE_BUDGET = 512 * 1024 ** 2
+ from desktop_native_engine import EnginePool
+ import uuid
  
- DLL_SHA256 = "34780746a0273a4fcae42dfe262a28984a426a238939474afd3a1561b450bbef"
- 
-@@ -316,6 +319,9 @@
+@@ -345,10 +348,14 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -73,24 +73,38 @@
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
-@@ -358,6 +364,16 @@
-             for key, value in options.items():
-                 player.option(key, value)
-             if progressive:
+         # its remembered speed/volume before either picture or sound advances.
++        user_paused = False
+         desired = {"paused": True, "rate": 1, "volume": 1, "muted": False}
+         def retry_software(*, no_frame=False):
+             nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
+@@ -399,6 +406,16 @@
+                     resources.update(player=player, hwnd=hwnd, parent=self.parent, id=uuid.uuid4().hex)
+             # Every source-dependent option is reset, including when switching
+             # encrypted/clear input or recovering from the previous soft retry.
++            if progressive:
 +                try:
 +                    self.job.directory.mkdir(exist_ok=True)
 +                    disk_cache = RangeDiskCache(self.job.directory / "source-range.cache",
 +                                                CACHE_FILE_BUDGET, self.job.source.size)
 +                    self.job.input_cache = disk_cache
 +                    preloader = PreloadWorker(self.job.source, disk_cache,
-+                        lambda: self.stop.is_set() or self.job.cancelled.is_set())
++                        lambda: self.stop.is_set() or self.job.cancelled.is_set() or not user_paused)
 +                except OSError:
-+                    preload_reason = "cache-open"  # Optional disk failure keeps normal playback.
-+                player.option("cache-on-disk", "no")
-                 for key, value in {"cache": "yes", "cache-secs": "12", "demuxer-readahead-secs": "12",
-                                    "demuxer-max-bytes": "32MiB", "cache-pause": "yes",
-                                    "cache-pause-wait": "1", "demuxer-lavf-format": "mov"}.items():
-@@ -450,6 +466,17 @@
++                    preload_reason = "cache-open"
+             per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
+                         "volume": 100, "mute": "yes" if desired["muted"] else "no",
+                         "hwdec": "auto-safe" if self.host.hardware else "no",
+@@ -450,6 +467,8 @@
+                         if key in command:
+                             value = command[key]
+                             desired[key] = value
++                            if key == "paused":
++                                user_paused = value
+                             player.command("set", option, "yes" if value is True else "no" if value is False else value * 100 if key == "volume" else value)
+                             grace = time.monotonic() + 3
+                     if "seek" in command:
+@@ -497,6 +516,17 @@
                              buffer_start, buffer_end = max(0, selected["start"]), selected["end"]
                      except (ValueError, TypeError, KeyError):
                          pass
@@ -98,7 +112,7 @@
 +                               "preloadLimited": preload_reason is not None,
 +                               "preloadReason": preload_reason, "cacheKind": "original-range-blocks"}
 +                if disk_cache:
-+                    if output_ready:
++                    if output_ready and user_paused:
 +                        preloader.tick()
 +                    cache_state = disk_cache.snapshot()
 +                    if preloader.failure:
@@ -108,7 +122,7 @@
                  if last_position is None or abs(position - last_position) > .01 or paused or seeking:
                      last_position, last_progress = position, now
                  unstable = not paused and not buffering and not seeking and not eof and now > grace
-@@ -478,6 +505,7 @@
+@@ -525,6 +555,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
@@ -116,15 +130,15 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops)
-@@ -489,6 +517,11 @@
+@@ -536,6 +567,11 @@
              with self.guard:
                  self.data.update(state="failed", failureCode="native-decode")
          finally:
 +            self.stop.set()
-+            if disk_cache:
-+                disk_cache.close()  # Close handle before the owning job removes its directory.
 +            if preloader:
-+                preloader.close()
++                preloader.close()  # Native task stays owned until the source reader exits.
++            if disk_cache:
++                disk_cache.close()
              for surface, (previous, callback) in self.input_hooks.items():
                  if user.IsWindow(surface):
                      user.SetWindowLongPtrW(surface, -4, previous)

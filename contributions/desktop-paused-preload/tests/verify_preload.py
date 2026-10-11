@@ -155,6 +155,10 @@ def main():
             initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready')
             session=host.sessions[identifier]
             check('first-frame-before-full-input',not initial['sourceProgress']['complete'] and initial['native']['outputReady'],initial)
+            time.sleep(.8)
+            bounded=request('/'+identifier+'/status')
+            check('bootstrap-pause-does-not-fill-whole-file',not bounded['native']['cacheComplete'],bounded['native'])
+            request('/'+identifier+'/control','POST',{'paused':True})
             started=time.monotonic()
             while time.monotonic()-started<timeout:
                 value=request('/'+identifier+'/status');report['pausedSamples'].append(value)
@@ -212,7 +216,7 @@ def main():
         except BaseException as exc: errors.append(type(exc).__name__);report['errorType']=type(exc).__name__
         finally:
             if identifier:jobs.release(identifier)
-            prefetch.close();done.set()
+            jobs.close();prefetch.close();done.set()
     with patch.object(NativeSession,'forward_input',return_value=True):
         try:
             wait_server_started(server, server_thread)
