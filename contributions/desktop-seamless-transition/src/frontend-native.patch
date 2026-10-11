@@ -129,7 +129,7 @@
 +      const standby = await preparation?.claimRecord?.(url, initialPosition, windowed);
 +      if (disposed) {standby?.dispose(); return;}
 +      state.rate=media.playbackRate || state.rate;state.volume=media.volume;state.muted=media.muted;
-+      if (preparation?.resumeInvalid) {state.time = 0; initialPosition = 0;}
++      if (preparation?.resumeInvalid) {initialPosition = 0; if (seekPending === null) state.time = 0;}
 +      if (!standby && preparation?.resumeFailed) {
 +        delegate(false); return;
 +      }
@@ -191,7 +191,7 @@
          let context;
          try {context = await desktopNativeWindowContext();}
          catch {delegate(false); return;}
-@@ -387,23 +424,101 @@
+@@ -387,23 +424,102 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegateCommittedHls(latest); return;
        }
@@ -261,10 +261,11 @@
 +        let confirmed = false;
 +        while (!disposed && Date.now() < deadline) {
 +          if (!canShow()) {
++            let parked = false;
 +            while (!disposed && !canShow() && Date.now() < deadline) {
-+              layout();pending.paused = true;
++              layout();if (!parked || Object.keys(pending).length) {pending.paused = true;parked = true;}
 +              clearTimeout(controlTimer);controlTimer = null;
-+              await flush(Math.min(deadline,Date.now()+2000));
++              if (Object.keys(pending).length) await flush(Math.min(deadline,Date.now()+2000));
 +              if (disposed || fallbackStarted || !id || !native) return;
 +              await new Promise(resolve=>setTimeout(resolve,100));
 +            }
@@ -308,7 +309,7 @@
      } catch {if (!disposed) failPreparation();}
    })();
    return Object.assign(() => {
-@@ -411,7 +526,14 @@
+@@ -411,7 +527,14 @@
      disposed = true; generation++;
      for (const request of pendingRequests) request.abort();
      if (creationToken) release('requests/'+creationToken);

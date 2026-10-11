@@ -69,7 +69,7 @@
        }, 8000);
      };
      const wrapped = {...callbacks,
-+      preserveResumePosition: position > .05 && preparation?.resumePosition === position,
++      preserveResumePosition: position > .05 && Number.isFinite(preparation?.resumePosition) && Math.abs(preparation.resumePosition-position) <= .05,
        onReady() {
          if (!active()) return;
          if (pendingSeek !== null) {

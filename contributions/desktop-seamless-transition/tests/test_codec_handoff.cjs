@@ -19,5 +19,7 @@ vm.createContext(c);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),c);
   controller();
   const resumed=c.desktopCodecHls(media,'http://127.0.0.1/desktop/hls',39.5,{onReady(){},onError(){}},{resumePosition:39.5,dispose(){}},true);
   assert.equal(controllers.at(-1).callbacks.preserveResumePosition,true,'explicit standby resume fallback must bypass legacy last-three-seconds restart');
-  resumed();console.log('PASS: adopted HLS fallback never reuses the retired parent; explicit resume bypasses last-three-seconds restart');
+  resumed();
+  for(const drift of [.01,.04,.06]){const dispose=c.desktopCodecHls(media,'http://127.0.0.1/desktop/hls',39.5-drift,{onReady(){},onError(){}},{resumePosition:39.5,dispose(){}},true);assert.equal(controllers.at(-1).callbacks.preserveResumePosition,drift<=.05,'resume marker matches the accepted decoded-frame tolerance');dispose();}
+  console.log('PASS: adopted HLS fallback never reuses the retired parent; explicit resume bypasses last-three-seconds restart');
 })().catch(e=>{console.error(e);process.exitCode=1});
