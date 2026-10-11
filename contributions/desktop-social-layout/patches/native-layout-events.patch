@@ -1,6 +1,6 @@
 --- a/contributions/desktop-native-playback/src/frontend-native.js
 +++ b/contributions/desktop-native-playback/src/frontend-native.js
-@@ -89,6 +89,7 @@
+@@ -124,6 +124,7 @@
      clearTimeout(timer); clearTimeout(controlTimer);
      resize?.disconnect();
      media.removeEventListener('desktopdanmaku', updateDanmaku);
@@ -8,7 +8,7 @@
      chromeChanges?.disconnect();
      stage?.removeEventListener?.('transitionend', layout);
      document.removeEventListener('fullscreenchange', layout);
-@@ -159,7 +160,7 @@
+@@ -205,7 +206,7 @@
      } catch {if (!disposed) failPreparation();}
      finally {
        controlBusy = false;
@@ -17,12 +17,12 @@
      }
    }
    function updateDanmaku() {
-@@ -171,8 +172,22 @@
+@@ -217,8 +218,22 @@
      const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
      const bounds = desktopNativeSurfaceRect(media);
-     const visible = !document.hidden && rect.width > 0 && rect.height > 0;
+     const visible = desktopNativeSurfaceVisible(media);
 -    const signature = JSON.stringify([bounds, visible]);
--    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible});}
+-    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible, paused:visible ? state.paused : true});}
 +    const panel = stage.querySelector?.('.desktop-danmaku-panel')?.getBoundingClientRect();
 +    const left = Math.max(bounds[0], Math.floor((panel?.left ?? 0) * scale));
 +    const top = Math.max(bounds[1], Math.floor((panel?.top ?? 0) * scale));
@@ -32,7 +32,7 @@
 +      [left - bounds[0], top - bounds[1], right - left, bottom - top] : [];
 +    const signature = JSON.stringify([bounds, visible, occlusion]);
 +    if (signature !== lastRect) {
-+      lastRect = signature; queue({rect: bounds, visible, occlusion});
++      lastRect = signature; queue({rect: bounds, visible, occlusion, paused:visible ? state.paused : true});
 +      if (!controlBusy) {clearTimeout(controlTimer); controlTimer = null; flush();}
 +    }
 +  }
@@ -42,7 +42,7 @@
    }
    function seek(value) {
      if (disposed || !Number.isFinite(value)) return;
-@@ -234,6 +249,7 @@
+@@ -282,6 +297,7 @@
      document.addEventListener('fullscreenchange', layout);
      document.addEventListener('visibilitychange', layout);
      media.addEventListener('desktopdanmaku', updateDanmaku);
