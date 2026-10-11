@@ -91,3 +91,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 ## 剩余审查回归（2026-10-11）
 
 本地分片必须从seg000000.m4s开始连续编号，跳号、倒序和非零起点不报告连续可播区间；完整缓存owner执行同一宿主编号约束。27项Python和6项Node回归通过。
+
+本地媒体清单新增拒绝Master-only标签（SESSION-DATA、MEDIA、STREAM-INF、I-FRAME-STREAM-INF及SESSION-KEY）。完整28项Python通过，旧实现对混合清单的正范围报告失败复现。

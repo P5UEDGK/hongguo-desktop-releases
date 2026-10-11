@@ -9,6 +9,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from desktop_playable_range import playable_range
 
 class RangeTests(unittest.TestCase):
+    def test_master_tags_cannot_enter_local_media_coverage(self):
+        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
+        for tag in ('#EXT-X-SESSION-DATA:DATA-ID="fixture",VALUE="x"',
+                    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="fixture",NAME="audio"',
+                    '#EXT-X-STREAM-INF:BANDWIDTH=1000',
+                    '#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1000,URI="iframe.m3u8"',
+                    '#EXT-X-SESSION-KEY:METHOD=AES-128,URI="key"'):
+            with self.subTest(tag=tag):
+                playlist.write_text(original+tag+'\n',encoding='utf8')
+                self.assertEqual(playable_range(self.job),[0,0])
+
     def test_numbered_fragments_must_be_contiguous_from_zero(self):
         self.output(second=True)
         playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
