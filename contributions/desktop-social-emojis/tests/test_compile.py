@@ -14,6 +14,17 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_non_square_native_vectors_keep_the_png_aspect_ratio(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'wide.png';Image.new('RGBA',(96,48),'red').save(path)
+            row=compiler.compile_assets({'[测试]':path})['[测试]']
+            points=[point for group in row['drawing'] for contour in group['paths'] for point in contour]
+            xs,ys=zip(*points)
+            self.assertEqual((min(xs),max(xs),min(ys),max(ys)),(0,48,12,36))
+            raw=base64.b64decode(row['src'].split(',',1)[1])
+            with Image.open(io.BytesIO(raw)) as image:self.assertEqual(image.size,(96,48))
+
     def test_excessive_dimensions_rejected_before_pixel_conversion(self):
         source=MagicMock();source.size=(8000,8000)
         source.__enter__.return_value=source

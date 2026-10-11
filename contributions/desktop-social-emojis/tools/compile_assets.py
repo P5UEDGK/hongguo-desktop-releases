@@ -20,7 +20,10 @@ def compile_assets(mapping):
             image=source.convert('RGBA')
             image.thumbnail((256,256),Image.Resampling.LANCZOS)
             png=io.BytesIO(); image.save(png,format='PNG',optimize=True)
-            small=image.resize((48,48),Image.Resampling.LANCZOS)
+            fitted=image.copy()
+            fitted.thumbnail((48,48),Image.Resampling.LANCZOS)
+            small=Image.new('RGBA',(48,48),(0,0,0,0))
+            small.paste(fitted,((48-fitted.width)//2,(48-fitted.height)//2))
             palette=small.convert('RGB').quantize(colors=16)
             pixels=palette.convert('RGB'); alpha=small.getchannel('A'); groups={}
             for y in range(48):
