@@ -37,7 +37,7 @@ window.fetch=(url,options)=>{
  const path=new URL(url).pathname, params=new URL(url).searchParams;
  if(!path.startsWith('/desktop/social/'))return realFetch(url,options);
  window.calls.push({path,params:Object.fromEntries(params),headers:options.headers});
- if(window.failComments && path.endsWith('/comments'))return Promise.resolve({ok:false});
+ if(window.failComments && path.endsWith('/comments') || window.failDanmaku && path.endsWith('/danmaku'))return Promise.resolve({ok:false});
  let value={items:{}};
  if(path.endsWith('/emojis'))value={items:{'[测试]':'data:image/png;base64,iVBORw0KGgo='}};
  if(path.endsWith('/metrics'))value={likes:4,comments:3,favorites:18};
@@ -94,6 +94,12 @@ try{
  await page.getByRole('tab',{name:'选集',exact:true}).waitFor({timeout:5000}).catch(async e=>{console.error('PAGE ERRORS',errors,'BODY',await page.locator('body').innerText());throw e;});
  const socialCalls=()=>page.evaluate(()=>calls.filter(c=>/comments|metrics|replies/.test(c.path)));
  check((await socialCalls()).length===0,'remembered open drawer starts on episodes without comments/metrics/replies');
+ await page.evaluate(()=>{failDanmaku=true;changeEpisode();});
+ await page.getByRole('status').filter({hasText:'弹幕加载失败'}).waitFor();
+ check(await page.getByRole('status').filter({hasText:'弹幕加载失败'}).isVisible()&&(await socialCalls()).length===0,'danmaku startup failure is visible on selection without opening comments');
+ await page.evaluate(()=>{failDanmaku=false;changeEpisode();});
+ await page.getByRole('status').filter({hasText:'弹幕加载失败'}).waitFor({state:'hidden'});
+
  check(await page.getByRole('button',{name:'关闭选集',exact:true}).getAttribute('aria-expanded')==='true','remembered-open selection exposes its closing action and expanded state');
  check(await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-pressed')==='false'&&await page.getByRole('button',{name:'评论与互动',exact:true}).getAttribute('aria-expanded')===null,'disabled comments use pressed state while the remembered drawer stays expanded');
  check(await page.locator('aside').evaluate(n=>n.firstElementChild.classList.contains('desktop-social')),'drawer navigation is first in DOM order');
@@ -260,6 +266,14 @@ try{
  await page.mouse.move(0,0);await page.waitForTimeout(350);
  check(await page.getByRole('region',{name:'弹幕设置',exact:true}).isVisible(),'keyboard focus keeps settings open after pointer leaves');
  check(await page.locator('.desktop-danmaku-panel input[type=range]').count()===4,'focus on same danmaku toggle exposes all settings without a shortcut');
+ const placement=await page.locator('.desktop-danmaku-panel').evaluate(panel=>{const p=panel.getBoundingClientRect(),toggle=document.querySelector('.desktop-danmaku-toggle') || panel.parentElement.querySelector('button');const t=toggle.getBoundingClientRect();return {left:p.left,top:p.top,right:p.right,bottom:p.bottom,cssLeft:parseFloat(panel.style.left),cssTop:parseFloat(panel.style.top),toggle:t.toJSON(),height:innerHeight,width:innerWidth};});
+ check(Math.abs(placement.left-placement.cssLeft)<1&&Math.abs(placement.top-placement.cssTop)<1&&placement.top>=0&&placement.bottom<=placement.height+1&&placement.left>=0&&placement.right<=placement.width+1,'settings panel remains inside viewport despite header and narrowed stage');
+ await page.getByRole('slider',{name:'移动速度',exact:true}).click();
+ await page.mouse.move(0,0);await page.waitForTimeout(350);
+ check(await page.locator('.desktop-danmaku-panel').count()===0,'pointer-acquired focus on a panel slider permits pointer-leave dismissal');
+ await page.locator('.player-mini-toggle').focus();await page.getByRole('button',{name:'弹幕',exact:true}).focus();
+ await page.getByRole('region',{name:'弹幕设置',exact:true}).waitFor();
+
  check(await page.locator('.desktop-danmaku-panel').evaluate(panel=>{
   const p=document.createElement('p');p.textContent='长'.repeat(300);panel.append(p);
   const ok=getComputedStyle(p).whiteSpace!=='nowrap'&&p.scrollWidth<=p.clientWidth+1;p.remove();return ok;
@@ -293,6 +307,8 @@ try{
  check(await page.locator('.desktop-danmaku').evaluate(layer=>Math.abs(layer.getBoundingClientRect().bottom-layer.parentElement.querySelector('.player-chrome').getBoundingClientRect().top)<1),'DOM danmaku inset follows a taller actual control band');
  await page.locator('.player-chrome').evaluate(node=>{node.style.height='50px';});await page.waitForTimeout(100);
  check(await page.locator('.desktop-danmaku').evaluate(layer=>Math.abs(layer.getBoundingClientRect().bottom-layer.parentElement.querySelector('.player-chrome').getBoundingClientRect().top)<1),'DOM danmaku inset follows a shorter control band');
+ await page.locator('.player-mini-toggle').focus();await page.getByRole('button',{name:'弹幕',exact:true}).focus();
+ await page.getByRole('region',{name:'弹幕设置',exact:true}).waitFor();
  await page.locator('.player-chrome').evaluate(node=>node.style.opacity='0');await page.waitForTimeout(100);
  check(await page.locator('.player-chrome').evaluate(node=>getComputedStyle(node).opacity==='1'),'open settings keep their host controls visible');
  await page.getByRole('button',{name:'关闭弹幕设置',exact:true}).click();await page.waitForTimeout(100);

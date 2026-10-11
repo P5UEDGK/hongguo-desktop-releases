@@ -74,3 +74,8 @@ python contributions/desktop-social-layout/tests/test_native_control.py contribu
 pin参与顶部控件测量不再依赖dark颜色类。无dark的1280/640/1600像素窗口回归在旧样式失败，当前84项Chrome通过；保留在途调速、控件显隐及窄窗口回归。原生前端补丁对齐 #204 c7bfbc2ea269af4013ab971467d9ef68dc207b9a。
 
 本机候选与安装仍待完成。
+
+
+本轮审查回归（2026-10-12，第四批）：4242240140：Chrome 150的原实现未复现fixed弹层偏移，现行CSS规范不再由container-type建立layout containment；保留容器查询实现，增加窄布局与popover视口定位回归。WebView2 148随真实窗口验证复核。
+
+修改后公共回归、待机组合180项、Chrome87项和真实libmpv字幕检查通过。暂停预加载实测触及8MiB硬上限并稳定，2x/3x恢复及释放通过。原弹层定位代码在Chrome150未复现偏移，保留实现并增加定位检查，WebView2真实窗口仍待复核。本机候选融合与安装尚未完成，上游PR尚未合并；公共测试通过不等于安装验收通过。
