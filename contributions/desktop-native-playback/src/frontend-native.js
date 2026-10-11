@@ -8,6 +8,21 @@ async function desktopNativeWindowContext() {
   return {rect:[position.x, position.y, size.width, size.height]};
 }
 
+function desktopNativeSurfaceVisible(media) {
+  const rect = media.getBoundingClientRect();
+  if (document.hidden || rect.width <= 0 || rect.height <= 0) return false;
+  const stage = media.closest('.player-stage') || media.parentElement;
+  const nodes = new Set([media, stage]);
+  for (const node of nodes) {
+    if (!node) continue;
+    if (node.parentElement) nodes.add(node.parentElement);
+    const style = typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+    if (node.hidden || style?.display === 'none' || style?.visibility === 'hidden' ||
+        style?.visibility === 'collapse' || Number.parseFloat(style?.opacity) === 0) return false;
+  }
+  return true;
+}
+
 function desktopNativeSurfaceRect(media) {
   const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
   const stage = media.closest('.player-stage') || media.parentElement;
@@ -173,6 +188,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   }
   function queue(command) {
     if (disposed || !native || fallbackStarted) return;
+    if (command.paused === false && !desktopNativeSurfaceVisible(media)) command = {...command, paused:true};
     Object.assign(pending, command);
     if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
   }
@@ -195,9 +211,9 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     if (!native || !stage) return;
     const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
     const bounds = desktopNativeSurfaceRect(media);
-    const visible = !document.hidden && rect.width > 0 && rect.height > 0;
+    const visible = desktopNativeSurfaceVisible(media);
     const signature = JSON.stringify([bounds, visible]);
-    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible});}
+    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible, paused:visible ? state.paused : true});}
   }
   function seek(value) {
     if (disposed || !Number.isFinite(value)) return;
@@ -254,6 +270,8 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     if (stage && typeof MutationObserver === 'function') {
       chromeChanges = new MutationObserver(layout);
       chromeChanges.observe(stage, {attributes:true, subtree:true, attributeFilter:['class','style','hidden']});
+      for (let parent = stage.parentElement; parent; parent = parent.parentElement)
+        chromeChanges.observe(parent, {attributes:true, attributeFilter:['class','style','hidden']});
     }
     stage?.addEventListener?.('transitionend', layout);
     document.addEventListener('fullscreenchange', layout);

@@ -40,6 +40,18 @@ class CodecTests(unittest.TestCase):
                 for p in v.encode(f): out.mux(p)
             for p in v.encode(): out.mux(p)
 
+    def test_unknown_stream_bitrate_does_not_certify_packet_copy(self):
+        video=SimpleNamespace(codec_context=SimpleNamespace(name='h264',extradata=bytes.fromhex('01640028ffe100'),width=64,height=64,bit_rate=None),average_rate=30)
+        media=SimpleNamespace(streams=SimpleNamespace(video=[video],audio=[]))
+        for bitrate in (None,0,-1,float('nan'),True):
+            video.codec_context.bit_rate=bitrate
+            with self.subTest(bitrate=bitrate):
+                description=describe_streams(media);self.assertFalse(description['copyEligible']);self.assertIn('video',description)
+        video.codec_context.bit_rate=2000000
+        audio=SimpleNamespace(codec_context=SimpleNamespace(name='aac',extradata=bytes.fromhex('1210'),profile='LC',layout=SimpleNamespace(channels=[1,2]),sample_rate=48000,bit_rate=None))
+        media.streams.audio=[audio];self.assertFalse(describe_streams(media)['copyEligible'])
+        audio.codec_context.bit_rate=128000;self.assertTrue(describe_streams(media)['copyEligible'])
+
     def test_codec_profiles_and_unknown(self):
         self.assertEqual(video_codec_string('h264', bytes.fromhex('01640028ffe100')), 'avc1.640028')
         extra = bytes.fromhex('010160000000b0000000000078') + bytes(10)

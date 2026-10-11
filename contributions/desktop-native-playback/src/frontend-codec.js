@@ -98,14 +98,14 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   };
   const onRateChange = () => {rate = media.playbackRate || rate;};
   function fallback() {
-    const invalidStart = transport?.failureCode?.() === 'start-position' && !transport.durationKnown() && position > 0;
+    const invalidStart = transport?.failureCode?.() === 'start-position' && position > 0;
     if (disposed || retried || !transport || !transport.usedCopy() && !invalidStart || transport.failureCode?.() === 'source-read') return false;
     retried = true;
     rememberTime();
     const resume = position;
     rate = media.playbackRate || rate;
-    zeroOriginRecovery = !transport.durationKnown();
-    if (zeroOriginRecovery) pendingSeek = resume;
+    zeroOriginRecovery = invalidStart || !transport.durationKnown();
+    if (zeroOriginRecovery) pendingSeek = invalidStart && transport.durationKnown() ? null : resume;
     start(true, zeroOriginRecovery ? 0 : Math.max(0, resume));
     return true;
   }

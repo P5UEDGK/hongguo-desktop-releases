@@ -23,6 +23,10 @@ def aac_lc(context):
             and getattr(context, "profile", None) in (None, "LC"))
 
 
+def actual_bitrate(value):
+    return value if type(value) is int and value > 0 else 0
+
+
 def describe_streams(media):
     if len(media.streams.video) != 1:
         return {"copyEligible": False}
@@ -34,8 +38,8 @@ def describe_streams(media):
         return {"copyEligible": False}
     video = {"contentType": f'video/mp4; codecs="{codec}"', "width": context.width,
              "height": context.height, "framerate": rate,
-             "bitrate": max(1, context.bit_rate or 2000000)}
-    copy_eligible = True
+             "bitrate": actual_bitrate(context.bit_rate)}
+    copy_eligible = video["bitrate"] > 0
     audio = []
     for track in media.streams.audio:
         c = track.codec_context
@@ -45,9 +49,11 @@ def describe_streams(media):
             copy_eligible = False
             audio.append({"codec": c.name, "profile": getattr(c, "profile", None)})
             continue
+        bitrate = actual_bitrate(c.bit_rate)
+        if not bitrate: copy_eligible = False
         audio.append({"contentType": 'audio/mp4; codecs="mp4a.40.2"',
                       "channels": str(len(c.layout.channels)), "samplerate": c.sample_rate,
-                      "bitrate": max(1, c.bit_rate or 128000)})
+                      "bitrate": bitrate})
     return {"copyEligible": copy_eligible, "video": video, "audio": audio}
 
 
