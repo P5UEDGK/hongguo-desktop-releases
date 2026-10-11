@@ -53,7 +53,8 @@ function DesktopSocialControls({media, sessionKey}) {
   O.useEffect(() => {
     const video = media.current; setSocial(false);
     const changed = event => {
-      if (typeof event.detail.social === 'boolean') setSocial(event.detail.social && event.detail.tab !== 'episodes');
+      if (typeof event.detail.comments === 'boolean') setSocial(event.detail.comments);
+      if (event.detail.social === false) setSocial(false);
     };
     video?.addEventListener('desktopsocialsettings', changed);
     return () => video?.removeEventListener('desktopsocialsettings', changed);
@@ -64,7 +65,7 @@ function DesktopSocialControls({media, sessionKey}) {
       'aria-controls': 'desktop-social-drawer', title: '评论、点赞数和收藏数',
       onClick: async () => {
         if (!social && document.fullscreenElement) try {await document.exitFullscreen();} catch {}
-        desktopSocialSet(media.current, {social: true, tab: social ? 'episodes' : 'episode'});
+        desktopSocialSet(media.current, {social: true, comments: !social, tab: social ? 'episodes' : 'episode'});
       }, children: '评论'}),
   ]});
 }
@@ -78,8 +79,9 @@ function SocialSession({session, media}) {
   const consumedMetricsRefresh = O.useRef(0);
   const [danmaku, setDanmaku] = O.useState(() => desktopSocialPreference('danmaku', true));
   const [drawer, setDrawer] = O.useState(() => desktopSocialPreference('social', false));
+  const [comments, setComments] = O.useState(false);
   const [danmakuError, setDanmakuError] = O.useState('');
-  const commenting = drawer && tab !== 'episodes';
+  const commenting = drawer && comments && tab !== 'episodes';
   const current = O.useRef(null);
   const [,refreshEmojis]=O.useState(0);
   O.useEffect(()=>{
@@ -94,6 +96,8 @@ function SocialSession({session, media}) {
     const changed = event => {
       if (typeof event.detail.danmaku === 'boolean') setDanmaku(event.detail.danmaku);
       if (typeof event.detail.social === 'boolean') setDrawer(event.detail.social);
+      if (typeof event.detail.comments === 'boolean') setComments(event.detail.comments);
+      if (event.detail.social === false || event.detail.comments === false) {setComments(false); setTab('episodes'); return;}
       if (['episode', 'series', 'episodes'].includes(event.detail.tab)) setTab(event.detail.tab);
     };
     video?.addEventListener('desktopsocialsettings', changed);
@@ -121,7 +125,7 @@ function SocialSession({session, media}) {
     setBusy(false);
     if (endpoint && commenting) load('', own);
     return () => {own.abort.abort(); if (current.current === own) current.current = null;};
-  }, [key, tab, refresh, drawer]);
+  }, [key, tab, refresh, commenting]);
   async function load(cursor = '', own = current.current) {
     if (!own || own.busy || own.abort.signal.aborted) return;
     own.busy = true; setBusy(true); setError('');
@@ -144,13 +148,13 @@ function SocialSession({session, media}) {
     'aria-label': tab === 'episodes' ? '选集' : '评论与互动', hidden: !drawer, children: [
     b.jsxs('div', {className: 'desktop-social-navigation', children: [
     b.jsxs('div', {className: 'desktop-social-tabs', role: 'tablist', 'aria-label': '抽屉内容', children: [
-      ...[['episodes', '选集'], ['episode', '本集评论'], ['series', '整剧剧评']].map(([name, label]) => b.jsx('button', {
+      ...[['episodes', '选集'], ...(comments ? [['episode', '本集评论'], ['series', '整剧剧评']] : [])].map(([name, label]) => b.jsx('button', {
         role: 'tab', 'aria-selected': tab === name, onClick: () => desktopSocialSet(media.current, {social: true, tab: name}), children: label}, name))]}),
     b.jsx('button', {className: 'desktop-social-close', 'aria-label': tab === 'episodes' ? '关闭右侧抽屉' : '关闭评论页面',
       title: tab === 'episodes' ? '关闭右侧抽屉' : '关闭评论页面，返回选集',
       onClick: () => {
         const video = media.current, wasEpisodes = tab === 'episodes';
-        desktopSocialSet(video, {social: !wasEpisodes, tab: 'episodes'});
+        desktopSocialSet(video, {social: !wasEpisodes, ...(wasEpisodes ? {comments:false} : {}), tab: 'episodes'});
         const player = video?.closest('.desktop-player');
         player?.querySelector(wasEpisodes ? '.desktop-selection-open' : '.desktop-social-tabs [role=tab]')?.focus();
       }, children: '×'})]}),
