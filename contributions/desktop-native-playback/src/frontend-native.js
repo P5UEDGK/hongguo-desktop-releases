@@ -5,7 +5,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   let disposed = false, delegated = null, id = null, native = false, restored = false;
   let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
   let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
-  let style = null, resize = null, lastRect = '', generation = 0, seekPending = null;
+  let resize = null, lastRect = '', generation = 0, seekPending = null;
   let reportedSeek = false, fallbackStarted = false;
   let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
     rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
@@ -66,7 +66,6 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     document.removeEventListener('fullscreenchange', layout);
     document.removeEventListener('visibilitychange', layout);
     stage?.classList.remove('desktop-native-playback');
-    style?.remove();
     for (const [key, descriptor] of saved) {
       if (descriptor) Object.defineProperty(media, key, descriptor);
       else delete media[key];
@@ -189,9 +188,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       const wasPaused = state.paused; state.paused = true;
       queue({paused: true}); if (!wasPaused && ready) event('pause');
     }});
-    style = document.createElement('style');
-    style.textContent = '.desktop-native-playback .player-chrome{opacity:1!important;pointer-events:auto!important}';
-    document.head.append(style); stage?.classList.add('desktop-native-playback');
+    stage?.classList.add('desktop-native-playback');
     resize = new ResizeObserver(layout); resize.observe(media);
     document.addEventListener('fullscreenchange', layout);
     document.addEventListener('visibilitychange', layout);

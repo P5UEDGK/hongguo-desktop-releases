@@ -92,13 +92,13 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   closeExplicit();assert.equal(explicit.play,explicitPlay);
   console.log('PASS: codec detection, negotiation, position/rate/pause, one retry, stale callbacks and missing video');
   // HLS audio copy restrictions must not prevent native HEVC selection.
-  const nativeCalls=[],nativeTimers=new Map();let delegated=0,nativeTid=0;
+  const nativeCalls=[],nativeTimers=new Map(),nativeStyles=[];let delegated=0,nativeTid=0;
   const stage={classList:{add(){},remove(){}}};
   const nativeMedia={playbackRate:2,volume:1,muted:false,closest:()=>stage,
     dispatchEvent(){},getBoundingClientRect:()=>({left:0,top:0,width:800,height:500})};
   const nc={URL,Event,Number,Math,Date,DOMException,
     window:{devicePixelRatio:1},ResizeObserver:class{observe(){}disconnect(){}},
-    document:{hidden:false,head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
+    document:{hidden:false,head:{append(node){nativeStyles.push(node.textContent)}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
     setTimeout:(fn,delay)=>{nativeTimers.set(++nativeTid,{fn,delay});return nativeTid},clearTimeout:id=>nativeTimers.delete(id),
     w0:()=>({origin:'http://127.0.0.1:4567',url:'http://127.0.0.1:4567/desktop/hls?series_id=1234567890123456&ep=1',key:'test-only'}),
     desktopCodecHls:()=>{delegated++;return ()=>{}},
@@ -169,6 +169,8 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     await flush();
   }
   assert.equal(nativeMedia.ended,true);
+  assert(!nativeStyles.some(css=>/player-chrome.*opacity\s*:\s*1/.test(css)),
+    'native activation must preserve the host auto-hide state instead of forcing the controls visible');
   nativeMedia.currentTime=25;
   assert.equal(nativeMedia.ended,false,'seek clears EOF immediately');
   await nativeMedia.play();await flush();
