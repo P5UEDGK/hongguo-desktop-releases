@@ -23,6 +23,8 @@ const {Drawer,Controls,Selection}=createSocialUI({React,jsxRuntime,resolveEndpoi
 
 原生模式依次应用 patches/native-layout.patch、patches/native-layout-events.patch（前提为弹幕后端两个补丁）。rect/occlusion 改动立即 flush，忙碌时下一轮不延迟250ms；设置弹层在现有原生表面切出可见区域，关闭恢复。SetWindowRgn 成功后所有权交给 Windows，失败路径释放本包 GDI 对象。不复制 #204/#205 的整个播放器。
 
+抽屉取消独立标题行，关闭按钮与页签同排，在选集和两个评论页均可收起整层右列。底部直接图标按钮固定为32×32 CSS像素，SVG 与悬停背景居中。原生表面按 `.player-chrome` 实际顶部预留空间，并观察控制栏高度变化，避免固定84像素造成遮挡；宿主必须把进度条和按钮放在这个容器内。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
+
 tests/run.mjs 是跨包唯一浏览器回归入口，覆盖评论前端和布局，不在两个 PR 重复维护测试。真实 Chrome headless 使用匿名 HTTP fixture；不能替代 Tauri 原生 Win32 接入验收。
 
 ## 验证
@@ -32,6 +34,8 @@ Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributio
 ```pwsh
 npm --prefix contributions/desktop-social-layout ci
 node contributions/desktop-social-layout/tests/run.mjs --channel chrome
+# 按依赖顺序应用原生补丁后：
+node contributions/desktop-social-layout/tests/test_native_layout.cjs contributions/desktop-native-playback/src/frontend-native.js
 ```
 
 公开测试为人工构造输入，不连接上游。新导出模块已经独立验证；跨包 Chrome 用例由布局包统一维护。此前本机安装还完成53项窗口功能与21项原生像素检查，快/中/慢档（8/14/24秒）实测为161.25/92.5/53.75物理像素/视频秒；这些属于当时本机接线证据，不是本公开包在所有设备或上游发布后的保证。
@@ -40,4 +44,4 @@ node contributions/desktop-social-layout/tests/run.mjs --channel chrome
 
 ## 首轮审查修复
 
-迷你模式恢复单列视频、隐藏已经展开的 aside；ResizeObserver 也观察迷你按钮本身。新增无需窗口 resize 的按钮变宽测试及迷你模式回归。组合浏览器用例现为30项。
+迷你模式恢复单列视频、隐藏已经展开的 aside；ResizeObserver 也观察迷你按钮本身。新增无需窗口 resize 的按钮变宽测试及迷你模式回归。本轮补充抽屉关闭、无标题布局、播放按钮对齐和单击暂停/继续的组合回归；原生桥接测试覆盖实际控制栏高度、DPI、resize、暂停/继续命令和监听清理。

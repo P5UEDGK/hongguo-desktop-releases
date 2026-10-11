@@ -7,6 +7,8 @@ export function installSocialStyles() {
       .desktop-danmaku span{font-weight:400}
       .desktop-social-controls{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
       .desktop-player-layout{height:100%;overflow:hidden;contain:size}
+      .desktop-player .player-toolbar > button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 32px;box-sizing:border-box;width:32px;height:32px;padding:0;line-height:1}
+      .desktop-player .player-toolbar > button > svg{display:block;flex:none}
       .desktop-danmaku-control{display:inline-flex;align-items:center;gap:0}
       .player-stage:has(.desktop-danmaku-panel) .player-chrome{opacity:1!important;pointer-events:auto!important}
       .desktop-danmaku-panel{position:fixed;z-index:1000;box-sizing:border-box;width:320px;overflow-y:auto;background:#272832;color:#e7e7ee;border:1px solid #ffffff14;border-radius:16px;padding:18px;box-shadow:0 8px 28px #0005;font:13px sans-serif;cursor:default;text-align:left;user-select:none;color-scheme:dark;scrollbar-width:thin;scrollbar-color:#51525c transparent}
@@ -36,10 +38,9 @@ export function installSocialStyles() {
       .desktop-social{order:-1;display:flex;flex:1;flex-direction:column;min-height:0;border:0;padding:0}
       .desktop-social[hidden]{display:none!important}
       .desktop-social[data-tab=episodes]{flex:none}
-      .desktop-social-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid #ffffff14}
-      .desktop-social-header h3{margin:0;font-size:16px;font-weight:600}
-      .desktop-social-header button{font-size:20px;line-height:20px;padding:3px 7px;background:transparent;border:0}
-      .desktop-social-tabs{margin:0;padding:12px 18px 10px;gap:8px;border-bottom:1px solid #ffffff14;flex-shrink:0}
+      .desktop-social-navigation{display:flex;align-items:center;gap:8px;padding:10px 18px;border-bottom:1px solid #ffffff14;flex-shrink:0}
+      .desktop-social-tabs{margin:0;padding:0;gap:8px;flex:1;min-width:0}
+      .desktop-player .desktop-social-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;padding:0;border:0;background:transparent;font-size:20px;line-height:1}
       .desktop-social-tabs button{border:0;background:transparent;color:#aaa;border-radius:0;padding:5px 2px;border-bottom:2px solid transparent}
       .desktop-social-tabs button[aria-selected=true]{color:#fff;background:transparent;border-bottom-color:#fb7299}
       .desktop-social-toolbar{padding:12px 18px;font-size:13px;gap:8px;flex-shrink:0}
@@ -58,7 +59,7 @@ export function installSocialStyles() {
       .desktop-player.theater .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) clamp(320px,29vw,420px)}
       .desktop-player.theater .desktop-player-layout.desktop-social-enabled aside{display:flex}
       @keyframes desktopDrawerIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
-      @media(max-width:800px){.desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) min(44vw,340px)}.desktop-social-tabs,.desktop-social-toolbar,.desktop-social-header{padding-left:12px;padding-right:12px}.desktop-social-list{padding-left:12px;padding-right:12px}.player-toolbar .desktop-social-controls{gap:2px}.player-toolbar .desktop-social-controls button{min-width:34px;padding:4px}}
+      @media(max-width:800px){.desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) min(44vw,340px)}.desktop-social-navigation,.desktop-social-toolbar{padding-left:12px;padding-right:12px}.desktop-social-list{padding-left:12px;padding-right:12px}.player-toolbar .desktop-social-controls{gap:2px}.player-toolbar .desktop-social-controls button{min-width:34px;padding:4px}}
       .desktop-player.mini .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr)}
       .desktop-player.mini .desktop-player-layout.desktop-social-enabled aside{display:none}
       @media(prefers-reduced-motion:reduce){.desktop-player-layout.desktop-social-enabled aside{animation:none}}
