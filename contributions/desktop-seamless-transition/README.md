@@ -10,6 +10,8 @@
 
 React保留preparation引用，在timeupdate/倍速变化后检查desktopShouldPrewarm(media)。连播开启且确有紧邻下一集时解析URL，返回后重查当前集身份，再调用desktopPrepareNext(nextUrl, media)，每集只创建一次。自动切到该集时，将preparation传给desktopNativePlayback(nextMedia, nextUrl, 0, callbacks, preparation)。手动跳其他集、换剧、关闭连播或退出时dispose，忽略旧解析回执。
 
+React在确认本集已结束、开启连播且确有下一集时，在旧控制器dispose之前调用desktopHoldForNext(media)。将返回的holder保存在解析流程的ref中，下一播放器接收已准备的preparation或该holder；取消、换剧和关闭时释放它。最后一集不创建holder，沿用现有结束处理。这样无预热或预热失败后的普通加载也能保留末帧；不固定提前截掉片尾。holder不是准备成功的备用，claimRecord/claim返回null，交由正常加载。
+
 旧控制器dispose通过desktopRetainPicture保留原生会话或HLS最后一帧。遮罩应挂在跨集保留的.player-stage；新控制器确认交接前不要另行删除旧会话。claim后的资源由新控制器负责释放；未claim资源90秒到期清理。
 
 原生预热隐藏、暂停、静音。接管复用已经确认的源和播放模式，不再次协商；首次控制同时包含位置、可见性、播放、倍速和音量，避免显示一张暂停首帧后再等250ms。control及可见/输出/revision ACK共用2秒期限，POST activate成功后释放旧画面并开始ready轮询。取消、超时或失败均释放资源并抑制过期回调。
@@ -17,6 +19,8 @@ React保留preparation引用，在timeupdate/倍速变化后检查desktopShouldP
 预热和正式播放共用 desktopNativeSurfaceRect，读取实际 .player-chrome 位置并考虑 DPI；没有控件时回退84px。原生会话注册后、等待首帧前下发隐藏布局，避免把1×1输出当成正式尺寸就绪。模式选择回执不代表原生会话已注册，必须看到有效 revision 后才能提交控制；后续仍等待输出及布局 ACK，不提前显示或跳过片头。
 
 冷启动也等待原生会话注册后再排版，避免模式选择刚返回就发送控制而被拒绝。等待受原准备期限约束；已准备的备用会话直接接管，不增加这次等待。源读取失败与解码失败仍分别处理。
+
+HLS的activate请求、替换会话ID等待及重查共用2秒截止；POST期间copy回退换了ID时激活新ID，确认ID稳定后才清除备用父标记。激活期间记录用户的pause/play意图，不在ACK后无条件恢复播放。activate或play失败只拆除失败备用，旧画面由普通加载的onReady释放；用户取消仍立即释放。冷启动原生确认可见、输出与布局ACK后才释放旧画面。
 
 HLS接管先保留旧帧，activate成功后清除codec控制器的备用父标记并播放新视频，新帧回调后释放旧资源。后续copy→H264回退使用普通前台会话，不再引用已释放的父ID。会话ID随当前transport读取，替换POST未返回时等待新ID；恢复宿主前保存实时倍速、音量和静音。接管失败撤销属性/监听器并转普通加载。
 
@@ -32,4 +36,6 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 
 本轮新增实际控件高度、DPI、无控件回退、原生会话注册门禁及首帧前排版回归。上游接入发布仍需维护者完成。回滚撤销两份补丁、模块与React接线，保留原片及观看记录。[Issue关闭条件](ISSUES.md)，本PR不自动关闭Issue。
 
-本轮隔离 Edge 加真实 libmpv/GPU/WASAPI 的32项检查通过：冷缓存1×/2×/3×自动下一集、隐藏暂停静音、手动3→1→3复用及关闭释放。三档备用布局均为[0,48,1256,674]。该测试使用屏幕外自有窗口；不属于安装后Tauri验收，也没有连续原生像素证据。安装软件仍在使用，本轮候选尚未安装。
+几何/注册修复已在此前本机安装，真实Tauri原生33项/HLS22项通过。随后用户开始使用软件，本轮末帧holder及HLS回执修复只在隔离环境测试，尚未安装：隔离原生预热32项/HLS预热21项，禁用预热后的原生10项/HLS9项全部通过，使用真实libmpv/GPU/WASAPI、自有屏幕外窗口、合成媒体和隔离缓存；关闭后资源槽归零。公开Node回归覆盖无预热/失败预热、冷启动接管、末集排除、取消、激活挂起/替换ID、失败保帧和暂停意图，实际恢复的React选集owner也通过检查。
+
+前批安装证据不能替代本轮安装验收，功能状态检查也不能证明正常短剧连续像素无闪黑或物理音频无空档。上游接入发布、正常片源观感及当前新提交复审仍待完成。

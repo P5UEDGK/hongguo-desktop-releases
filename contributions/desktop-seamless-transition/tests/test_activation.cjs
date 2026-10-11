@@ -58,7 +58,7 @@ async function scenario(fault){
     assert(!scheduled.includes(40),'paused tail must retain normal polling rate');
   }
   else if(fault==='copy-fallback'){assert(activated);assert.equal(errors,0);assert.equal(released,0)}
-  else if(fault==='cold-registration'){assert(activated);assert.equal(errors,0);assert(registrationPolls>=2);assert(commands.length>0);}
+  else if(fault==='cold-registration'){await new Promise(r=>setTimeout(r,5));await tick();assert(activated);assert.equal(errors,0);assert(registrationPolls>=2);assert(commands.length>0);assert(finished>0,'cold native readiness releases retained old picture');}
   else {assert.equal(errors,1,fault+' must report bounded activation failure');
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
   dispose();for(const timer of timers)clearTimeout(timer);
