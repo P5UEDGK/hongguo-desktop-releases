@@ -24,8 +24,15 @@ def compile_assets(mapping):
             fitted=image.resize((max(1,round(image.width*ratio)),max(1,round(image.height*ratio))),Image.Resampling.LANCZOS)
             small=Image.new('RGBA',(48,48),(0,0,0,0))
             small.paste(fitted,((48-fitted.width)//2,(48-fitted.height)//2))
-            palette=small.convert('RGB').quantize(colors=16)
-            pixels=palette.convert('RGB'); alpha=small.getchannel('A'); groups={}
+            # Fully transparent RGB carries no visible color and must not
+            # compete for the limited ASS palette (including unused RGB in PNG).
+            rgba=small.load()
+            visible=[rgba[x,y][:3] for y in range(48) for x in range(48) if round(rgba[x,y][3]/255*7)]
+            colors=Image.new('RGB',(max(1,len(visible)),1))
+            if visible: colors.putdata(visible)
+            palette=colors.quantize(colors=16)
+            pixels=small.convert('RGB').quantize(palette=palette,dither=Image.Dither.NONE).convert('RGB')
+            alpha=small.getchannel('A'); groups={}
             for y in range(48):
                 x=0
                 while x<48:

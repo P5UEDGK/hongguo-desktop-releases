@@ -14,6 +14,18 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_transparent_rgb_does_not_consume_visible_palette(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'hidden-rgb.png';image=Image.new('RGBA',(48,48))
+            visible=[(250,20,20),(20,250,20),(20,20,250),(250,250,20)]
+            for y in range(48):
+                for x in range(48):image.putpixel((x,y),((x*43)%256,(y*47)%256,((x+y)*31)%256,0))
+            for x,color in enumerate(visible):image.putpixel((20+x,20),(*color,255))
+            image.save(path);row=compiler.compile_assets({'[测试]':path})['[测试]']
+            colors={tuple(group['color']) for group in row['drawing']}
+            self.assertTrue(set(visible)<=colors,(visible,colors))
+
     def test_small_non_square_vector_is_upscaled_to_native_canvas(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:
