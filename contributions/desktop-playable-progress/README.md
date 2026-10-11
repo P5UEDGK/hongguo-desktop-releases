@@ -85,3 +85,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 恢复既有可播范围契约。完整片段之后仍有悬空EXTINF、重复片段URI或未来HLS版本均不报告可播。Python25项、Node6项通过。
 
 完成标记不能把截断清单扩到整集，仅在目标片段时长容差内补尾部舍入。Python25项及Node6项通过。 本次修复对应已收到的审查意见；尚无连续像素证据可证明零黑屏。
+
+本次回执修复与验证：完成范围的尾部补舍入使用宿主固定0.1秒容差及浮点误差余量，不再由清单TARGETDURATION放大。63秒任务只有2秒片段，即使TARGETDURATION=63仍只报告[0,2]。当前Python26项及Node6项通过。

@@ -9,6 +9,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from desktop_playable_range import playable_range
 
 class RangeTests(unittest.TestCase):
+    def test_large_target_duration_cannot_hide_truncated_completed_playlist(self):
+        self.output();self.job.done.set()
+        path=self.path/'index.m3u8'
+        path.write_text(path.read_text(encoding='utf-8').replace('TARGETDURATION:3','TARGETDURATION:63'),encoding='utf-8')
+        self.assertEqual(playable_range(self.job),[0,2])
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
