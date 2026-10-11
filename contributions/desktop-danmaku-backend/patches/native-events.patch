@@ -8,7 +8,7 @@
      chromeChanges?.disconnect();
      stage?.removeEventListener?.('transitionend', layout);
      document.removeEventListener('fullscreenchange', layout);
-@@ -206,6 +207,10 @@
+@@ -207,6 +208,10 @@
        controlBusy = false;
        if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, 250);
      }
@@ -19,7 +19,7 @@
    }
    function layout() {
      if (!native || !stage) return;
-@@ -276,6 +281,8 @@
+@@ -277,6 +282,8 @@
      stage?.addEventListener?.('transitionend', layout);
      document.addEventListener('fullscreenchange', layout);
      document.addEventListener('visibilitychange', layout);
