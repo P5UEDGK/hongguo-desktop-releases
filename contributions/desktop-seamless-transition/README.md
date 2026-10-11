@@ -61,3 +61,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 此前隔离Edge/真实libmpv检查仍保留：预热原生32项/HLS21项、无预热原生10项/HLS9项通过，Node及实际React结束owner回归通过。测试使用自有合成媒体、隔离接口与缓存，功能状态不证明正常短剧连续像素无闪黑或物理音频无空档。上游接入发布、正常片源观感及最新提交复审仍待完成。
 
 本轮控制栏回归：策略18项及完整公开前端回归通过；候选Tauri无预热原生14项/HLS12项、安装后原生Tauri14项通过。后续并行更新保留相同控制栏owner；当前安装资源隔离Edge/HLS11项通过，切集时未展开且opacity为0。覆盖自动切集、显示/隐藏、手动选集、慢解析、暂停、鼠标事件、焦点与末集。当前整包Tauri/HLS因其他运行实例占用未重启验收，不干扰该实例。
+
+修复8720cb7回执：原生激活等待控制队列清空并确认最新revision，提前刷新新增暂停；HLS接管补发准备阶段记录的onAcceptanceHlsTransition及原参数。两个失败回归修改前失败、修改后通过，完整公开Node/补丁及控制栏18项通过；隔离Edge+真实libmpv原生13项、HLS11项通过，资源槽归零。当前软件仍运行，本批只完成候选，未安装；此前进度条继承修复已安装。

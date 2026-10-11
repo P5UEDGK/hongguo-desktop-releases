@@ -14,7 +14,7 @@ class Video extends EventTarget {
 }
 async function scenario(native,fail=false,fault=null){
   const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0;
-  let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget;
+  let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget,acceptanceCallback;
   const activated=new Promise(resolve=>confirmActivation=resolve);
   const current=new Video();current.volume=.3;current.playbackRate=3;current.paused=false;
   current.desktopSessionId=()=> 'a'.repeat(32);current.stage={append:v=>{v.stage=current.stage;children.push(v);}};
@@ -26,8 +26,9 @@ async function scenario(native,fail=false,fault=null){
     document:{createElement:()=>new Video()},
     desktopCodecHls(video,url,start,callbacks,prep,windowed,state){
       callbacks={...callbacks}; // Production codec copies/enumerates callback keys.
+      acceptanceCallback=callbacks.onAcceptanceHlsTransition;
       assert.equal(state.paused,true);assert(video.paused&&video.muted&&video.volume===0);
-      queueMicrotask(()=>{callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault!=='no-frame')callbacks.onReady();});
+      queueMicrotask(()=>{callbacks.onAcceptanceHlsTransition({from:'copy',to:'h264'},7);callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault!=='no-frame')callbacks.onReady();});
       return Object.assign(()=>{stopped++;},{seek:value=>{video.currentTime=value;},sessionId:()=>controllerId});
     },
     fetch:async(url,init={})=>{
@@ -72,10 +73,10 @@ async function scenario(native,fail=false,fault=null){
     if(fault==='play')children[0].play=()=>Promise.reject(Error('play rejected'));
     media.addEventListener('ended',()=>ended++);
     prep.retain(()=>started++);
-    let timeline;
+    let timeline;const acceptance=[];
     if(fault==='replacement-id')controllerId='d'.repeat(32);
     if(fault==='pending-id')controllerId=null;
-    const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d},()=>{
+    const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d,onAcceptanceHlsTransition:(...args)=>acceptance.push(args)},()=>{
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);
       assert.equal(started,1,'failed standby must retain the old picture until fallback is ready');
@@ -85,6 +86,9 @@ async function scenario(native,fail=false,fault=null){
     assert.equal(media.desktopSessionId(),controllerId,'adopted media follows replacement codec sessions');
     assert.equal(dispose.sessionId(),controllerId);
     assert.equal(timeline,90);
+    assert.deepEqual(acceptance,[[{from:'copy',to:'h264'},7]],'preparation notification is replayed exactly once with all arguments');
+    acceptanceCallback({from:'h264',to:'retry'},8);
+    assert.deepEqual(acceptance,[[{from:'copy',to:'h264'},7],[{from:'h264',to:'retry'},8]],'live callbacks remain forwarded once');
     assert.equal(media.volume,.3);assert.equal(media.playbackRate,3);assert.equal(media.paused,true);
     assert.equal(children[0].currentTime,0);assert.equal(children[0].style.opacity,'1');
     children[0].dispatchEvent(new Event('ended'));assert.equal(ended,1);

@@ -171,7 +171,7 @@
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
            body: JSON.stringify({mode: 'native'})});
        } catch (error) {
-@@ -290,15 +313,58 @@
+@@ -290,15 +313,63 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegate(false, true); return;
        }
@@ -208,8 +208,13 @@
 +        await flush(untilVisible);
 +        let confirmed = false;
 +        while (!disposed && Date.now() < untilVisible) {
++          if (!controlBusy && Object.keys(pending).length) {
++            clearTimeout(controlTimer); controlTimer = null;
++            await flush(untilVisible);
++            if (disposed) break;
++          }
 +          const shown = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
-+          if (shown?.visible && shown.outputReady && shown.revision >= revision) { await request('/' + id + '/activate', {method:'POST'}, untilVisible-Date.now()); confirmed = true; preparation?.finishRetained?.(); break; }
++          if (shown?.visible && shown.outputReady && shown.revision >= revision && !controlBusy && !Object.keys(pending).length) { await request('/' + id + '/activate', {method:'POST'}, untilVisible-Date.now()); confirmed = true; preparation?.finishRetained?.(); break; }
 +          await new Promise(resolve => setTimeout(resolve, 20));
 +        }
 +        if (!disposed && !confirmed) throw Error('Standby activation timed out');

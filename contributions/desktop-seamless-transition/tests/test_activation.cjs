@@ -2,7 +2,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync(process.argv[2],'utf8');
 const tick=async()=>{for(let n=0;n<30;n++)await new Promise(setImmediate)};
 async function scenario(fault){
-  let now=0,errors=0,released=0,finished=0,cancelled=0,selected=true,activated=false,modeAck=false,registrationPolls=0;
+  let now=0,errors=0,released=0,finished=0,cancelled=0,selected=true,activated=false,modeAck=false,registrationPolls=0,pauseInjected=false;
   const timers=new Set(),scheduled=[],commands=[];
   const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.4,muted:false,
     closest:()=>({classList:{add(){},remove(){}},querySelector:()=>({getBoundingClientRect:()=>({top:536,height:64})})}),
@@ -29,13 +29,14 @@ async function scenario(fault){
       if(init.method==='DELETE'){released++;return {ok:true,status:204}}
       if(url.endsWith('/capabilities')){assert.notEqual(fault,'success','prepared session must not renegotiate capabilities');body={nativePlayback:1};}
       else if(url.endsWith('/mode')){assert.notEqual(fault,'success','prepared mode is already committed');selected=true;modeAck=true;body={mode:'native'}}
-      else if(url.endsWith('/control')){if(fault==='cold-registration')assert(registrationPolls>=2,'no controls before native registration');commands.push(JSON.parse(init.body));if(fault==='hung-control')return new Promise(()=>{});body={revision:10};}
-      else if(url.endsWith('/activate')){if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}activated=true;body={activated:true}}
+      else if(url.endsWith('/control')){if(fault==='cold-registration')assert(registrationPolls>=2,'no controls before native registration');commands.push(JSON.parse(init.body));if(fault==='hung-control')return new Promise(()=>{});if(fault==='pause-during-flush'&&!pauseInjected){pauseInjected=true;media.pause();}body={revision:10+commands.length};}
+      else if(url.endsWith('/activate')){if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}if(fault.startsWith('pause-during-'))assert.equal(commands.at(-1).paused,true,'queued pause must be applied before activation');activated=true;body={activated:true}}
       else if(url.endsWith('/status')){
+        if(fault==='pause-during-status'&&commands.length&&!pauseInjected){pauseInjected=true;media.pause();}
         if(selected&&fault==='hung')return new Promise(()=>{});
         body={state:'complete',source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},
           native:selected?{state:'ready',outputReady:fault!=='frame',visible:fault!=='visible',
-            revision:fault==='revision'?0:10,width:1920,height:1080,time:0,duration:90}:null};
+            revision:fault==='revision'?0:10+commands.length,width:1920,height:1080,time:0,duration:90}:null};
         if(fault==='cold-registration'&&modeAck&&++registrationPolls===1)body.native={state:'preparing'};
       }
       else if(init.method==='POST')body={id:'a'.repeat(32)};
@@ -58,11 +59,12 @@ async function scenario(fault){
     assert(!scheduled.includes(40),'paused tail must retain normal polling rate');
   }
   else if(fault==='copy-fallback'){assert(activated);assert.equal(errors,0);assert.equal(released,0)}
+  else if(fault.startsWith('pause-during-')){assert(activated,'pause race must still activate');assert(pauseInjected);assert.equal(errors,0);assert.equal(media.paused,true);assert.equal(commands.at(-1).paused,true);}
   else if(fault==='cold-registration'){await new Promise(r=>setTimeout(r,5));await tick();assert(activated);assert.equal(errors,0);assert(registrationPolls>=2);assert(commands.length>0);assert(finished>0,'cold native readiness releases retained old picture');}
   else {assert.equal(errors,1,fault+' must report bounded activation failure');
     assert.equal(released,1);assert(finished>0&&cancelled>0);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of ['visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration'])await scenario(fault);
+(async()=>{for(const fault of ['visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status'])await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
 })().catch(error=>{console.error(error);process.exitCode=1});

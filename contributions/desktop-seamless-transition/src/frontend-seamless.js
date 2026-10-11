@@ -227,7 +227,7 @@ function desktopPrepareNext(url, currentMedia) {
         consumer = handlers;
         video.playbackRate=settings.rate;video.volume=settings.volume;video.muted=settings.muted;
         video.style.opacity='1';
-        for (const name of ['onTimeline','onPlayableRange','onComplete','onWindowOrigin','onReady'])
+        for (const name of ['onTimeline','onPlayableRange','onComplete','onWindowOrigin','onReady','onAcceptanceHlsTransition'])
           if (known[name]) handlers[name]?.(...known[name]);
         media.dispatchEvent(new Event('loadedmetadata'));media.dispatchEvent(new Event('durationchange'));
         const restoreAdoption = () => {
