@@ -70,7 +70,7 @@ async function scenario(native,fail=false,fault=null){
     assert(command.paused&&command.muted&&!command.visible);assert.equal(command.rate,3);
     record.dispose();await tick();assert.equal(released,1);
   }else{
-    const media=new Video();media.stage=current.stage;let ended=0,errors=0,fallbacks=0;
+    const media=new Video();media.stage=current.stage;Object.assign(media,{playbackRate:record.settings.rate,volume:record.settings.volume,muted:record.settings.muted});let ended=0,errors=0,fallbacks=0;
     if(fault==='play')children[0].play=()=>Promise.reject(Error('play rejected'));
     media.addEventListener('ended',()=>ended++);
     prep.retain(()=>started++);

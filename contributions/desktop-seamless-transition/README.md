@@ -8,7 +8,7 @@
 
 对#204公开的frontend-native.js、frontend-codec.js应用两个补丁，再加入src/frontend-seamless.js。沿用w0、desktopLegacyHls、ek和原callbacks契约，不能直接覆盖发行bundle。BASELINES.json记录LF规范化前后SHA。
 
-React保留preparation引用，在timeupdate/倍速变化后检查desktopShouldPrewarm(media)。连播开启且确有紧邻下一集时解析URL，返回后重查当前集身份，再调用desktopPrepareNext(nextUrl, media)，每集只创建一次。自动切到该集时，将preparation传给desktopNativePlayback(nextMedia, nextUrl, 0, callbacks, preparation)。手动跳其他集、换剧、关闭连播或退出时dispose，忽略旧解析回执。
+React保留preparation引用，在timeupdate/倍速变化后检查desktopShouldPrewarm(media)。连播开启且确有紧邻下一集时解析URL，返回后重查当前集身份，再调用desktopPrepareNext(nextUrl, media, windowed)，每集只创建一次。自动切到该集时，将preparation传给desktopNativePlayback(nextMedia, nextUrl, resolvedResumePosition, callbacks, preparation, windowed)。手动跳其他集、换剧、关闭连播或退出时dispose，忽略旧解析回执。
 
 React在确认本集已结束、开启连播且确有下一集时，在旧控制器dispose之前调用desktopHoldForNext(media)。将返回的holder保存在解析流程的ref中，下一播放器接收已准备的preparation或该holder；取消、换剧和关闭时释放它。最后一集不创建holder，沿用现有结束处理。这样无预热或预热失败后的普通加载也能保留末帧；不固定提前截掉片尾。holder不是准备成功的备用，claimRecord/claim返回null，交由正常加载。
 
@@ -108,3 +108,8 @@ claim 携带原准备 expiresAt；隐藏表面等待与交接沿用这一期限�
 准备会话的control flush失败后立即停止交接，不再请求null会话状态或重复终止回调；隐藏等待和二次flush也使用相同终止门禁。旧回放失败，当前完整交接与前端补丁测试通过。基础原生同步未知时长/失败续播归零和过期窗口绑定回退，原准备expiry、目标帧、音频意图与ACK要求保持。
 
 本机候选与安装仍待完成。
+
+
+本轮审查回归（2026-10-12，第四批）：4242245633/5635/5636/4242315880/5881/5887：activate后隐藏状态停泊；文档传实际resume；创建前刷新parent；HLS预热windowed匹配；未知时长resume失败允许冷路径复核；等待claim期间新设置不被旧快照覆盖。
+
+修改后公共回归、待机组合180项、Chrome87项和真实libmpv字幕检查通过。暂停预加载实测触及8MiB硬上限并稳定，2x/3x恢复及释放通过。本机候选融合与安装尚未完成，上游PR尚未合并；公共测试通过不等于安装验收通过。

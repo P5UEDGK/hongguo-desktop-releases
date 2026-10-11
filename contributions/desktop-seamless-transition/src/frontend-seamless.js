@@ -60,10 +60,11 @@ function desktopRetainPicture(media) {
   return release => preparation.retain(release);
 }
 
-function desktopPrepareNext(url, currentMedia) {
+function desktopPrepareNext(url, currentMedia, windowed = false) {
   if (!currentMedia || !currentMedia.desktopSessionId?.())
     return {dispose() {}, claim: async () => null};
-  const endpoint = w0(url), parent = currentMedia.desktopSessionId();
+  const endpoint = w0(url);
+  let parent = null;
   const previous = desktopStandbys.get(currentMedia);
   previous?.dispose();
   let disposed = false, claimed = false, id = null, controller = null, video = null;
@@ -172,8 +173,8 @@ function desktopPrepareNext(url, currentMedia) {
     finishRetained,
     cancelClaim: cleanup,
     claim: async () => null,
-    async claimRecord(wanted, position = 0) {
-      if (disposed || claimed || Date.now() >= deadline || wanted !== url) {preparation.dispose(); return null;}
+    async claimRecord(wanted, position = 0, requestedWindowed = false) {
+      if (disposed || claimed || Date.now() >= deadline || wanted !== url || requestedWindowed !== windowed) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
       resumePosition = position;
       if (!Number.isFinite(position) || position < 0 || position > 86400) {
@@ -191,7 +192,11 @@ function desktopPrepareNext(url, currentMedia) {
         cleanup(true); return null;
       }
       if (position > .05) {
-        try {await seekToResume(result,position);} catch {resumeFailed = true;cleanup(true);return null;}
+        try {await seekToResume(result,position);} catch {
+          resumeFailed = true;
+          if (!(Number.isFinite(duration) && duration > 0)) resumePosition = null;
+          cleanup(true);return null;
+        }
         if (disposed) return null;
       }
       return {...result, settings:preparation.settings, expiresAt:deadline};
@@ -209,6 +214,13 @@ function desktopPrepareNext(url, currentMedia) {
     try {
       const capability = await request('/capabilities');
       if (capability.standbyPlayback !== 1 || disposed) return null;
+      const parentUntil=Math.min(deadline,Date.now()+2000);
+      while (!disposed && Date.now()<parentUntil) {
+        parent=currentMedia.desktopSessionId?.();
+        if (/^[a-f0-9]{32}$/.test(parent || '')) break;
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      if (disposed || !/^[a-f0-9]{32}$/.test(parent || '')) throw Error('Standby parent unavailable');
       const created = await fetchJson(endpoint.url, {method:'POST',
         headers:{'x-desktop-codec-negotiation':'1','x-desktop-prewarm-parent':parent}});
       const identifier = created.id;
@@ -255,7 +267,7 @@ function desktopPrepareNext(url, currentMedia) {
       video.muted = true; video.volume = 0; video.playbackRate = currentMedia.playbackRate || 1;
       (currentMedia.closest('.player-stage') || currentMedia.parentElement).append(video);
       controller = desktopCodecHls(video, url, 0, callbacks,
-        {claim:async()=>id,dispose(){}}, false, {paused:true,standbyParent:parent});
+        {claim:async()=>id,dispose(){}}, windowed, {paused:true,standbyParent:parent});
       while (!disposed && !failed && Date.now() < deadline) {
         if (video.readyState >= 2 && video.videoWidth > 0 && known.onReady) break;
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -267,7 +279,7 @@ function desktopPrepareNext(url, currentMedia) {
         if (disposed) return null;
         const saved = new Map(), listeners = [];
         let closed = false, activationComplete = false, wantsPlayback = true;
-        const settings = {rate:currentMedia.playbackRate || 1,volume:currentMedia.volume,muted:currentMedia.muted};
+        const settings = {rate:media.playbackRate || 1,volume:media.volume,muted:media.muted};
         const property = (name, descriptor) => {
           saved.set(name,Object.getOwnPropertyDescriptor(media,name));
           Object.defineProperty(media,name,{configurable:true,...descriptor});

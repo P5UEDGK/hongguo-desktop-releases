@@ -8,15 +8,16 @@ async function scenario(fault){
     closest:()=>({classList:{add(){},remove(){}},querySelector:()=>({getBoundingClientRect:()=>({top:536,height:64})})}),
     getBoundingClientRect:()=>({left:0,top:0,width:800,height:600})});
   if(fault==='resume-seek-fallback')Object.assign(media,{playbackRate:1,volume:1,muted:false});
-  const prep={settings:{rate:3,volume:.2,muted:true},resumeInvalid:fault==='invalid-resume',resumeFailed:['resume-seek-fallback','invalid-resume'].includes(fault),resumePosition:fault==='invalid-resume'?0:30,claimRecord:async()=>(fault==='pause-during-claim'&&(pauseInjected=true,media.pause()),['cold-registration','resume-seek-fallback','invalid-resume','cold-hls-error'].includes(fault)?null:fault==='copy-fallback'?{mode:'copy',settings:{rate:3,volume:.2,muted:true},
+  const prep={settings:['resume-seek-fallback','invalid-resume','copy-fallback'].includes(fault)?{rate:3,volume:.2,muted:true}:{rate:2,volume:.4,muted:false},resumeInvalid:fault==='invalid-resume',resumeFailed:['resume-seek-fallback','invalid-resume'].includes(fault),resumePosition:fault==='invalid-resume'?0:30,claimRecord:async()=>(fault==='settings-during-claim'&&Object.assign(media,{playbackRate:4,volume:.7,muted:true}),fault==='pause-during-claim'&&(pauseInjected=true,media.pause()),['cold-registration','resume-seek-fallback','invalid-resume','cold-hls-error'].includes(fault)?null:fault==='copy-fallback'?{mode:'copy',settings:{rate:3,volume:.2,muted:true},
       adopt(target,handlers,onFailure){
         assert.equal(target.playbackRate,3);assert.equal(target.volume,.2);assert.equal(target.muted,true);
         queueMicrotask(onFailure);return ()=>{};
-      }}:{id:'a'.repeat(32),mode:'native',expiresAt:fault==='original-expiry'?1000:90000,source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},dispose(){}}),dispose(){},
+      }}:{settings:fault==='settings-during-claim'?{rate:2,volume:.4,muted:false}:undefined,id:'a'.repeat(32),mode:'native',expiresAt:fault==='original-expiry'?1000:90000,source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},dispose(){}}),dispose(){},
     finishRetained(){if(fault==='success')assert(activated,'old picture retained until activate ACK');if(fault==='pause-during-activate')assert.equal(commands.at(-1).paused,true,'in-flight pause is ACKed before old picture release');finished++},cancelClaim(){cancelled++}};
+  const documentListeners=new Map();
   const context={URL,Event,Number,Math,Map,AbortController,window:{devicePixelRatio:1},
     Date:{now:()=>now},ResizeObserver:class{observe(){}disconnect(){}},
-    document:{hidden:['hidden-surface','original-expiry'].includes(fault),head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
+    document:{hidden:['hidden-surface','original-expiry'].includes(fault),head:{append(){}},createElement:()=>({remove(){}}),addEventListener(name,fn){documentListeners.set(name,fn);},removeEventListener(name){documentListeners.delete(name);}},
     setTimeout(fn,delay){scheduled.push(delay);if(delay>=15000||(fault==='cancel-pending'&&delay>10000))return 999;const id=setTimeout(()=>{now+=250;if(fault==='hidden-surface'&&now>=5000)context.document.hidden=false;fn()},1);timers.add(id);return id;},
     clearTimeout:id=>{timers.delete(id);clearTimeout(id)},
     w0:()=>({origin:'http://127.0.0.1',url:'http://127.0.0.1/desktop/hls?ep=2',key:'test'}),
@@ -35,7 +36,7 @@ async function scenario(fault){
       if(url.endsWith('/capabilities')){assert.notEqual(fault,'success','prepared session must not renegotiate capabilities');body={nativePlayback:fault==='cold-hls-error'?0:1};}
       else if(url.endsWith('/mode')){assert.notEqual(fault,'success','prepared mode is already committed');selected=true;modeAck=true;body={mode:'native'}}
       else if(url.endsWith('/control')){if(fault==='cold-registration')assert(registrationPolls>=2,'no controls before native registration');commands.push(JSON.parse(init.body));if(fault==='rejected-control')return {ok:false,status:429};if(fault==='hung-control')return new Promise(()=>{});if(fault==='pause-during-flush'&&!pauseInjected){pauseInjected=true;media.pause();}body={revision:10+commands.length};}
-      else if(url.endsWith('/activate')){if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}if(fault==='pause-during-activate'){pauseInjected=true;media.pause();}else if(fault.startsWith('pause-during-'))assert.equal(commands.at(-1).paused,true,'queued pause must be applied before activation');activated=true;body={activated:true}}
+      else if(url.endsWith('/activate')){if(fault==='hidden-during-activate'){context.document.hidden=true;documentListeners.get('visibilitychange')?.();}if(fault==='cancel-pending'){queueMicrotask(()=>dispose());return new Promise(()=>{});}if(fault==='pause-during-activate'){pauseInjected=true;media.pause();}else if(fault.startsWith('pause-during-'))assert.equal(commands.at(-1).paused,true,'queued pause must be applied before activation');activated=true;body={activated:true}}
       else if(url.endsWith('/status')){
         if(fault==='pause-during-status'&&commands.length&&!pauseInjected){pauseInjected=true;media.pause();}
         if(selected&&fault==='hung')return new Promise(()=>{});
@@ -54,6 +55,14 @@ async function scenario(fault){
   for(let n=0;n<80&&!errors&&!activated;n++){await tick();await new Promise(r=>setTimeout(r,1))}
   if(fault==='cancel-pending'){dispose();await tick();assert.equal(errors,0);assert(finished>0,'cancelled adoption releases retained old picture');assert.equal(released,1);}
   else if(fault==='cold-hls-error'){assert.equal(errors,1);assert(finished>0,'terminal cold HLS error releases old picture immediately');}
+  else if(fault==='hidden-during-activate'){
+    for(let n=0;n<10;n++){await tick();await new Promise(r=>setTimeout(r,1));}
+    assert(activated);assert.equal(errors,0);assert.equal(finished,0,'hidden activation retains the old picture until visible');
+    context.document.hidden=false;documentListeners.get('visibilitychange')?.();
+    for(let n=0;n<10;n++){await tick();await new Promise(r=>setTimeout(r,1));}
+    assert.equal(errors,0);assert(finished>0,'showing the activated surface finishes retention');
+  }
+  else if(fault==='settings-during-claim'){assert(activated);assert.equal(errors,0);assert.equal(commands[0].rate,4);assert.equal(commands[0].volume,.7);assert.equal(commands[0].muted,true);}
   else if(fault==='success'){
     assert(activated);assert.equal(errors,0);assert.equal(released,0);assert(finished>0);
     assert.equal(commands[0].visible,true);
@@ -73,6 +82,6 @@ async function scenario(fault){
   if(fault==='rejected-control'){await tick();assert(!requests.some(url=>url.includes('/null/')),'terminal flush failure must not poll a null session');assert.equal(errors,1);assert.equal(activated,false);}
   dispose();for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['rejected-control','original-expiry','hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
+(async()=>{for(const fault of (process.argv[3]?[process.argv[3]]:['hidden-during-activate','settings-during-claim','rejected-control','original-expiry','hidden-surface','invalid-resume','visible','frame','revision','hung','hung-control','success','copy-fallback','cancel-pending','cold-registration','pause-during-flush','pause-during-status','pause-during-claim','pause-during-activate','resume-seek-fallback','cold-hls-error']))await scenario(fault);
   console.log('PASS: native visible/frame/revision and hanging-status ACK failures release and report error');
-})().catch(error=>{console.error(error);process.exitCode=1});
+})().catch(error=>{console.error(error);process.exit(1)});

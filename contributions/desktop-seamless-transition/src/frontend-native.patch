@@ -1,15 +1,17 @@
 --- a/frontend/frontend-native.js
 +++ b/frontend/frontend-native.js
-@@ -30,7 +30,7 @@
+@@ -30,7 +30,9 @@
    let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
    let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
    let resize = null, chromeChanges = null, lastRect = '', generation = 0, seekPending = null;
 -  let reportedSeek = false, fallbackStarted = false;
 +  let reportedSeek = false, fallbackStarted = false, batchingControls = false;
++  const inheritedSettings = preparation?.settings;
++  if (inheritedSettings) {media.playbackRate=inheritedSettings.rate;media.volume=inheritedSettings.volume;media.muted=inheritedSettings.muted;}
    let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
      rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
      seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
-@@ -61,13 +61,23 @@
+@@ -61,13 +63,23 @@
      negotiationMethods.clear();
    }
    const headers = {'x-api-key': endpoint.key};
@@ -38,7 +40,7 @@
    }
    async function release(identifier) {
      if (!identifier) return true;
-@@ -97,7 +107,7 @@
+@@ -97,7 +109,7 @@
        if (descriptor) Object.defineProperty(media, key, descriptor);
        else delete media[key];
      }
@@ -47,7 +49,7 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -124,7 +134,9 @@
+@@ -124,7 +136,9 @@
        transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
                    dispose() {if (!claimed) {claimed = true; release(old);}}};
      }
@@ -58,7 +60,7 @@
        transfer, windowed, {forceH264, paused: state.paused});
    }
    async function failPreparation() {
-@@ -133,7 +145,7 @@
+@@ -133,7 +147,7 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -67,7 +69,7 @@
    }
    function delegateCommittedHls(status) {
      const start = Math.max(requestedStart, ...[status.startSeconds,status.windowOrigin].filter(Number.isFinite));
-@@ -144,16 +156,16 @@
+@@ -144,16 +158,16 @@
    function queue(command) {
      if (disposed || !native || fallbackStarted) return;
      Object.assign(pending, command);
@@ -88,7 +90,7 @@
        revision = result.revision;
      } catch {if (!disposed) failPreparation();}
      finally {
-@@ -184,13 +196,13 @@
+@@ -184,13 +198,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -104,7 +106,7 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -268,6 +280,7 @@
+@@ -268,6 +282,7 @@
            else {callbacks.onReady(); if (!state.paused) event('playing');}
          }
          const applied = value.revision >= revision && !controlBusy && !Object.keys(pending).length;
@@ -112,7 +114,7 @@
          if (reportedSeek && applied && !value.seeking) {
            state.time = value.time;
            reportedSeek = false; seekPending = null; state.seeking = false;
-@@ -283,12 +296,31 @@
+@@ -283,12 +298,29 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -123,15 +125,13 @@
    (async () => {
      try {
 -      const capability = await request('/capabilities');
-+      const standby = await preparation?.claimRecord?.(url, initialPosition);
++      const standby = await preparation?.claimRecord?.(url, initialPosition, windowed);
 +      if (disposed) {standby?.dispose(); return;}
++      state.rate=media.playbackRate || state.rate;state.volume=media.volume;state.muted=media.muted;
 +      if (preparation?.resumeInvalid) {state.time = 0; initialPosition = 0;}
 +      if (!standby && preparation?.resumeFailed) {
-+        const settings = preparation.settings;
-+        if (settings) {media.playbackRate = settings.rate; media.volume = settings.volume; media.muted = settings.muted;}
 +        delegate(false); return;
 +      }
-+      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
 +      if (standby?.mode !== 'native' && standby?.adopt) {
 +        delegated = standby.adopt(media, callbacks, () => {
 +          delegated = null;
@@ -178,7 +178,7 @@
          const context = await desktopNativeWindowContext();
          if (disposed) return;
          await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
-@@ -351,29 +383,98 @@
+@@ -351,29 +383,99 @@
          if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
          delegateCommittedHls(latest); return;
        }
@@ -264,8 +264,9 @@
 +              }
 +              if (disposed || fallbackStarted || !id || !native) return;
 +              const latest = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
-+              if (latest?.visible && latest.outputReady && latest.revision >= revision && !controlBusy && !Object.keys(pending).length) {
-+                confirmed = true; preparation?.finishRetained?.(); break;
++              if (latest && latest.revision >= revision && !controlBusy && !Object.keys(pending).length &&
++                  (canShow() ? latest.visible && latest.outputReady : !latest.visible)) {
++                confirmed = true; if (latest.visible && latest.outputReady) preparation?.finishRetained?.(); break;
 +              }
 +              await new Promise(resolve => setTimeout(resolve, 20));
 +            }
