@@ -48,7 +48,14 @@ function desktopSocialStore(endpoint) {
       entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set()}; entries.set(key, entry);
     }
     if (entry.value && entry.cursors.has(cursor)) return Promise.resolve(entry.value);
-    if (entry.pending) return entry.pending;
+    if (entry.pending) {
+      if (entry.pendingCursor === cursor) return entry.pending;
+      return entry.pending.catch(() => {}).then(() => {
+        if (entry.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        return read(resource, params);
+      });
+    }
+    entry.pendingCursor = cursor;
     if (entry.abort.signal.aborted) entry.abort = new AbortController();
     const timer = setTimeout(() => entry.abort.abort(), 15000);
     entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal).then(result => {
@@ -97,7 +104,7 @@ function DesktopSocialControls({media, sessionKey}) {
   }, [sessionKey]);
   return b.jsxs('span', {className: 'desktop-social-controls', children: [
     b.jsx(DesktopDanmakuSettings,{media,sessionKey}),
-    b.jsx('button', {className: 'desktop-social-toggle', 'aria-label': '评论与互动', 'aria-expanded': social,
+    b.jsx('button', {className: 'desktop-social-toggle', 'aria-label': '评论与互动', 'aria-pressed': social,
       'aria-controls': 'desktop-social-drawer', title: '评论、点赞数和收藏数',
       onClick: async () => {
         if (!social && document.fullscreenElement) try {await document.exitFullscreen();} catch {}

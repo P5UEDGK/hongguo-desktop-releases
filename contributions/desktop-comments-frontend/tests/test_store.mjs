@@ -38,4 +38,20 @@ assert.equal(calls.length,count+1,'reopening an entry with only later pages must
 assert.equal(calls.at(-1).url.searchParams.get('cursor'),null);
 pending.shift().resolve(page(['first'],'p2',true));assert.deepEqual((await reopen).items.map(x=>x.id),['first']);
 evicted.dispose();
+// Reopening before the later page finishes must wait and then fetch page one.
+const inflight=createStore(endpoint);
+const laterPending=inflight.read('comments',{kind:'episode',cursor:'p2'});
+const firstPending=inflight.read('comments',{kind:'episode'});
+assert.notEqual(firstPending,laterPending,'different cursors cannot share a result');
+const beforeFirst=calls.length;
+pending.shift().resolve(page(['second']));await laterPending;
+await new Promise(setImmediate);
+assert.equal(calls.length,beforeFirst+1,'page one runs after the different pending cursor');
+assert.equal(calls.at(-1).url.searchParams.get('cursor'),null);
+pending.shift().resolve(page(['first'],'p2',true));
+assert.deepEqual((await firstPending).items.map(x=>x.id),['first']);
+const third=inflight.read('comments',{kind:'series',cursor:'later'});
+const queued=inflight.read('comments',{kind:'series'});
+inflight.dispose();await assert.rejects(third,{name:'AbortError'});await assert.rejects(queued,{name:'AbortError'});
+pending.shift();
 console.log('PASS session cache, in-flight reuse, pagination, tab/reply isolation, refresh, failure retry and disposal');
