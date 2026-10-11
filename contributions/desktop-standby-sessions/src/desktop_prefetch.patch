@@ -1,6 +1,6 @@
 --- a/backend/desktop_prefetch.py
 +++ b/backend/desktop_prefetch.py
-@@ -74,20 +74,27 @@
+@@ -74,15 +74,22 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
@@ -26,29 +26,46 @@
                      self.busy = job.id
                      return
                  self.condition.wait(0.1)
+@@ -95,7 +102,7 @@
+         except Exception:
+             return False  # Optional status cannot invalidate an acquired source.
  
 -    def load_source(self, series_id, episode):
 +    def load_source(self, series_id, episode, *, prepared_source=None):
          with self.condition:
              generation = self.generation
          _, metadata = self.episode_loader(series_id)
-@@ -95,7 +102,7 @@
+@@ -103,7 +110,7 @@
          vid = next((vid for index, vid in items if index == episode), None)
          if vid is None:
              raise ValueError("Episode media identity unavailable")
 -        source = self.source_loader(vid)
 +        source = prepared_source if prepared_source is not None else self.source_loader(vid)
+         source_complete = self._source_complete(source)
          with self.condition:
              if (generation == self.generation and not self.closed
-                     and self.current == {"seriesId": str(series_id), "episode": episode}):
-@@ -121,6 +128,28 @@
+@@ -130,6 +137,41 @@
          self._report()
          return source
  
 +    def promote(self, job, series_id, episode):
 +        if job.cancelled.is_set():
 +            return
++        # Called under HlsJobs.guard: transfer the generation before a later
++        # foreground create can overtake this activation.
 +        generation = self.begin(job, series_id, episode)
++        try:
++            threading.Thread(target=self._load_promoted,
++                args=(job, series_id, episode, generation),
++                name="desktop-standby-metadata", daemon=True).start()
++        except RuntimeError:
++            if getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native":
++                self.finish(job, series_id, episode, job.source)
++
++    def _load_promoted(self, job, series_id, episode, generation):
++        with self.condition:
++            if self.closed or job.cancelled.is_set() or generation != self.generation:
++                return
 +        try:
 +            source = self.load_source(series_id, episode, prepared_source=job.source)
 +        except Exception:
@@ -66,11 +83,10 @@
 +            # diagnostic report lock, whose snapshot acquires condition.
 +            self.finish(job, series_id, episode, source)
 +
-+
      def _download(self):
          while True:
              with self.condition:
-@@ -145,6 +174,7 @@
+@@ -154,6 +196,7 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -78,7 +94,7 @@
              expected = self.foreground.get(job.id)
          mode = getattr(job, "video_mode", "h264")
          # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
-@@ -159,6 +189,9 @@
+@@ -168,6 +211,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)

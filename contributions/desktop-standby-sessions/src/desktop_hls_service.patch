@@ -64,7 +64,7 @@
                      self.on_start(job, series_id, episode)
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
-@@ -261,6 +275,9 @@
+@@ -263,6 +277,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -73,21 +73,21 @@
 +                    self.release(child.id)
              job.cancelled.set()
              if self.native:
-                 self.native.release(identifier)
-@@ -272,6 +289,37 @@
+                 if self.native.release(identifier) is False:
+@@ -275,6 +292,28 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
 +
 +    def activate(self, job):
-+        """Promote only after the renderer has applied the first visible frame.
-+
-+        Rebuild download bookkeeping asynchronously; never delay presentation
-+        on metadata/network access or run a second encoding gate.
-+        """
++        """Transfer bookkeeping synchronously; metadata remains asynchronous."""
 +        with self.guard:
-+            if job.cancelled.is_set() or job.failed or not job.prewarm_parent:
-+                return
++            if job.cancelled.is_set():
++                raise HTTPException(404, "Desktop session is unavailable")
++            if job.failed:
++                raise HTTPException(409, "Standby failed")
++            if not job.prewarm_parent:
++                return  # Already activated: idempotent success.
 +            if job.video_mode == "native":
 +                value = self.native.snapshot(job.id) if self.native else None
 +                if (not value or not value.get("visible") or not value.get("outputReady")
@@ -95,24 +95,15 @@
 +                        or value.get("revision", -1) < job.activation_revision):
 +                    raise HTTPException(409, "Standby activation not applied")
 +            job.prewarm_parent = None
-+        def promote():
-+            try:
-+                if job.cancelled.is_set():
-+                    return
-+                if self.on_activate:
++            if self.on_activate:
++                try:
 +                    self.on_activate(job, job.series_id, job.episode)
-+                    return
-+            except Exception:
-+                pass  # Speculative queue maintenance cannot stop playback.
-+        try:
-+            threading.Thread(target=promote, name="desktop-standby-promote", daemon=True).start()
-+        except RuntimeError:
-+            pass  # Playback ownership has transferred; queue refresh is optional.
-+
++                except Exception:
++                    pass  # Optional queue refresh cannot stop presentation.
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -369,7 +417,7 @@
+@@ -372,7 +411,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -121,7 +112,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -380,7 +428,11 @@
+@@ -383,7 +422,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -134,7 +125,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -471,6 +523,7 @@
+@@ -474,6 +517,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -142,7 +133,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -494,7 +547,20 @@
+@@ -497,7 +541,20 @@
              raise HTTPException(400, "Invalid native control")
          except queue.Full:
              raise HTTPException(429, "Native control queue is busy")

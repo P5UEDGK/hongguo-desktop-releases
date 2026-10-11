@@ -13,6 +13,10 @@ from desktop_hls_service import HlsJobs, make_router
 from desktop_native import NativeHost
 from desktop_prefetch import EpisodePrefetcher
 
+def eventually(predicate):
+    until=time.monotonic()+2
+    while not predicate() and time.monotonic()<until:time.sleep(.005)
+    if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
     def setUp(self):
@@ -51,6 +55,31 @@ class StandbyTests(unittest.TestCase):
         jobs.release(parent.id)
         self.assertFalse(child.cancelled.is_set())
         self.assertIsNone(child.prewarm_parent)
+
+    def test_failed_or_cancelled_activation_never_acknowledges_success(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        child.failed=True
+        with self.assertRaises(HTTPException) as failed:jobs.activate(child)
+        self.assertEqual(failed.exception.status_code,409);self.assertEqual(child.prewarm_parent,parent.id)
+        child.failed=False;child.cancelled.set()
+        with self.assertRaises(HTTPException) as cancelled:jobs.activate(child)
+        self.assertEqual(cancelled.exception.status_code,404)
+
+    def test_late_metadata_cannot_rewind_a_new_foreground_generation(self):
+        prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)
+        self.addCleanup(prefetch.close)
+        job=SimpleNamespace(id='a'*32,source=None,cancelled=threading.Event(),failed=False,video_mode='native')
+        with patch('desktop_prefetch.threading.Thread') as thread:
+            prefetch.promote(job,'1234567890123456',2)
+            target=thread.call_args.kwargs['target'];args=thread.call_args.kwargs['args']
+        self.assertEqual(prefetch.current['episode'],2,'generation moves before metadata runs')
+        next_job=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False)
+        prefetch.begin(next_job,'1234567890123457',7);generation=prefetch.generation
+        target(*args)
+        self.assertEqual(prefetch.generation,generation)
+        self.assertEqual(prefetch.current,{'seriesId':'1234567890123457','episode':7})
+        self.assertIn(next_job.id,prefetch.foreground)
 
     def test_warm_encoding_uses_existing_gate_and_does_not_advance_generation(self):
         prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *args:None)
@@ -187,6 +216,7 @@ class StandbyTests(unittest.TestCase):
         self.addCleanup(prefetch.close)
         job=SimpleNamespace(id='a'*32,source=source,cancelled=threading.Event(),failed=False,video_mode='native')
         prefetch.promote(job,'1234567890123456',2)
+        self.assertTrue(prefetch.wait_idle(2))
         self.assertIs(prefetch.current_source,source)
         self.assertEqual(prefetch.current['episode'],2)
         self.assertTrue(prefetch.snapshot()['currentSourceComplete'])
@@ -203,6 +233,7 @@ class StandbyTests(unittest.TestCase):
         prefetch.before_work(job)
         job.prewarm_parent=None
         prefetch.promote(job,'1234567890123456',2)
+        eventually(lambda:prefetch.current_source is source)
         self.assertEqual(prefetch.busy,job.id)
         self.assertIn(job.id,prefetch.foreground)
         self.assertFalse(prefetch.pending)
@@ -212,6 +243,7 @@ class StandbyTests(unittest.TestCase):
         self.assertTrue(prefetch.current_complete)
         # Completion may also precede activation (a cache hit or fast encoder).
         prefetch.promote(job,'1234567890123456',2)
+        self.assertTrue(prefetch.wait_idle(2))
         self.assertFalse(prefetch.foreground)
         self.assertTrue(prefetch.current_complete)
 
@@ -224,6 +256,7 @@ class StandbyTests(unittest.TestCase):
         job=SimpleNamespace(id='a'*32,source=self.root/'ready.mp4',cancelled=threading.Event(),
                             failed=False,video_mode='native')
         prefetch.promote(job,'1234567890123456',2)
+        self.assertTrue(prefetch.wait_idle(2))
         self.assertFalse(prefetch.foreground)
         self.assertFalse(prefetch.pending)
 
