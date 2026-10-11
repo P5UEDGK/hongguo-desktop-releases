@@ -3,6 +3,9 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import threading
+import ast
+import inspect
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('probe', Path(__file__).with_name('verify_preload.py'))
@@ -11,6 +14,34 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_actual_scenario_finally_cannot_skip_completion(self):
+        tree=ast.parse(inspect.getsource(probe))
+        scenario=next(node for node in ast.walk(tree) if isinstance(node,ast.FunctionDef) and node.name=='scenario')
+        block=next(node for node in scenario.body if isinstance(node,ast.Try) and node.finalbody)
+        module=ast.fix_missing_locations(ast.Module(body=block.finalbody,type_ignores=[]))
+        def fail(*_):raise OSError('fixture teardown failure')
+        done=threading.Event();report={'pass':True};errors=[]
+        scope=dict(vars(probe),identifier='owned',jobs=SimpleNamespace(release=fail,close=lambda:None),
+                   prefetch=SimpleNamespace(close=lambda:None),done=done,report=report,errors=errors)
+        try:exec(compile(module,'<actual-scenario-finally>','exec'),scope)
+        except OSError:pass
+        self.assertTrue(done.is_set(),'the actual verifier finally must signal despite release failure')
+        self.assertFalse(report['pass'])
+    def test_cleanup_failure_always_signals_and_attempts_every_owner(self):
+        for fault in ('release','jobs.close','prefetch.close'):
+            with self.subTest(fault=fault):
+                called=[];report={'pass':True};errors=[];done=threading.Event()
+                def action(name):
+                    called.append(name)
+                    if name==fault:raise OSError('fixture teardown failure')
+                jobs=SimpleNamespace(release=lambda _:action('release'),close=lambda:action('jobs.close'))
+                prefetch=SimpleNamespace(close=lambda:action('prefetch.close'))
+                worker=threading.Thread(target=probe.cleanup_probe,args=(jobs,prefetch,'owned',report,errors,done))
+                worker.start();worker.join(1)
+                self.assertTrue(done.is_set());self.assertFalse(worker.is_alive())
+                self.assertEqual(called,['release','jobs.close','prefetch.close'])
+                self.assertFalse(report['pass']);self.assertEqual(errors,['OSError'])
+                self.assertEqual(report['cleanupErrors'],[{'action':fault,'errorType':'OSError'}])
     def test_budget_probe_rejects_bootstrap_only_and_requires_post_pause_work(self):
         def state(size,limited=False,complete=False):
             return {'native':{'cacheFileBytes':size,'preloadLimited':limited,'cacheComplete':complete}}

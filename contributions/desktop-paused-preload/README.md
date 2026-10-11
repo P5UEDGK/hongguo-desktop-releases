@@ -41,3 +41,10 @@ pwsh -NoProfile -Command "python -I contributions/desktop-paused-preload/tests/v
 当前公开组合76项全部通过，已提供自有HEVC夹具完成可选项。缓存关闭时可选磁盘flush失败不再中断资源清理。真实自有40秒HEVC+AAC、libmpv及鉴权API复测中，正常填满与无节流8MiB硬预算均通过，验证暂停后确有新增填充、2x/3x恢复、seek及释放。1MiB在启动预读时已达限的输入被验证器明确拒绝；它不能证明暂停加载线程运行，需提高预算重测。新增缓存关闭失败回归在旧实现失败。
 
 暂停预读补丁已同步原生窗口绑定、可取消准备和控制顺序基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516。当前组合82项全部通过，含已有自有HEVC夹具；精确补丁与SHA检查通过。本机安装待完成。
+
+
+## 本轮二次反馈修复
+
+公开验证器在 release、jobs.close 或 prefetch.close 抛错时仍尝试其余清理，记录失败，并在最外层 finally 通知主线程退出。回归执行实际 scenario 的 finally；旧实现失败，当前8项验证器测试通过。
+
+本机完整候选、安装回读与反馈观察期仍待完成。

@@ -63,6 +63,21 @@ def wait_server_started(server, thread, timeout=5):
         time.sleep(.01)
 
 
+def cleanup_probe(jobs, prefetch, identifier, report, errors, done):
+    try:
+        actions = [('release', lambda: jobs.release(identifier))] if identifier else []
+        actions += [('jobs.close', jobs.close), ('prefetch.close', prefetch.close)]
+        for name, action in actions:
+            try:
+                action()
+            except BaseException as exc:
+                errors.append(type(exc).__name__)
+                report['pass'] = False
+                report.setdefault('cleanupErrors', []).append({'action': name, 'errorType': type(exc).__name__})
+    finally:
+        done.set()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', type=Path, required=True)
@@ -224,8 +239,7 @@ def main():
             report['pass']=True
         except BaseException as exc: errors.append(type(exc).__name__);report['errorType']=type(exc).__name__
         finally:
-            if identifier:jobs.release(identifier)
-            jobs.close();prefetch.close();done.set()
+            cleanup_probe(jobs, prefetch, identifier, report, errors, done)
     with patch.object(NativeSession,'forward_input',return_value=True):
         try:
             wait_server_started(server, server_thread)
