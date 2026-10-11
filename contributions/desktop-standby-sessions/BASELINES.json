@@ -1,15 +1,15 @@
 {
   "dependencies": {
     "nativePr": 204,
-    "nativeHead": "838900a0636e2b84125531001fb153202eeea16d",
+    "nativeHead": "f4f8475b465ed27e7dea69ac4851b6d63db9ae63",
     "prefetchPr": 187,
     "prefetchHead": "bd7f9baa2d39c9fe6f6a7302d518a4fcfd6fbf83"
   },
   "files": [
     {
       "path": "backend/desktop_hls_service.py",
-      "baseSha256": "2935e4048a31e4061099805f1bea9a9e22b3982869369ad2e181ba0e943d2128",
-      "patchedSha256": "a6591886688b48dcdb6d77b6bd479a910494ef2cc589f2defe05e842abd081ed"
+      "baseSha256": "7f8e45cd506e0eef1798f136c51afeab44501e595b2e6e1201fe17daf7e802b7",
+      "patchedSha256": "238ba9db55e3b43b2894d6a9efbca537b7a228ccc03370df6441db5153f83bcd"
     },
     {
       "path": "backend/desktop_native.py",
@@ -19,7 +19,7 @@
     {
       "path": "backend/desktop_prefetch.py",
       "baseSha256": "e6b636e4a68a72c5f6bff4e4bd2931439743797930c6320bf857e65e5a01e2df",
-      "patchedSha256": "861cdc475e66810caca202f12e3e6a4f9a717d5c2b7b5230064e4fdd1eb90cf4"
+      "patchedSha256": "2fd4e7a4fdb647ffcdfffa8819ebea7356a28648a7113255822f3dfa6657d488"
     },
     {
       "path": "native-tests/test_desktop_native.py",

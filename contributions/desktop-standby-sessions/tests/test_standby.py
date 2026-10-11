@@ -135,7 +135,18 @@ class StandbyTests(unittest.TestCase):
         self.enterContext(patch('desktop_hls_service.describe_streams',return_value={'copyEligible':True}))
         return jobs,prefetch
 
-    def test_stale_cold_source_is_closed_but_borrowed_source_is_not(self):
+    def test_prefetched_source_waits_for_background_owner_then_transfers(self):
+        closed=[];source=SimpleNamespace(close=lambda:closed.append(True));vid='123456780002'
+        job=SimpleNamespace(id='warm',prewarm_parent='parent',prefetch_generation=1,cancelled=threading.Event())
+        prefetch=EpisodePrefetcher(lambda _:self.fail('must reuse transferred source'),lambda _:({},[{'index':2,'vid':vid}]),self.root/'transfer',encoder=lambda *_:None)
+        prefetch.generation=1;prefetch.sources[vid]=source;prefetch.active=(1,2,vid,'h264');prefetch.pending=[(1,2,vid,'h264')]
+        returned=[];thread=threading.Thread(target=lambda:returned.append(prefetch.load_standby_source(job,'series',2)));thread.start()
+        self.assertTrue(prefetch.background_cancelled.wait(1));self.assertFalse(returned);self.assertFalse(closed)
+        with prefetch.condition:prefetch.active=None;prefetch.condition.notify_all()
+        thread.join(2);self.assertFalse(thread.is_alive());self.assertEqual(returned,[source]);self.assertNotIn(vid,prefetch.sources);self.assertFalse(prefetch.pending)
+        source.close();self.assertEqual(closed,[True]);prefetch.close()
+
+    def test_stale_cold_or_transferred_source_is_closed(self):
         from desktop_hls import EncodingCancelled
         for borrowed in (False,True):
             with self.subTest(borrowed=borrowed):
@@ -147,11 +158,12 @@ class StandbyTests(unittest.TestCase):
                 prefetch.generation=1
                 if borrowed:
                     class Sources(dict):
-                        def get(self,key):prefetch.generation=2;return source
+                        def get(self,key):return source
+                        def pop(self,key,default=None):prefetch.generation=2;return source
                     prefetch.sources=Sources()
                 try:
                     with self.assertRaises(EncodingCancelled):prefetch.load_standby_source(job,'series',2)
-                    self.assertEqual(closed,[] if borrowed else [True])
+                    self.assertEqual(closed,[True])
                 finally:prefetch.close()
 
     def test_cold_standby_loads_without_becoming_current_episode(self):
