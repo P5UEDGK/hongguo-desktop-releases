@@ -43,3 +43,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-paused-preload/tests/v
 适配最新原生音频就绪与已排队控制状态，保留用户暂停才填满缓存及隐藏备用不触发整集下载的边界。
 
 本轮组合64项：63项通过、1项可选HEVC跳过。
+
+本次回执修复与验证：仅跟随#204依赖HEAD更新，暂停整集缓存行为未新增修改；公开组合64项63通过1可选跳过。
