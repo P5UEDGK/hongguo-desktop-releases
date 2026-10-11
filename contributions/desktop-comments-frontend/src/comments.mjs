@@ -10,8 +10,10 @@ const DesktopEmojiText = props => b.jsx(emojis.Text, props);
 function desktopSocialEndpoint(session) {
   try {
     const endpoint = resolveEndpoint(session.streamUrl);
-    return {...endpoint, series: new URL(endpoint.url).searchParams.get('series_id'),
-      episode: new URL(endpoint.url).searchParams.get('ep')};
+    const params = new URL(endpoint.url).searchParams;
+    const series = params.get('series_id'), episode = params.get('ep');
+    if (!series || !episode) return null;
+    return {...endpoint, series, episode};
   } catch {return null;}
 }
 
@@ -45,7 +47,7 @@ function desktopSocialStore(endpoint) {
       if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).abort.abort(); entries.delete(oldest);}
       entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set()}; entries.set(key, entry);
     }
-    if (entry.value && (!cursor || entry.cursors.has(cursor))) return Promise.resolve(entry.value);
+    if (entry.value && entry.cursors.has(cursor)) return Promise.resolve(entry.value);
     if (entry.pending) return entry.pending;
     if (entry.abort.signal.aborted) entry.abort = new AbortController();
     const timer = setTimeout(() => entry.abort.abort(), 15000);

@@ -36,3 +36,7 @@ node contributions/desktop-comments-frontend/tests/test_store.mjs
 ## 首轮审查修复
 
 手动强制刷新只消费一次，关闭/切回选集后的普通打开重新使用缓存；新增实际 DOM 回归验证。
+
+## 剩余审查回归（2026-10-11）
+
+32项会话缓存淘汰后，若晚到的分页请求只缓存了后续页，重开仍须请求第一页；缓存命中要求该cursor确实读取过。endpoint缺少series_id或ep时返回null，不发无效社交请求。新增淘汰/重开及缺失参数回归，原缓存复用和读取测试通过。

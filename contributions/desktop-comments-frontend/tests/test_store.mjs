@@ -26,4 +26,16 @@ const retry=store.read('metrics');pending.shift().resolve({likes:4});await retry
 const old=store.read('replies',{comment_id:'pending'});store.dispose();await assert.rejects(old,{name:'AbortError'});pending.shift();
 const clean=store.read('comments',{kind:'episode'});pending.shift().resolve(page(['new-session']));await clean;assert.equal(calls.length,9);
 store.dispose();
+// A late pagination request can recreate an evicted entry without page one.
+const evicted=createStore(endpoint);
+const initial=evicted.read('comments',{kind:'episode'});pending.shift().resolve(page(['first'],'p2',true));await initial;
+for(let i=0;i<32;i++){
+  const reply=evicted.read('replies',{comment_id:String(i)});pending.shift().resolve(page(['reply']));await reply;
+}
+const later=evicted.read('comments',{kind:'episode',cursor:'p2'});pending.shift().resolve(page(['second']));await later;
+const count=calls.length,reopen=evicted.read('comments',{kind:'episode'});
+assert.equal(calls.length,count+1,'reopening an entry with only later pages must fetch page one');
+assert.equal(calls.at(-1).url.searchParams.get('cursor'),null);
+pending.shift().resolve(page(['first'],'p2',true));assert.deepEqual((await reopen).items.map(x=>x.id),['first']);
+evicted.dispose();
 console.log('PASS session cache, in-flight reuse, pagination, tab/reply isolation, refresh, failure retry and disposal');
