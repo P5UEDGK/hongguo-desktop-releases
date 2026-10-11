@@ -164,7 +164,7 @@ class EpisodePrefetcher:
         try:
             if expected is not None and source is not None and mode != "native" and not job.failed and not cancelled():
                 current_complete = self.cache.contains(source, mode, cancelled=cancelled)
-        except EncodingCancelled:
+        except Exception:
             pass  # Completion bookkeeping still releases the old foreground slot.
         with self.condition:
             generation = self.foreground.pop(job.id, None)

@@ -23,6 +23,28 @@ class ReviewEdges(unittest.TestCase):
         cache.encode(Source(),target)
         self.assertTrue((target/'complete.marker').exists())
 
+    def test_completion_callback_failure_always_releases_encoder_ownership(self):
+        value=EpisodePrefetcher(lambda _:self.source,lambda _:({},[{'index':1,'vid':'10000001'}]),self.root/'cache',encoder=encoder,profile_files=PROFILE_FILES)
+        self.addCleanup(value.close)
+        job=Job(uuid.uuid4().hex,self.root/'session');value.begin(job,'series',1)
+        source=value.load_source('series',1);value.before_work(job)
+        value.cache.available=False
+        with patch.object(value.cache,'contains',side_effect=RuntimeError('transient identity failure')):
+            value.finish(job,'series',1,source)
+        self.assertIsNone(value.busy);self.assertNotIn(job.id,value.foreground)
+        next_job=Job(uuid.uuid4().hex,self.root/'next');value.begin(next_job,'series',2)
+        value.before_work(next_job);self.assertEqual(value.busy,next_job.id)
+
+    def test_host_profile_and_video_mode_are_not_overwritten_by_cache_metadata(self):
+        class Source:
+            def __init__(self,profile):self.profile=profile
+            def cache_identity(self):return {'vid':'10000001','profile':self.profile,'videoMode':'host-owned'}
+        cache=self.cache();first,second=Source('720p'),Source('1080p')
+        a=cache.store(first,self.output)
+        self.assertFalse(cache.contains(second));self.assertFalse(cache.restore(second,self.root/'wrong-rendition'))
+        b=cache.store(second,self.output)
+        self.assertNotEqual(a,b);self.assertTrue(cache.contains(first));self.assertTrue(cache.contains(second))
+
     def test_protected_replacement_is_rejected_before_reservation(self):
         cache=self.cache();target=cache.store(self.source,self.output)
         other=self.root/'other';other.write_bytes(b'other');unrelated=cache.store(other,self.output)

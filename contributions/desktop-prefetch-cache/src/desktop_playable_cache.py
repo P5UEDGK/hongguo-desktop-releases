@@ -57,7 +57,10 @@ class PlayableEpisodeCache:
             raise ValueError("Unknown desktop video mode")
         identity = getattr(source, "cache_identity", None)
         if callable(identity):
-            value = {**identity(), "profile": self.profile}
+            host = identity()
+            if not isinstance(host, dict):
+                raise ValueError("Invalid source cache identity")
+            value = {"host": host, "profile": self.profile}
         else:
             source = Path(source)
             info = source.stat()
@@ -165,7 +168,9 @@ class PlayableEpisodeCache:
                 if manifest["files"][name] != {"bytes": item.stat().st_size, "sha256": self._digest(item, cancelled)}:
                     return None
             return directory, names
-        except (OSError, ValueError, KeyError, TypeError):
+        except EncodingCancelled:
+            raise
+        except Exception:
             return None
 
     def contains(self, source, video_mode="h264", *, cancelled=lambda: False):
@@ -323,7 +328,9 @@ class PlayableEpisodeCache:
                 if self.restore(source, directory, cancelled, video_mode=video_mode):
                     on_ready()
                     return
-            except OSError:
+            except EncodingCancelled:
+                raise
+            except Exception:
                 pass
         if start_seconds:
             extra = {"video_mode": "copy"} if video_mode == "copy" else {}
@@ -334,5 +341,7 @@ class PlayableEpisodeCache:
             self.encoder(source, directory, on_ready, cancelled=cancelled, **extra)
             try:
                 self.store(source, directory, cancelled, video_mode=video_mode)
-            except (OSError, ValueError, TypeError):
+            except EncodingCancelled:
+                raise
+            except Exception:
                 pass
