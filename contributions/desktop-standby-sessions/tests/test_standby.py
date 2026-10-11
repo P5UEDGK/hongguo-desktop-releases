@@ -19,6 +19,26 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_fast_metadata_starts_after_parent_detach_and_finishes_bookkeeping(self):
+        observed=[]
+        source=self.root/'prepared.mp4';source.write_bytes(b'prepared')
+        def metadata(_):
+            observed.append(child.prewarm_parent)
+            return {},[{'index':2,'vid':'1234567890123456'}]
+        prefetch=EpisodePrefetcher(lambda _:source,metadata,self.root/'cache',encoder=lambda *_:None)
+        self.addCleanup(prefetch.close)
+        prefetch.cache.contains=lambda *_,**kw:True
+        jobs,_=self.jobs();jobs.on_start=prefetch.begin;jobs.on_activate=prefetch.promote
+        parent=jobs.create('1234567890123456',1);prefetch.foreground.clear()
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        child.video_mode='copy';child.source=source;child._prefetch_work_finished=True
+        with patch('desktop_prefetch.threading.Thread') as thread:
+            thread.return_value.start.side_effect=lambda:thread.call_args.kwargs['target'](*thread.call_args.kwargs['args'])
+            jobs.activate(child)
+        self.assertEqual(observed,[None],'even an immediate metadata daemon must see detached ownership')
+        self.assertTrue(prefetch.current_complete)
+        self.assertNotIn(child.id,prefetch.foreground)
+
     def test_expired_activation_does_not_replace_newer_generation_or_clear_parent(self):
         prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)
         self.addCleanup(prefetch.close)
@@ -83,7 +103,7 @@ class StandbyTests(unittest.TestCase):
             job=SimpleNamespace(id=mode,source=None,cancelled=threading.Event(),failed=False,video_mode=mode,
                                 _prefetch_work_finished=True)
             with patch('desktop_prefetch.threading.Thread') as thread:
-                prefetch.promote(job,'1234567890123456',2)
+                prefetch.promote(job,'1234567890123456',2)()
                 args=thread.call_args.kwargs['args']
             prefetch.busy=job.id;job.cancelled.set();prefetch._load_promoted(*args)
             self.assertNotIn(job.id,prefetch.foreground);self.assertIsNone(prefetch.busy)
@@ -141,7 +161,7 @@ class StandbyTests(unittest.TestCase):
         self.addCleanup(prefetch.close)
         job=SimpleNamespace(id='a'*32,source=None,cancelled=threading.Event(),failed=False,video_mode='native')
         with patch('desktop_prefetch.threading.Thread') as thread:
-            prefetch.promote(job,'1234567890123456',2)
+            prefetch.promote(job,'1234567890123456',2)()
             target=thread.call_args.kwargs['target'];args=thread.call_args.kwargs['args']
         self.assertEqual(prefetch.current['episode'],2,'generation moves before metadata runs')
         next_job=SimpleNamespace(id='b'*32,cancelled=threading.Event(),failed=False)
@@ -300,7 +320,7 @@ class StandbyTests(unittest.TestCase):
                                   self.root/'cache',encoder=unexpected)
         self.addCleanup(prefetch.close)
         job=SimpleNamespace(id='a'*32,source=source,cancelled=threading.Event(),failed=False,video_mode='native')
-        prefetch.promote(job,'1234567890123456',2)
+        prefetch.promote(job,'1234567890123456',2)()
         self.assertTrue(prefetch.wait_idle(2))
         self.assertIs(prefetch.current_source,source)
         self.assertEqual(prefetch.current['episode'],2)
@@ -317,7 +337,7 @@ class StandbyTests(unittest.TestCase):
                             video_mode='h264',prewarm_parent='b'*32,prefetch_generation=prefetch.generation)
         prefetch.before_work(job)
         job.prewarm_parent=None
-        prefetch.promote(job,'1234567890123456',2)
+        prefetch.promote(job,'1234567890123456',2)()
         eventually(lambda:prefetch.current_source is source)
         self.assertEqual(prefetch.busy,job.id)
         self.assertIn(job.id,prefetch.foreground)
@@ -327,7 +347,7 @@ class StandbyTests(unittest.TestCase):
         self.assertFalse(prefetch.foreground)
         self.assertTrue(prefetch.current_complete)
         # Completion may also precede activation (a cache hit or fast encoder).
-        prefetch.promote(job,'1234567890123456',2)
+        prefetch.promote(job,'1234567890123456',2)()
         self.assertTrue(prefetch.wait_idle(2))
         self.assertFalse(prefetch.foreground)
         self.assertTrue(prefetch.current_complete)
@@ -340,7 +360,7 @@ class StandbyTests(unittest.TestCase):
             'diagnostic report lock must not be acquired while holding scheduler condition')
         job=SimpleNamespace(id='a'*32,source=self.root/'ready.mp4',cancelled=threading.Event(),
                             failed=False,video_mode='native')
-        prefetch.promote(job,'1234567890123456',2)
+        prefetch.promote(job,'1234567890123456',2)()
         self.assertTrue(prefetch.wait_idle(2))
         self.assertFalse(prefetch.foreground)
         self.assertFalse(prefetch.pending)

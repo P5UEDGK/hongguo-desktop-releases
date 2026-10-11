@@ -56,10 +56,10 @@
 +                    except Exception:
 +                        pass  # Preserve the original control failure.
 +                raise
- 
+
      def release(self, identifier):
          with self.guard:
-@@ -362,7 +397,8 @@
+@@ -368,7 +403,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -69,7 +69,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -538,6 +574,7 @@
+@@ -544,6 +580,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

@@ -12,7 +12,7 @@
 
 原生outputReady后提交可见控制，后端先等旧音频暂停ACK再提交新控制；失败恢复已接受的父暂停意图。control只表示排队成功，前端还须确认visible/outputReady/revision，再POST /{id}/activate。HLS首帧就绪后POST activate。激活在会话锁内原子比较代际并迁移，过期返回409且保留父关系，不会把新前台任务取消。重复成功激活幂等；失败/取消不会返回虚假成功。
 
-提升复用prepared source，仅异步刷新元数据及未来下载。过时元数据不覆盖新代际，已经结束的任务释放foreground；未结束HLS继续保留原编码槽直到实际完成。释放父会话级联取消未提升子会话，提升后子会话独立。沿用总会话上限、编码信号量、到期回收和shutdown close。
+提升复用prepared source，同步迁移代际后返回延迟启动函数；HlsJobs清除父关系并退出会话锁后才调用它，随后异步刷新元数据及未来下载。不可在promote内提前启动元数据线程。过时元数据不覆盖新代际，已经结束的任务释放foreground；未结束HLS继续保留原编码槽直到实际完成。释放父会话级联取消未提升子会话，提升后子会话独立。沿用总会话上限、编码信号量、到期回收和shutdown close。
 
 ## 验证与回滚
 
@@ -20,6 +20,8 @@
 pwsh -NoProfile -Command "python -I contributions/desktop-standby-sessions/tests/run.py --native-package <native-contribution-dir> --prefetch-package <prefetch-contribution-dir>"
 ```
 
-公开组合144项：143通过、1项可选HEVC样本测试跳过。包含原生资源池、缓存/下载、单处理槽、代际/取消、控制失败恢复和迟到激活。私有融合候选另通过138项及真实Tauri原生/HLS 1x/2x/3x状态检查，不能代替上游实际接入与连续画面验收。
+公开组合158项全部通过，已提供自有HEVC夹具完成可选项。包含原生资源池、缓存/下载、单处理槽、代际/取消、控制失败恢复和迟到激活。私有融合候选另通过138项及真实Tauri原生/HLS 1x/2x/3x状态检查，不能代替上游实际接入与连续画面验收。
 
 用户已确认上一批本机黑屏消失，本轮继续处理短暂停顿；上游发行版是否解决需接入发布后验证。回滚撤销补丁及on_activate接线，保留用户原片和观看记录。[Issue关闭条件](ISSUES.md)，不自动关闭。
+
+补丁基线已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee及#187的8f28b71bd9c59a6a47e31413f7be3f486d81ab0b，保留异步诊断writer和原生源一致性修复。新增立即完成元数据的确定性回归，证明先解除父关系再完成foreground清理；旧实现失败，当前组合通过。
