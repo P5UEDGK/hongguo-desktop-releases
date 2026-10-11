@@ -8,7 +8,7 @@ import zlib
 from pathlib import Path
 
 def validate_name(name):
-    if not isinstance(name,str) or not re.fullmatch(r'\[[^\[\]\r\n]{1,16}\]',name):
+    if not isinstance(name,str) or not re.fullmatch(r'\[[^\[\]\r\n]{1,16}\]',name) or any(0xD800<=ord(char)<=0xDFFF for char in name):
         raise ValueError('Invalid emoji name')
 
 def load_assets(path):

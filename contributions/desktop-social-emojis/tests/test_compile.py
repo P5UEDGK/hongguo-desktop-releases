@@ -14,6 +14,16 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_surrogate_mapping_rejected_before_opening_images(self):
+        import json
+        for point in (0xD800,0xDBFF,0xDC00,0xDFFF):
+            tag=json.loads('"[\\u%04x]"'%point)
+            with self.subTest(point=point),patch('PIL.Image.open') as opened:
+                with self.assertRaisesRegex(ValueError,'name'):
+                    compiler.compile_assets({tag:'never-open.png'})
+                opened.assert_not_called()
+        compiler.validate_mapping({'[😀]':'valid.png'})
+
     def test_generated_png_strips_non_orientation_exif(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:

@@ -7,6 +7,17 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from desktop_emoji_assets import validate_assets,catalog
 FIXTURE={'[测试]':{'src':'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','resolution':1,'drawing':[{'color':[255,0,0],'alpha':1,'paths':[[[0,0],[1,0],[1,1],[0,1]]]}]}}
 class EmojiTests(unittest.TestCase):
+    def test_json_surrogate_tags_are_rejected_but_non_bmp_tags_roundtrip(self):
+        import json
+        for point in (0xD800,0xDBFF,0xDC00,0xDFFF):
+            tag=json.loads('"[\\u%04x]"'%point)
+            with self.subTest(point=point),self.assertRaisesRegex(ValueError,'name'):
+                validate_assets({tag:copy.deepcopy(FIXTURE['[测试]'])})
+        tag=json.loads('"[\\ud83d\\ude00]"')
+        assets=validate_assets({tag:copy.deepcopy(FIXTURE['[测试]'])})
+        self.assertIn(tag,assets)
+        json.dumps(assets,ensure_ascii=False).encode('utf8')
+
     def test_png_transparency_validates_palette_order_and_cardinality(self):
         def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
         header=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1,1,8,3,0,0,0))
