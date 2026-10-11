@@ -26,6 +26,15 @@ class RangeTests(unittest.TestCase):
         (self.path / "index.m3u8").write_text(text, encoding="utf-8")
         (self.path / "complete.marker").write_text("desktop-hls-v1\n", encoding="ascii")
 
+    def test_trailing_duration_duplicate_fragment_and_future_version_are_rejected(self):
+        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf-8')
+        for body in (original+'#EXTINF:2,\n',
+                     original.replace('#EXT-X-ENDLIST','#EXTINF:2,\nseg000000.m4s\n#EXT-X-ENDLIST'),
+                     original.replace('#EXT-X-VERSION:7','#EXT-X-VERSION:999')):
+            with self.subTest(body=body):
+                playlist.write_text(body,encoding='utf-8')
+                self.assertEqual(playable_range(self.job),[0,0])
+
     def test_single_endlist_is_valid_before_or_between_media_tags(self):
         self.output();self.job.done.set();playlist=self.path/'index.m3u8'
         body=playlist.read_text(encoding='utf-8').replace('#EXT-X-ENDLIST\n','')

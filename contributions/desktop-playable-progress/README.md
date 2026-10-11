@@ -81,3 +81,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 可选full_cache_ready索引失败（含sqlite异常）降级实际会话范围。 Python23项及Node6项通过。
 
 普通可播覆盖拒绝I-FRAMES-ONLY清单，单帧trick-play片段不能算整集音视频。当前Python24项及Node6项通过。
+
+恢复既有可播范围契约。完整片段之后仍有悬空EXTINF、重复片段URI或未来HLS版本均不报告可播。Python25项、Node6项通过。

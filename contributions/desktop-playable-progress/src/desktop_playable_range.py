@@ -47,11 +47,13 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
             prefix = "#EXT-X-" + tag + ":"
             values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
             if (len(values) != 1 or not re.fullmatch(r"[0-9]{1,20}", values[0])
-                    or int(values[0]) < minimum):
+                    or int(values[0]) < minimum
+                    or (tag == "VERSION" and int(values[0]) > 7)):
                 return [0, 0]
             parameters[tag] = int(values[0])
         available, pending, count, incomplete = 0.0, None, 0, False
         mapped, ended = False, False
+        seen = set()
         for line in lines:
             if line.startswith("#EXT-X-MAP:"):
                 if line != '#EXT-X-MAP:URI="init.mp4"':
@@ -72,8 +74,9 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
                     return [0, 0]
                 ended = True
             elif line and not line.startswith("#"):
-                if not mapped or pending is None or not re.fullmatch(r"seg[0-9]{6}\.m4s", line):
+                if not mapped or pending is None or line in seen or not re.fullmatch(r"seg[0-9]{6}\.m4s", line):
                     return [0, 0]
+                seen.add(line)
                 fragment = job.directory / line
                 if not incomplete:
                     if not fragment.is_file() or fragment.is_symlink() or fragment.stat().st_size == 0:
@@ -82,7 +85,7 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
                         available += pending
                         count += 1
                 pending = None
-        if not count:
+        if not count or pending is not None:
             return [0, 0]
         end = min(duration, origin + available)
         if (job.done.is_set() and not incomplete and pending is None
