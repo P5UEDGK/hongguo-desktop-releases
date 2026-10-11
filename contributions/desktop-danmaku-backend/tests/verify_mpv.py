@@ -33,13 +33,14 @@ try:
         caption=ass_document([{'text':'fixture caption','offset_ms':0,'lane':0}])
         player.command('sub-add','memory://'+caption,'select','original caption')
         original=player.get('sid');assert original and original.isdigit()
-        original_options={'sub-ass-override':'force','secondary-sub-ass-override':'strip','sub-delay':'1.25','secondary-sub-delay':'-0.75'}
+        original_options={'sub-ass-override':'force','secondary-sub-ass-override':'strip','sub-delay':'1.25','secondary-sub-delay':'-0.75','sub-visibility':'no','secondary-sub-visibility':'yes'}
         for name,value in original_options.items():player.command('set',name,value)
         original_options={name:player.get(name) for name in original_options}
         override=player.get('secondary-sub-ass-override')
         track=DanmakuTrack();track.update({'danmaku':[{'text':'overlay','offset_ms':0,'lane':1}]});track.apply(player)
         assert not track.failed and player.get('secondary-sid')==original and player.get('sid')==track.track_id
         assert player.get('sub-ass-override')=='no' and float(player.get('sub-delay'))==0
+        assert player.get('sub-visibility')=='yes' and player.get('secondary-sub-visibility')=='no'
         assert player.get('secondary-sub-ass-override')=='force' and float(player.get('secondary-sub-delay'))==1.25
         track.update({'danmaku':[]});track.apply(player)
         assert not track.failed and player.get('sid')==original and player.get('secondary-sid')=='no'

@@ -27,6 +27,7 @@ class DanmakuTrack:
         if items != self.items or settings != self.settings or self.failed:
             self.items, self.settings = items, settings
             self.dirty = True
+            if not items: self.retry_at = 0
 
     def source_reloaded(self):
         # Old IDs belong to the discarded file, never remove them in the new one.
@@ -52,7 +53,8 @@ class DanmakuTrack:
         self.saved = (primary, secondary, player.get('secondary-sub-ass-override') or 'strip')
         self.saved_options = {name:player.get(name) or default for name,default in (
             ('sub-ass-override','scale'),('secondary-sub-ass-override','strip'),
-            ('sub-delay','0'),('secondary-sub-delay','0'))}
+            ('sub-delay','0'),('secondary-sub-delay','0'),
+            ('sub-visibility','yes'),('secondary-sub-visibility','yes'))}
 
     def set_option(self, player, name, value):
         if str(player.get(name)) != str(value):
@@ -88,6 +90,7 @@ class DanmakuTrack:
         # ASS motion is absolute video time, independent of caption overrides.
         self.set_option(player, 'sub-ass-override', 'no')
         self.set_option(player, 'sub-delay', '0')
+        self.set_option(player, 'sub-visibility', 'yes')
         if not self.selected(self.saved[0]):
             return
         primary = self.saved[0]
@@ -99,6 +102,7 @@ class DanmakuTrack:
         self.promoted = True
         self.set_option(player, 'secondary-sub-ass-override', self.saved_options['sub-ass-override'])
         self.set_option(player, 'secondary-sub-delay', self.saved_options['sub-delay'])
+        self.set_option(player, 'secondary-sub-visibility', self.saved_options['sub-visibility'])
         if str(player.get('secondary-sid')) != str(primary):
             player.command('set', 'secondary-sid', primary)
 
@@ -126,16 +130,17 @@ class DanmakuTrack:
         self.dirty = False
         try:
             if self.reload_options: self.restore_options(player)
-            self.remove_pending(player)
             document = ass_document(self.items, self.settings, assets=self.assets) if self.items else ''
             if not any(line.startswith('Dialogue:') for line in document.splitlines()):
                 document = ''
+            if document: self.remove_pending(player)
             if document == self.document:
                 if document: self.show_captions(player)
                 else:
                     self.restore_captions(player)
                     self.saved = None
                     self.promoted = False
+                    self.remove_pending(player)
                 self.failed = False
                 return
             previous = self.track_id
@@ -160,6 +165,7 @@ class DanmakuTrack:
                     player.command('sub-remove', previous)
                 self.track_id, self.document, self.saved = None, '', None
                 self.promoted = False
+                self.remove_pending(player)
             self.failed = False
         except (RuntimeError, ValueError, TypeError, KeyError):
             # Retry on the video owner thread at most once a second; never stop A/V.

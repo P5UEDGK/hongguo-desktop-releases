@@ -10,7 +10,7 @@
 
 将 src 的两个模块加入后端 import 路径，依次应用 patches/native-danmaku.patch、patches/native-events.patch。补丁基于公开 #204 的 desktop_native.py/frontend-native.js；集成到私有源码时按同名契约接线，先检查上下文。
 
-补丁已重定位到 #204 的 `6223e50`，保留播放器复用、持续丢帧检测和播放意图追踪。随后可应用 #210 的原生布局补丁；应用前仍应执行 `git apply --check`，不要用旧播放器文件覆盖新修复。
+补丁已重定位到 #204 的 `c7bfbc2`，保留播放器复用、持续丢帧检测和播放意图追踪。随后可应用 #210 的原生布局补丁；应用前仍应执行 `git apply --check`，不要用旧播放器文件覆盖新修复。
 
 DanmakuTrack 只在日程/设置变化时创建有绝对视频时间的 ASS 轨道。普通 time-pos 轮询不清空或重建；libass 在视频呈现时钟上移动字幕，因此暂停冻结、seek 与倍速跟随原播放器。替换时先 add/select 新轨道，再 remove 本包拥有的旧轨道，不移除其他轨道。MPV_EVENT_FILE_LOADED(8) 后重新加载。
 
@@ -58,3 +58,10 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 运行中用户选择字幕后，重新选择本包弹幕并保留新字幕；源重载、取消失败的 sub-add 不再沿用旧字幕状态。两个字幕位的 ASS override 与 delay 按实际修改值保存、迁移和恢复，主弹幕使用 no 与零延迟，数字属性按 mpv 回读的规范值比较。旧代码回放失败，当前20项 Python 与实际 libmpv 验证通过。控制行可选 motion_start_ms（整数 -24000..86400000），与 #209 共用在途调速进度；ASS 将负起点裁至零并换算初始位置，offset_ms 仍保留原始评论时间。
 
 本机完整候选、安装回读与反馈观察期仍待完成。
+
+
+## 本轮三次反馈修复
+
+关闭弹幕先恢复字幕并清理当前轨道，再重试旧的待移除ID，旧ID清理失败不能挡住关闭。保存主/副字幕可见性，弹幕占用的主槽设为可见，提升的字幕沿用原可见状态，关闭后恢复。两个旧回放失败；当前22项与实际libmpv检查通过。原生事件补丁对齐 #204 c7bfbc2ea269af4013ab971467d9ef68dc207b9a。
+
+本机候选与安装仍待完成。

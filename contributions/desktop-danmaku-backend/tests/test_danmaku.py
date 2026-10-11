@@ -7,7 +7,7 @@ from desktop_danmaku_track import DanmakuTrack
 
 ITEM={'text':'safe{\\pos(0,0)}[unknown]👍','offset_ms':1000,'lane':0}
 class Player:
-    def __init__(self): self.commands=[]; self.sid=0; self.fail=False; self.properties={'sid':'no','secondary-sid':'no','secondary-sub-ass-override':'strip','sub-ass-override':'scale','sub-delay':'0','secondary-sub-delay':'0'};self.fail_remove=False
+    def __init__(self): self.commands=[]; self.sid=0; self.fail=False; self.properties={'sid':'no','secondary-sid':'no','secondary-sub-ass-override':'strip','sub-ass-override':'scale','sub-delay':'0','secondary-sub-delay':'0','sub-visibility':'yes','secondary-sub-visibility':'yes'};self.fail_remove=False
     def command(self,*args):
         if self.fail: raise RuntimeError('test failure')
         if self.fail_remove and args[0]=='sub-remove':raise RuntimeError('remove failure')
@@ -19,6 +19,26 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_disabled_primary_caption_remains_hidden_after_overlay_and_restore(self):
+        p=Player();p.properties.update({'sid':'7','sub-visibility':'no','secondary-sub-visibility':'yes'})
+        original=dict(p.properties);track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertEqual(p.get('sub-visibility'),'yes');self.assertEqual(p.get('secondary-sub-visibility'),'no')
+        track.update({'danmaku':[]});track.apply(p);self.assertEqual(p.properties,original)
+
+    def test_disabling_clears_live_track_despite_stale_removal_failure(self):
+        p=Player();p.properties['sid']='7';clock=[0];track=DanmakuTrack(clock=lambda:clock[0])
+        track.update({'danmaku':[ITEM]});track.apply(p)
+        command=p.command
+        def failed_old(*args):
+            if args==('sub-remove','1'):raise RuntimeError('old unselected track removal failed')
+            command(*args)
+        p.command=failed_old
+        track.update({'danmaku':[{**ITEM,'text':'replacement'}]});track.apply(p)
+        self.assertEqual(track.track_id,'2');self.assertEqual(track.pending_removals,{'1'})
+        track.update({'danmaku':[]});track.apply(p)
+        self.assertIsNone(track.track_id);self.assertEqual(p.get('sid'),'7')
+        self.assertIn(('sub-remove','2'),p.commands);self.assertEqual(track.pending_removals,{'1'})
+
     def test_retimed_negative_origin_matches_dom_phase_and_clips_ass_start(self):
         item={**ITEM,'offset_ms':0,'text':'甲乙','motion_start_ms':-5000}
         settings={**DEFAULT_SETTINGS,'duration':24}
