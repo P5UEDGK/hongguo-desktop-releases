@@ -105,6 +105,17 @@ try{
  check(await page.evaluate(()=>toggleCount===3),'toolbar click does not toggle twice through the stage');
  const playBox=await page.getByRole('button',{name:'播放或暂停',exact:true}).boundingBox(), iconBox=await page.locator('.player-toolbar > button > svg').boundingBox();
  check(Math.abs(iconBox.x+iconBox.width/2-playBox.x-playBox.width/2)<.5&&Math.abs(iconBox.y+iconBox.height/2-playBox.y-playBox.height/2)<.5,'play icon and hover background share a center under host button styles');
+ const wrapped=await page.evaluate(()=>{
+   const toolbar=document.querySelector('.player-toolbar'),chrome=document.querySelector('.player-chrome');
+   const original=toolbar.style.cssText,before=chrome.getBoundingClientRect().height;
+   toolbar.style.width='220px';const extra=[];
+   for(let i=0;i<6;i++){const button=toolbar.firstElementChild.cloneNode(true);button.dataset.wrapFixture='true';toolbar.append(button);extra.push(button);}
+   const rect=toolbar.getBoundingClientRect(),height=chrome.getBoundingClientRect().height;
+   const contained=[...toolbar.children].every(n=>{const r=n.getBoundingClientRect();return r.left>=rect.left-.5&&r.right<=rect.right+.5&&r.bottom<=rect.bottom+.5;});
+   extra.forEach(n=>n.remove());toolbar.style.cssText=original;
+   return {contained,grows:height>before};
+ });
+ check(wrapped.contained&&wrapped.grows,'narrow toolbar wraps all controls within the video and grows its reserved band');
  const initial=await page.locator('.desktop-player').boundingBox();
  await page.getByRole('button',{name:'打开选集',exact:true}).click();
  const wide=await page.locator('video').boundingBox();

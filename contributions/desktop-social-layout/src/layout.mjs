@@ -7,6 +7,7 @@ export function installSocialStyles() {
       .desktop-danmaku span{font-weight:400}
       .desktop-social-controls{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
       .desktop-player-layout{height:100%;overflow:hidden;contain:size}
+      .desktop-player .player-toolbar{flex-wrap:wrap;height:auto;min-height:32px}
       .desktop-player .player-toolbar > button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 32px;box-sizing:border-box;width:32px;height:32px;padding:0;line-height:1}
       .desktop-player .player-toolbar > button > svg{display:block;flex:none}
       .desktop-danmaku-control{display:inline-flex;align-items:center;gap:0}
