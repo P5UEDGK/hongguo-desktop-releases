@@ -19,6 +19,16 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_filtered_schedule_does_not_select_an_empty_ass_track(self):
+        p=Player();p.properties['sid']='7';track=DanmakuTrack()
+        track.update({'danmaku':[{**ITEM,'lane':5}], 'danmakuSettings':{**DEFAULT_SETTINGS,'lanes':1}})
+        track.apply(p)
+        self.assertEqual(track.loads,0);self.assertEqual(p.commands,[]);self.assertEqual(p.get('sid'),'7')
+        track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertEqual(track.loads,1)
+        track.update({'danmaku':[{**ITEM,'lane':5}]});track.apply(p)
+        self.assertIsNone(track.track_id);self.assertEqual(p.get('sid'),'7')
+
     def test_bounds(self):
         self.assertEqual(validate_settings(DEFAULT_SETTINGS),DEFAULT_SETTINGS)
         for bad in ({**DEFAULT_SETTINGS,'duration':True},{**DEFAULT_SETTINGS,'opacity':0},{'duration':14}):

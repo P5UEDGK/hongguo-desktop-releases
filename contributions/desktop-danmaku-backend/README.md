@@ -47,3 +47,5 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 移除ASS运动宽度的6000上限；200个中日韩字符、36px字号按7200宽度完整移出画面。输入长度与条数边界继续生效，13项Python回归通过。
 
 原生事件补丁已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee，保留其首帧、源一致性、输出预算及几何监听修复。与布局包两份补丁按依赖顺序精确应用，原生校验和前端桥接回归通过。
+
+无Dialogue事件的ASS作为空日程处理，不选择空字幕轨；已有owned轨会按原清理流程移除并恢复原字幕。14项Python与真实libmpv的原字幕保留/恢复通过，旧空日程回归失败。所用libmpv及[当前手册](https://mpv.io/manual/stable/#options-secondary-sub-ass-override)支持secondary-sub-ass-override的no/yes/scale/force/strip枚举，实际scale设置与恢复成功；不按旧版布尔限制改写当前枚举。

@@ -82,6 +82,8 @@ class DanmakuTrack:
         try:
             self.remove_pending(player)
             document = ass_document(self.items, self.settings, assets=self.assets) if self.items else ''
+            if not any(line.startswith('Dialogue:') for line in document.splitlines()):
+                document = ''
             if document == self.document:
                 if document: self.show_captions(player)
                 self.failed = False
