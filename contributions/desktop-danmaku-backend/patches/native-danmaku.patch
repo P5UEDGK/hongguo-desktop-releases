@@ -6,10 +6,10 @@
  import uuid
 +from desktop_danmaku import validate_danmaku, validate_settings
 +from desktop_danmaku_track import DanmakuTrack
-
+ 
  DLL_SHA256 = "34780746a0273a4fcae42dfe262a28984a426a238939474afd3a1561b450bbef"
-
-
+ 
+ 
  def validate_control(body):
      if not isinstance(body, dict) or not body or set(body) - {
 -            "paused", "rate", "volume", "muted", "seek", "rect", "visible"}:
@@ -28,10 +28,10 @@
 +    if 'danmakuSettings' in body:
 +        result['danmakuSettings'] = validate_settings(body['danmakuSettings'])
 +    return result
-
-
+ 
+ 
  class Event(C.Structure):
-@@ -358,6 +365,7 @@
+@@ -428,6 +435,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -39,7 +39,7 @@
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
-@@ -439,6 +447,8 @@
+@@ -509,6 +517,8 @@
                          break
                      if event.id == 21:  # MPV_EVENT_PLAYBACK_RESTART: first frame has restarted.
                          frame_ready = True
@@ -48,15 +48,15 @@
                      if event.id == 7 and event.data:
                          fields = C.cast(event.data, C.POINTER(C.c_int))
                          if fields[0] == 4 or fields[1] < 0:
-@@ -459,6 +469,7 @@
+@@ -529,6 +539,7 @@
                          user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
 +                    danmaku_track.update(command)
-                     for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
-                         if key in command:
-                             value = command[key]
-@@ -485,6 +496,7 @@
+                     if command.get("paused") is True:
+                         desired["paused"] = True
+                         player.command("set", "pause", "yes")
+@@ -562,6 +573,7 @@
                  # hardware capability string or successful loadfile command.
                  hwdec = player.get("hwdec-current")
                  position = player.number("time-pos", self.job.start_seconds)
@@ -64,7 +64,7 @@
                  paused = player.get("pause") == "yes"
                  seeking = player.get("seeking") == "yes"
                  eof = player.get("eof-reached") == "yes"
-@@ -540,7 +552,8 @@
+@@ -617,7 +629,8 @@
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),

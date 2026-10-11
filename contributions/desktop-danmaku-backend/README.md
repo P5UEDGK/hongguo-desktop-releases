@@ -49,3 +49,5 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 原生事件补丁已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee，保留其首帧、源一致性、输出预算及几何监听修复。与布局包两份补丁按依赖顺序精确应用，原生校验和前端桥接回归通过。
 
 无Dialogue事件的ASS作为空日程处理，不选择空字幕轨；已有owned轨会按原清理流程移除并恢复原字幕。14项Python与真实libmpv的原字幕保留/恢复通过，旧空日程回归失败。所用libmpv及[当前手册](https://mpv.io/manual/stable/#options-secondary-sub-ass-override)支持secondary-sub-ass-override的no/yes/scale/force/strip枚举，实际scale设置与恢复成功；不按旧版布尔限制改写当前枚举。
+
+原生内核和事件补丁同步 6223e50a7f470065f6cbd5d4dc520690c2e8e516。弹幕更新保留在命令循环内，暂停、音频、seek和解除暂停仍按原生owner的新顺序执行；四份社交补丁精确组合、校验函数和Node桥接回归通过。本机安装待完成。
