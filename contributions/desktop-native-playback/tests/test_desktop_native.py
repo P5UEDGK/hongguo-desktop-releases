@@ -49,8 +49,15 @@ class NativeTests(unittest.TestCase):
         self.assertTrue(any(values),'moving audio clock cannot hide sustained decoder loss')
         self.assertFalse(any(values[:20]))
 
+    def test_normal_rate_vo_overload_triggers_recovery(self):
+        watch=FrameDropWatch()
+        values=[watch.observe(n/10,n*3,0,30,1,True) for n in range(31)]
+        self.assertTrue(any(values));self.assertFalse(any(values[:20]))
+        # Changing speed starts a fresh evidence interval.
+        self.assertFalse(watch.observe(3.1,1000,0,30,2,True))
+
     def test_rate_induced_vo_drops_do_not_trigger_decoder_recovery(self):
-        for fps,rate in [(60,2),(30,4),(30,1)]:
+        for fps,rate in [(60,2),(30,4)]:
             watch=FrameDropWatch()
             for n in range(31):
                 self.assertFalse(watch.observe(n/10,n*6,0,fps,rate,True))

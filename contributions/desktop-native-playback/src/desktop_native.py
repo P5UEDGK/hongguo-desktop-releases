@@ -328,19 +328,18 @@ class FrameDropWatch:
         self.growth=None
 
     def observe(self, now, output_drops, decoder_drops, fps, rate, active):
-        # VO drops include frames intentionally omitted at high playback rates.
-        # Decoder drops provide recovery evidence; stalled output has its own watch.
-        total=max(0,decoder_drops)
-        if not active or self.samples and total < self.samples[-1][1]:
+        decoder,output=max(0,decoder_drops),max(0,output_drops)
+        if not active or self.samples and (decoder<self.samples[-1][1] or output<self.samples[-1][2] or rate!=self.samples[-1][3]):
             self.samples.clear();self.growth=None
-        if not active:
-            return False
-        if self.samples and total>self.samples[-1][1]:self.growth=now
-        self.samples.append((now,total))
+        if not active:return False
+        if self.samples and (decoder>self.samples[-1][1] or output>self.samples[-1][2]):self.growth=now
+        self.samples.append((now,decoder,output,rate))
         while len(self.samples)>2 and self.samples[1][0]<=now-2:self.samples.popleft()
-        elapsed=now-self.samples[0][0]
+        first=self.samples[0];elapsed=now-first[0]
+        # Discount frames skipped by playback acceleration without hiding VO overload.
+        loss=max(decoder-first[1],output-first[2]-max(1,fps)*max(0,rate-1)*elapsed)
         return (elapsed>=2 and self.growth is not None and now-self.growth<=.5
-                and total-self.samples[0][1]>=max(10,max(1,fps)*max(.25,rate)*elapsed*.5))
+                and loss>=max(10,max(1,fps)*max(.25,rate)*elapsed*.5))
 
 
 class NativeSession:

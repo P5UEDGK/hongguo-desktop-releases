@@ -137,7 +137,8 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     finishNegotiation();
     if (disposed) return;
     if (!stopped) {callbacks.onComplete?.(false);callbacks.onError?.();return;}
-    let transfer = forceH264 ? null : preparation;
+    if (forceH264) {preparation?.dispose(); preparation = null;}
+    let transfer = preparation;
     if (committedHls) {
       let claimed = false;
       preparation?.dispose();
