@@ -42,7 +42,7 @@
      stream_url: str | None = None
      stream_key: str | None = field(default=None, repr=False)
      native_parent: int | None = field(default=None, repr=False)
-@@ -480,7 +481,7 @@
+@@ -481,7 +482,7 @@
          response_headers.pop("Content-Length", None)
          def chunks():
              try:

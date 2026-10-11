@@ -40,6 +40,12 @@ def seek_target(duration):
     return min(25.,duration/2)
 
 
+def bootstrap_within_envelope(value):
+    duration=value.get('duration');size=value.get('sourceProgress',{}).get('totalBytes')
+    return (isinstance(duration,(int,float)) and not isinstance(duration,bool) and math.isfinite(duration)
+            and 0 < duration <= 12 and isinstance(size,int) and not isinstance(size,bool) and 0 < size <= 32*1024**2)
+
+
 def preload_outcome(value):
     native = value['native']
     if native['preloadLimited']:
@@ -205,6 +211,7 @@ def main():
             bounded=wait_bootstrap_quiet(lambda:request('/'+identifier+'/status'),
                 session.job.source.reading.is_set,timeout=timeout,quiet_seconds=max(1.,fixture.delay*3+.5))
             bootstrap_complete=bounded['native']['cacheComplete']
+            check('bootstrap-completion-within-envelope',not bootstrap_complete or bootstrap_within_envelope(bounded),bounded)
             report['inputOutcome']='bootstrap-complete' if bootstrap_complete else 'requires-paused-fill'
             check('no-preload-before-user-pause',not preload_entered.is_set())
             request('/'+identifier+'/control','POST',{'paused':True})

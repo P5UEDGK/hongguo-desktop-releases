@@ -14,6 +14,16 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_bootstrap_complete_is_limited_to_documented_envelope(self):
+        good={'duration':12.,'sourceProgress':{'totalBytes':32*1024**2}}
+        self.assertTrue(probe.bootstrap_within_envelope(good))
+        for value in ({**good,'duration':12.01},{**good,'sourceProgress':{'totalBytes':32*1024**2+1}},{**good,'duration':float('nan')},{**good,'duration':True},{**good,'sourceProgress':{}},{**good,'duration':0}):
+            self.assertFalse(probe.bootstrap_within_envelope(value))
+        tree=ast.parse(inspect.getsource(probe));gate=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and n.args and isinstance(n.args[0],ast.Constant) and n.args[0].value=='bootstrap-completion-within-envelope')
+        code=compile(ast.fix_missing_locations(ast.Expression(gate.args[1])),'<actual-bootstrap-gate>','eval')
+        self.assertFalse(eval(code,dict(vars(probe),bootstrap_complete=True,bounded={**good,'duration':60})))
+        self.assertTrue(eval(code,dict(vars(probe),bootstrap_complete=False,bounded={**good,'duration':60})))
+
     def test_initial_source_and_ready_waits_use_scaled_timeout(self):
         tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
         calls=[n for n in ast.walk(scenario) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='wait'][:2]
@@ -66,11 +76,22 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(checks,['2x-resumes-default-audio','2x-reuses-preload-cache','3x-resumes-default-audio','3x-reuses-preload-cache']);self.assertEqual(seeks,[0,0])
 
     def test_actual_scenario_accepts_bootstrap_eof_without_claiming_pause_fill(self):
+        report,checks=self.run_bootstrap_scenario()
+        self.assertEqual(report['inputOutcome'],'bootstrap-complete')
+        self.assertNotIn('pause-worker-ran',[name for name,_ in checks]);self.assertNotIn('user-pause-starts-additional-cache-work',[name for name,_ in checks])
+
+    def test_actual_scenario_rejects_outside_bootstrap_envelope(self):
+        for duration,size in ((13,100),(5,32*1024**2+1)):
+            with self.subTest(duration=duration,size=size):
+                with self.assertRaisesRegex(AssertionError,'bootstrap-completion-within-envelope'):
+                    self.run_bootstrap_scenario(duration,size)
+
+    def run_bootstrap_scenario(self,duration=5,size=100):
         tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')
         body=next(n for n in scenario.body if isinstance(n,ast.Try)).body
         start=next(i for i,n in enumerate(body) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='initial' for t in n.targets))
         stop=next(i for i,n in enumerate(body) if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='rate')
-        value={'duration':5,'sourceProgress':{'complete':True,'receivedBytes':100},'native':{'outputReady':True,'cacheComplete':True,'cacheFileBytes':100,'bufferEnd':5,'preloadLimited':False,'paused':True,'time':0}}
+        value={'duration':duration,'sourceProgress':{'complete':True,'receivedBytes':size,'totalBytes':size},'native':{'outputReady':True,'cacheComplete':True,'cacheFileBytes':size,'bufferEnd':duration,'preloadLimited':False,'paused':True,'time':0}}
         checks=[];report={'pausedSamples':[]}
         def check(name,condition,evidence=None):checks.append((name,condition));self.assertTrue(condition,name)
         source=SimpleNamespace(reading=threading.Event());host=SimpleNamespace(sessions={'owned':SimpleNamespace(job=SimpleNamespace(source=source))})
@@ -78,8 +99,7 @@ class ProbeTests(unittest.TestCase):
             wait_bootstrap_quiet=lambda *a,**k:value,timeout=1,fixture=SimpleNamespace(delay=0),args=SimpleNamespace(cache_budget=None),
             report=report,preload_entered=threading.Event(),check=check,encodes=[],module=SimpleNamespace(CACHE_FILE_BUDGET=1000),ProgressiveSource=SimpleNamespace(block_size=64))
         exec(compile(ast.fix_missing_locations(ast.Module(body=body[start:stop],type_ignores=[])),'<actual-bootstrap-eof-scenario>','exec'),scope)
-        self.assertEqual(report['inputOutcome'],'bootstrap-complete')
-        self.assertNotIn('pause-worker-ran',[name for name,_ in checks]);self.assertNotIn('user-pause-starts-additional-cache-work',[name for name,_ in checks])
+        return report,checks
 
     def test_budget_validation_uses_actual_served_fixture_after_remux(self):
         tree=ast.parse(inspect.getsource(probe));main=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='main')
