@@ -45,11 +45,12 @@ def active_danmaku(items, seconds, settings):
             and 0 <= seconds - row.get('motion_start_ms', row['offset_ms']) / 1000 < settings['duration']]
 
 
-def ass_document(items, settings=None, *, assets=None):
+def ass_document(items, settings=None, *, assets=None, subtitle_speed=1):
     """One timed track lets libass move glyphs on the video's presentation clock."""
     settings = validate_settings(DEFAULT_SETTINGS if settings is None else settings)
     items = validate_danmaku(items)
     assets = {} if assets is None else assets
+    if not isinstance(subtitle_speed,(int,float)) or isinstance(subtitle_speed,bool) or not math.isfinite(subtitle_speed) or not .1<=subtitle_speed<=10:raise ValueError("Invalid subtitle speed")
     duration, size = settings["duration"], settings["fontSize"]
     alpha = f'{round(255 * (1 - settings["opacity"] / 100)):02X}'
     lines = ["[Script Info]", "ScriptType: v4.00+", "PlayResX: 1000", "PlayResY: 562",
@@ -61,7 +62,7 @@ def ass_document(items, settings=None, *, assets=None):
              "&HFF000000,0,0,0,0,100,100,0,0,1,1.5,0,7,0,0,0,1", "[Events]",
              "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     def stamp(milliseconds):
-        centiseconds = round(milliseconds / 10)
+        centiseconds = round(milliseconds / subtitle_speed / 10)
         hours, rest = divmod(centiseconds, 360000)
         minutes, rest = divmod(rest, 6000)
         seconds, fraction = divmod(rest, 100)
@@ -90,7 +91,7 @@ def ass_document(items, settings=None, *, assets=None):
         progress = (start - origin) / (duration * 1000)
         prefix=f'Dialogue: 0,{stamp(start)},{stamp(end)},Default,,0,0,0,,'
         def movement(x,top):
-            return r'{\an7\move(' + f'{1000-(1000+width)*progress+x:g},{top:g},{-width+x:g},{top:g},0,{end-start}' + r')\clip(0,0,1000,562)'
+            return r'{\an7\move(' + f'{1000-(1000+width)*progress+x:g},{top:g},{-width+x:g},{top:g},0,{round((end-start)/subtitle_speed)}' + r')\clip(0,0,1000,562)'
         x=0
         for part in parts:
             if part not in assets:

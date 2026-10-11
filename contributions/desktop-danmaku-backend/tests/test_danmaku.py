@@ -19,6 +19,26 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_failed_clear_recaptures_user_options_before_reenable(self):
+        clock=[0];p=Player();p.properties.update({'sid':'7','sub-delay':'2'})
+        track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
+        p.fail_remove=True;track.update({'danmaku':[]});track.apply(p);self.assertTrue(track.failed)
+        p.command('set','sub-delay','3');p.command('set','sub-pos','90');p.fail_remove=False;clock[0]=2
+        track.update({'danmaku':[ITEM]});track.apply(p);self.assertFalse(track.failed)
+        self.assertEqual(p.get('secondary-sub-delay'),'3');track.close(p)
+        self.assertEqual((p.get('sid'),p.get('sub-delay'),p.get('sub-pos')),('7','3','90'))
+
+    def test_subtitle_speed_compensates_ass_without_changing_user_captions(self):
+        p=Player();p.properties.update({'sid':'7','sub-speed':'2'})
+        track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertFalse(track.failed);self.assertEqual(p.get('sub-speed'),'2')
+        self.assertIn('0:00:00.50,0:00:07.50',track.document);self.assertIn(',0,7000)',track.document)
+        self.assertTrue(track.snapshot(2)['danmakuVisible']);self.assertFalse(track.snapshot(16)['danmakuVisible'])
+        p.command('set','sub-speed','0.5');track.apply(p)
+        self.assertIn('0:00:02.00,0:00:30.00',track.document);self.assertIn(',0,28000)',track.document)
+        track.close(p);self.assertEqual(p.get('sub-speed'),'0.5');self.assertEqual(p.get('sid'),'7')
+
+
     def test_first_add_retry_captures_latest_caption_and_options(self):
         clock=[0];p=Player();p.properties.update({'sid':'7','sub-delay':'2'});p.fail=True
         track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)

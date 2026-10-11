@@ -83,5 +83,19 @@ try:
         track.apply(player)  # clean overlay must observe the changed secondary selection
         assert track.track_id is None and player.get('sid')==replacement and player.get('secondary-sid')==secondary
         assert {name:player.get(name) for name in original_options}==original_options
-        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration; no pixel or Win32 claim'}))
+        player.command('set','sid','no');player.command('set','secondary-sid','no')
+        player.command('set','sub-delay','0');player.command('set','sub-visibility','yes')
+        for speed in (2,.5):
+            player.command('set','sub-speed',str(speed))
+            timed=DanmakuTrack();timed.update({'danmaku':[{'text':'speed compensated overlay','offset_ms':1000,'lane':0}], 'danmakuSettings':{'opacity':80,'lanes':3,'fontSize':28,'duration':4}});timed.apply(player)
+            assert not timed.failed and float(player.get('sub-speed'))==speed
+            for position,visible in ((.5,False),(2,True)):
+                player.command('seek',str(position),'absolute+exact')
+                deadline=time.monotonic()+3
+                while time.monotonic()<deadline:
+                    if abs(player.number('time-pos')-position)<.05 and ('speed compensated overlay' in (player.get('sub-text') or ''))==visible:break
+                    time.sleep(.02)
+                assert ('speed compensated overlay' in (player.get('sub-text') or ''))==visible,(speed,position,player.get('sub-text'))
+            timed.close(player);assert float(player.get('sub-speed'))==speed
+        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration and sub-speed timing; no pixel or Win32 claim'}))
 finally:player.close()

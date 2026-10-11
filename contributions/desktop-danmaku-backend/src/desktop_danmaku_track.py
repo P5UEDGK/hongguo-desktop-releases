@@ -17,6 +17,7 @@ class DanmakuTrack:
         self.saved_options = None
         self.modified_options = {}
         self.reload_options = False
+        self.subtitle_speed = None
         self.promoted = False
         self.pending_removals = set()
         self.retry_at = 0
@@ -52,6 +53,9 @@ class DanmakuTrack:
             # mpv has two subtitle slots. Leave both user caption tracks intact.
             raise RuntimeError('Both subtitle slots are in use')
         self.saved = (primary, secondary, player.get('secondary-sub-ass-override') or 'strip')
+        self.capture_options(player)
+
+    def capture_options(self, player):
         self.saved_options = {name:player.get(name) or default for name,default in (
             ('sub-ass-override','scale'),('secondary-sub-ass-override','strip'),
             ('sub-delay','0'),('secondary-sub-delay','0'),
@@ -90,6 +94,7 @@ class DanmakuTrack:
                 player.command('set', 'secondary-sid', self.saved[1])
             self.saved = (live, self.saved[1], self.saved[2])
             self.promoted = False
+            if not self.modified_options:self.capture_options(player)
             player.command('set', 'sid', self.track_id)
             if str(player.get('sid')) != str(self.track_id):
                 raise RuntimeError('Native danmaku track selection failed')
@@ -152,6 +157,10 @@ class DanmakuTrack:
             self.pending_removals.remove(identifier)
 
     def apply(self, player):
+        try:speed=float(player.get('sub-speed') or 1)
+        except (ValueError,TypeError):speed=1
+        if not .1<=speed<=10:speed=1
+        if speed!=self.subtitle_speed:self.subtitle_speed=speed;self.dirty=True
         if self.track_id and str(player.get('sid')) != str(self.track_id):
             self.dirty = True
         if self.promoted and self.saved and str(player.get('secondary-sid')) != str(self.saved[0]):
@@ -169,7 +178,7 @@ class DanmakuTrack:
                     self.saved = None
                     self.promoted = False
             if self.reload_options: self.restore_options(player)
-            document = ass_document(self.items, self.settings, assets=self.assets) if self.items else ''
+            document = ass_document(self.items, self.settings, assets=self.assets, subtitle_speed=speed) if self.items else ''
             if not any(line.startswith('Dialogue:') for line in document.splitlines()):
                 document = ''
             if document == self.document:
