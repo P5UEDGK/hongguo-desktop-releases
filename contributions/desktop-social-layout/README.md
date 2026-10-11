@@ -35,7 +35,7 @@ tests/run.mjs 是跨包唯一浏览器回归入口，覆盖评论前端和布局
 
 ## 验证
 
-Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。Python API 测试先安装本包 requirements-test.txt。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
+Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。本包 Python 校验只使用标准库。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
 
 ```pwsh
 npm --prefix contributions/desktop-social-layout ci
@@ -60,3 +60,10 @@ python contributions/desktop-social-layout/tests/test_native_control.py contribu
 当前79项Chrome组合通过，追加评论开关aria-pressed和鼠标/键盘聚焦区别；旧评论/弹幕owner分别失败回放。
 
 布局补丁同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516，保留请求窗口、可取消prepare、音频顺序与seek revision修复。遮挡裁剪先执行，再更新弹幕并应用有序音频控制；四份补丁精确组合和现有布局桥接回归通过。本机安装待完成。
+
+
+## 本轮二次反馈修复
+
+验证前置条件已移除不存在的 requirements-test.txt；本包 Python 校验只用标准库。跨包浏览器增加在途调速像素连续性与原生运动起点检查，沿用已有组合测试入口。
+
+本机完整候选、安装回读与反馈观察期仍待完成。

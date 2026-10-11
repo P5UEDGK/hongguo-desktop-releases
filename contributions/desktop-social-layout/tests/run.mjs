@@ -296,6 +296,22 @@ try{
  await page.evaluate(()=>{window.keySeen=0;window.addEventListener('keydown',()=>keySeen++);});
  await page.keyboard.press('Escape');
  check(await page.evaluate(()=>keySeen===1),'original keyboard handler still receives Escape');
+ const motion=await page.evaluate(async()=>{
+  const stage=document.createElement('div');stage.className='player-stage';stage.style.cssText='width:1000px;height:646px';
+  const video=document.createElement('video');stage.append(video);document.body.append(stage);
+  let time=0;Object.defineProperty(video,'currentTime',{configurable:true,get:()=>time});
+  Object.defineProperty(video,'duration',{configurable:true,get:()=>120});
+  const stop=danmakuApi.start(video,{origin:location.origin,key:'fixture-only',series:'1000000000000000001',episode:'1'},()=>{});
+  const frame=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  await frame();for(time=1;time<=7;time++)await frame();time=7;
+  const node=stage.querySelector('.desktop-danmaku span');
+  const x=()=>new DOMMatrixReadOnly(getComputedStyle(node).transform).m41;
+  const before=x();video.dispatchEvent(new CustomEvent('desktopsocialsettings',{detail:{settings:{opacity:80,lanes:3,fontSize:28,duration:24}}}));
+  await frame();const after=x(),native=video.desktopDanmaku[0];stop();stage.remove();
+  return {before,after,native};
+ });
+ check(Math.abs(motion.before-motion.after)<.15,'real browser duration change preserves in-flight pixel position');
+ check(motion.native.offset_ms===1000&&motion.native.motion_start_ms===-3286,'native schedule carries the same retimed phase with original timestamp');
  check(errors.length===0,'no browser exceptions: '+errors.join(';'));
  console.log(`PASS ${count} composition checks`);
 }finally{await browser?.close();await new Promise(r=>server.close(r));}
