@@ -41,6 +41,7 @@ class Job:
     source: Path | ProgressiveSource | None = None
     stream_url: str | None = None
     stream_key: str | None = field(default=None, repr=False)
+    native_parent: int | None = field(default=None, repr=False)
     negotiate_codec: bool = False
     source_description: dict | None = None
     video_mode: str = "h264"
@@ -459,7 +460,9 @@ def make_router(jobs, valid_key):
             body = await request.json()
         except ValueError:
             raise HTTPException(400, "Invalid video mode")
-        if not isinstance(body, dict) or set(body) != {"mode"} or body["mode"] not in ("copy", "h264", "native"):
+        if (not isinstance(body, dict) or not {"mode"} <= set(body) <= {"mode", "window"}
+                or body["mode"] not in ("copy", "h264", "native")
+                or "window" in body and body["mode"] != "native"):
             raise HTTPException(400, "Invalid video mode")
         with jobs.guard:
             job = jobs.get(identifier)
@@ -472,6 +475,11 @@ def make_router(jobs, valid_key):
                 if body["mode"] == "native" and (not jobs.native or not jobs.native.available
                         or not job.source_description.get("video", {}).get("contentType", "").startswith('video/mp4; codecs="hvc1.')):
                     raise HTTPException(400, "Native HEVC playback unavailable")
+                if "window" in body:
+                    try:
+                        job.native_parent = jobs.native.bind_window(body["window"])
+                    except ValueError:
+                        raise HTTPException(400, "Native window context unavailable")
                 if body["mode"] == "copy" and (job.start_seconds or not job.source_description.get("copyEligible")):
                     raise HTTPException(400, "Packet copy unavailable for this source window")
                 job.video_mode = body["mode"]

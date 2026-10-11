@@ -291,7 +291,10 @@ class NativeTests(unittest.TestCase):
     def test_timeout_without_first_frame_retries_from_requested_position(self):
         self.hardware_recovery(empty_timeout=True)
 
-    def hardware_recovery(self,empty_eof=False,stale_seek=False,empty_timeout=False):
+    def test_audio_and_seek_are_applied_before_unpause_and_software_resume(self):
+        self.hardware_recovery(ordered_controls=True)
+
+    def hardware_recovery(self,empty_eof=False,stale_seek=False,empty_timeout=False,ordered_controls=False):
         # This fault cannot be reliably provoked on every physical GPU. The
         # production NativeSession recovery is exercised with a bounded driver.
         class Driver:
@@ -337,7 +340,8 @@ class NativeTests(unittest.TestCase):
             return real_monotonic()
         with patch('desktop_native.Mpv',Player),patch('desktop_native.time.monotonic',monotonic):
             session.thread.start()
-            session.submit({'rate':3,'paused':not empty_timeout,'volume':.4})
+            session.submit({'rate':3,'paused':False if ordered_controls else not empty_timeout,'volume':.4,
+                            **({'muted':True,'seek':25} if ordered_controls else {})})
             if stale_seek:session.submit({'seek':25})
             until=real_monotonic()+(.2 if stale_seek else 2)
             while not session.snapshot().get('softwareRetried') and real_monotonic()<until: time.sleep(.01)
@@ -351,6 +355,15 @@ class NativeTests(unittest.TestCase):
         self.assertTrue(session.data['softwareRetried'])
         player=created[0]
         self.assertEqual(player.loads,2)
+        if ordered_controls:
+            loads=[i for i,c in enumerate(player.commands) if c[0]=='loadfile']
+            for begin,end in zip(loads,loads[1:]+[len(player.commands)]):
+                commands=player.commands[begin:end]
+                unpause=commands.index(('set','pause','no'))
+                self.assertLess(commands.index(('set','volume',40.0)),unpause)
+                self.assertLess(commands.index(('set','mute','yes')),unpause)
+                self.assertLess(commands.index(('set','speed',3)),unpause)
+                if begin==loads[0]:self.assertLess(commands.index(('seek',25,'absolute+exact')),unpause)
         if empty_eof or empty_timeout:
             starts = [command[2] for command in player.commands if command[:2] == ('set','start')]
             self.assertEqual(starts[-1],job.start_seconds,'software reload must keep the unseen requested target')

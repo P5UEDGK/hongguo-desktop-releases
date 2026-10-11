@@ -99,6 +99,9 @@ class NativeHost:
         self.parent_pid = os.getppid() if parent_pid is None else parent_pid
         self.sessions = {}
         self.guard = threading.RLock()
+        self.prepare_lock = threading.Lock()
+        self.preparing = set()
+        self.closed = threading.Event()
         self.available = False
         self.engine_pool = EnginePool(self._close_engine, self._pump_engine)
         if os.name != "nt":
@@ -173,53 +176,114 @@ class NativeHost:
             resources.clear()
 
     def close(self):
+        self.closed.set()
         with self.guard:
             sessions = list(self.sessions.items())
         for identifier, session in sessions:
             self.release(identifier)
         return self.engine_pool.close()
 
-    def parent_window(self):
+    def windows(self):
         windows = []
         @self.enum_callback
         def collect(hwnd, _):
             pid = W.DWORD()
             self.user.GetWindowThreadProcessId(hwnd, C.byref(pid))
-            if pid.value == self.parent_pid and not self.user.GetWindow(hwnd, 4):
-                rect = W.RECT()
-                if self.user.GetClientRect(hwnd, C.byref(rect)) and rect.right > 100 and rect.bottom > 100:
-                    windows.append((bool(self.user.IsWindowVisible(hwnd)), rect.right * rect.bottom, hwnd))
+            if pid.value == self.parent_pid:
+                rect, origin = W.RECT(), W.POINT(0, 0)
+                if (self.user.GetClientRect(hwnd, C.byref(rect))
+                        and self.user.ClientToScreen(hwnd, C.byref(origin))
+                        and rect.right > 100 and rect.bottom > 100):
+                    windows.append((hwnd, (origin.x, origin.y, rect.right, rect.bottom),
+                                    bool(self.user.GetWindow(hwnd, 4))))
             return True
-        self.user.EnumWindows(collect, 0)
-        if not windows:
-            raise RuntimeError("Desktop parent window unavailable")
-        return max(windows, key=lambda item: item[:2])[2]
+        previous = self.user.SetThreadDpiAwarenessContext(C.c_void_p(-4))
+        try:
+            self.user.EnumWindows(collect, 0)
+        finally:
+            if previous:
+                self.user.SetThreadDpiAwarenessContext(previous)
+        return windows
+
+    def bind_window(self, context):
+        # The authenticated desktop sends physical client geometry from its
+        # Tauri window API, never an HWND. Only this parent process is eligible.
+        if (not isinstance(context, dict) or set(context) != {"rect"}
+                or not isinstance(context["rect"], list) or len(context["rect"]) != 4
+                or any(type(v) is not int or not -32768 <= v <= 32768 for v in context["rect"])
+                or min(context["rect"][2:]) <= 100):
+            raise ValueError("Invalid native window context")
+        matches = [hwnd for hwnd, rect, _ in self.windows() if rect == tuple(context["rect"])]
+        if len(matches) != 1:
+            raise ValueError("Native window context is not unique")
+        return matches[0]
+
+    def parent_window(self, job=None):
+        parent = getattr(job, "native_parent", None)
+        if parent is not None:
+            pid = W.DWORD()
+            self.user.GetWindowThreadProcessId(parent, C.byref(pid))
+            if self.user.IsWindow(parent) and pid.value == self.parent_pid:
+                return parent
+            raise RuntimeError("Bound desktop parent window unavailable")
+        # Compatibility for a single-window host. Multiple windows require an
+        # explicit binding; neither foreground status nor area is identity.
+        windows = [hwnd for hwnd, _, owned in self.windows() if not owned]
+        if len(windows) != 1:
+            raise RuntimeError("Desktop parent window context required")
+        return windows[0]
 
     def prepare(self, job):
-        if not self.available or job.cancelled.is_set():
+        if not self.available or self.closed.is_set() or job.cancelled.is_set():
             raise RuntimeError("Native player unavailable")
         with self.guard:
             if job.cancelled.is_set():
                 raise RuntimeError("Native job cancelled")
-            for identifier, previous in list(self.sessions.items()):
-                if previous.close() is False:
-                    raise RuntimeError("Previous native session is stopping")
-                self.sessions.pop(identifier, None)
-            session = NativeSession(self, job, self.parent_window())
-            self.sessions[job.id] = session
-            try:
-                session.thread.start()
-                if job.cancelled.is_set():
+            self.preparing.add(job.id)
+        acquired = False
+        try:
+            while not self.prepare_lock.acquire(timeout=.05):
+                if self.closed.is_set() or job.cancelled.is_set():
                     raise RuntimeError("Native job cancelled")
-            except BaseException:
-                if session.close() is not False:
-                    self.sessions.pop(job.id, None)
-                raise
+            acquired = True
+            while True:
+                if self.closed.is_set() or job.cancelled.is_set():
+                    raise RuntimeError("Native job cancelled")
+                with self.guard:
+                    previous_sessions = list(self.sessions.items())
+                if not previous_sessions:
+                    break
+                for identifier, previous in previous_sessions:
+                    # close can join a slow Range reader. Keep status/control/
+                    # cancellation available while waiting for its owner.
+                    if previous.close() is not False:
+                        with self.guard:
+                            if self.sessions.get(identifier) is previous:
+                                self.sessions.pop(identifier)
+                job.cancelled.wait(.05)
+            with self.guard:
+                if self.closed.is_set() or job.cancelled.is_set():
+                    raise RuntimeError("Native job cancelled")
+                session = NativeSession(self, job, self.parent_window(job))
+                self.sessions[job.id] = session
+                try:
+                    session.thread.start()
+                    if job.cancelled.is_set():
+                        raise RuntimeError("Native job cancelled")
+                except BaseException:
+                    if session.close() is not False:
+                        self.sessions.pop(job.id, None)
+                    raise
+        finally:
+            if acquired:
+                self.prepare_lock.release()
+            with self.guard:
+                self.preparing.discard(job.id)
 
     def snapshot(self, identifier):
         with self.guard:
             session = self.sessions.get(identifier)
-            return session.snapshot() if session else {"state": "failed", "failureCode": "native-unavailable"}
+            return session.snapshot() if session else ({"state": "preparing"} if identifier in getattr(self, "preparing", ()) else {"state": "failed", "failureCode": "native-unavailable"})
 
     def control(self, identifier, body):
         body = validate_control(body)
@@ -380,7 +444,7 @@ class NativeSession:
             player.command("set", "hwdec", "no")
             player.command("set", "start", position)
             player.command("loadfile", media_uri)
-            for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
+            for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute"), ("paused", "pause")):
                 value = desired[key]
                 player.command("set", option, "yes" if value is True else "no" if value is False else value * 100 if key == "volume" else value)
             initial = last_progress = time.monotonic()
@@ -465,7 +529,10 @@ class NativeSession:
                         user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                     if "visible" in command:
                         user.ShowWindow(hwnd, 4 if command["visible"] else 0)
-                    for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
+                    if command.get("paused") is True:
+                        desired["paused"] = True
+                        player.command("set", "pause", "yes")
+                    for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
                         if key in command:
                             value = command[key]
                             desired[key] = value
@@ -480,6 +547,10 @@ class NativeSession:
                         frame_ready = False
                         initial = time.monotonic()
                         grace = initial + 3
+                    if command.get("paused") is False:
+                        desired["paused"] = False
+                        player.command("set", "pause", "no")
+                        grace = time.monotonic() + 3
                     with self.guard:
                         self.data["revision"] = revision
                 if progressive and self.job.source.network_failed.is_set():
