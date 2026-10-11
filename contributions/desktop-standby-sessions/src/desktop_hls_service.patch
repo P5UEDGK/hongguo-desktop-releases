@@ -46,7 +46,7 @@
          if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
              raise HTTPException(400, "Invalid episode identity")
          if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
-@@ -162,6 +172,19 @@
+@@ -162,6 +172,21 @@
              self._expire()
              if self.closed.is_set():
                  raise HTTPException(503, "Desktop sessions are closed")
@@ -58,6 +58,8 @@
 +                        raise HTTPException(503, "Previous standby teardown pending")
 +            if prewarm_parent is not None:
 +                parent = self.get(prewarm_parent)
++                if parent.prefetch_generation != self.foreground_generation:
++                    raise HTTPException(409, "Standby parent generation expired")
 +                if (parent.prewarm_parent or parent.failed or parent.series_id != series_id
 +                        or parent.episode + 1 != episode or start_seconds or not negotiate_codec):
 +                    raise HTTPException(400, "Invalid standby identity")
@@ -66,7 +68,7 @@
              if len(self.jobs) >= self.max_jobs:
                  raise HTTPException(503, "Desktop session limit reached; retry shortly")
              identifier = request_token[14:] if request_token else uuid.uuid4().hex
-@@ -169,14 +192,18 @@
+@@ -169,14 +194,18 @@
                  raise HTTPException(409, "Desktop creation already registered")
              job = Job(identifier, self.root / identifier,
                        start_seconds=float(start_seconds), window_origin=None if start_seconds else 0.0,
@@ -87,7 +89,7 @@
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
                  job.failed = True
-@@ -193,7 +220,9 @@
+@@ -193,7 +222,9 @@
          source = None
          encoder_acquired = False
          try:
@@ -98,7 +100,7 @@
              job.source = source if isinstance(source, ProgressiveSource) else Path(source)
              if job.cancelled.is_set():
                  raise EncodingCancelled()
-@@ -313,6 +342,9 @@
+@@ -313,6 +344,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -108,7 +110,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -325,6 +357,39 @@
+@@ -325,6 +359,39 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -148,7 +150,7 @@
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -422,7 +487,7 @@
+@@ -422,7 +489,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -157,7 +159,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0, request_token: str | None = None):
-@@ -433,7 +498,11 @@
+@@ -433,7 +500,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -170,7 +172,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -537,6 +606,7 @@
+@@ -537,6 +608,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -178,7 +180,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -550,17 +620,36 @@
+@@ -550,17 +622,36 @@
  
      @router.post("/{identifier}/control")
      async def control(identifier: str, request: Request):

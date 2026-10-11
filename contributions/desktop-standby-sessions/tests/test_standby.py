@@ -20,6 +20,24 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_stale_parent_create_does_not_block_current_standby(self):
+        jobs,_=self.jobs();generation=[0]
+        def begin(job,*_):generation[0]+=1;job.prefetch_generation=generation[0]
+        jobs.on_start=begin
+        old=jobs.create('1234567890123456',1);current=jobs.create(old.series_id,1)
+        with self.assertRaises(HTTPException) as error:jobs.create(old.series_id,2,negotiate_codec=True,prewarm_parent=old.id)
+        self.assertEqual(error.exception.status_code,409);self.assertEqual(set(jobs.jobs),{old.id,current.id})
+        child=jobs.create(current.series_id,2,negotiate_codec=True,prewarm_parent=current.id);self.assertEqual(child.prewarm_parent,current.id)
+
+    def test_cancel_during_promoted_metadata_never_commits_source_or_queue(self):
+        source=self.root/'promoted-source.mp4';source.write_bytes(b'owned')
+        job=SimpleNamespace(id='a'*32,cancelled=threading.Event(),failed=False,video_mode='h264',source=source)
+        def metadata(_):job.cancelled.set();return {},[{'index':2,'vid':'123456780002'},{'index':3,'vid':'123456780003'}]
+        prefetch=EpisodePrefetcher(lambda _:source,metadata,self.root/'promoted-cancel',encoder=lambda *_:None);self.addCleanup(prefetch.close)
+        prefetch.begin(job,'1234567890123456',2);prefetch._load_promoted(job,'1234567890123456',2,prefetch.generation)
+        self.assertIsNone(prefetch.current_source);self.assertEqual(prefetch.download_pending,[]);self.assertEqual(prefetch.sources,{})
+
+
     def test_queued_hide_invalidates_old_visible_activation(self):
         jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='native'
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='native';child.ready.set();child.activation_revision=1

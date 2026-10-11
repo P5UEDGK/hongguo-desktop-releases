@@ -160,7 +160,7 @@
 +                self.finish(job, series_id, episode, job.source)
 +            return
 +        try:
-+            source = self.load_source(series_id, episode, prepared_source=job.source)
++            source = self.load_source(series_id, episode, job=job, prepared_source=job.source)
 +        except Exception:
 +            source = None  # Optional future-download metadata must not affect playback.
 +        with self.condition:
