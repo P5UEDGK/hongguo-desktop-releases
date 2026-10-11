@@ -14,6 +14,13 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_incomplete_bootstrap_reads_must_fit_seconds_and_byte_envelope(self):
+        tree=ast.parse(inspect.getsource(probe));gate=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and n.args and isinstance(n.args[0],ast.Constant) and n.args[0].value=='bootstrap-completion-within-envelope')
+        code=compile(ast.fix_missing_locations(ast.Expression(gate.args[1])),'<actual-bootstrap-gate>','eval')
+        for seconds,size,valid in ((12,32*1024**2,True),(30,100,False),(5,64*1024**2,False)):
+            bounded={'duration':100,'sourceProgress':{'receivedBytes':size,'totalBytes':128*1024**2},'native':{'cacheComplete':False,'bufferStart':0,'bufferEnd':seconds,'cacheFileBytes':size}}
+            self.assertEqual(eval(code,dict(vars(probe),bootstrap_complete=False,bounded=bounded)),valid)
+
     def test_source_hash_streams_bounded_chunks_and_main_uses_it(self):
         import io,hashlib
         payload=b'x'*(2*1024*1024+17)
@@ -38,7 +45,7 @@ class ProbeTests(unittest.TestCase):
         tree=ast.parse(inspect.getsource(probe));gate=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and n.args and isinstance(n.args[0],ast.Constant) and n.args[0].value=='bootstrap-completion-within-envelope')
         code=compile(ast.fix_missing_locations(ast.Expression(gate.args[1])),'<actual-bootstrap-gate>','eval')
         self.assertFalse(eval(code,dict(vars(probe),bootstrap_complete=True,bounded={**good,'duration':60})))
-        self.assertTrue(eval(code,dict(vars(probe),bootstrap_complete=False,bounded={**good,'duration':60})))
+        self.assertFalse(eval(code,dict(vars(probe),bootstrap_complete=False,bounded={**good,'duration':60})))
 
     def test_initial_source_and_ready_waits_use_scaled_timeout(self):
         tree=ast.parse(inspect.getsource(probe));scenario=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='scenario')

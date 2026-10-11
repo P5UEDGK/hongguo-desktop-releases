@@ -1,6 +1,6 @@
 --- a/backend/desktop_stream.py
 +++ b/backend/desktop_stream.py
-@@ -219,14 +219,15 @@
+@@ -225,14 +225,15 @@
              if self.pinned is not None:self.pinned.close();self.pinned=None
              self.blocks.clear()
  
@@ -19,7 +19,7 @@
          self.stopped = threading.Event()
          self.position = 0
  
-@@ -266,7 +267,11 @@
+@@ -272,7 +273,11 @@
          end, result = min(self.source.size, self.position + size), []
          while self.position < end:
              index, offset = divmod(self.position, self.source.block_size)
@@ -42,7 +42,7 @@
      stream_url: str | None = None
      stream_key: str | None = field(default=None, repr=False)
      native_parent: int | None = field(default=None, repr=False)
-@@ -481,7 +482,7 @@
+@@ -483,7 +484,7 @@
          response_headers.pop("Content-Length", None)
          def chunks():
              try:
@@ -63,7 +63,7 @@
  from desktop_native_engine import EnginePool
  import uuid
  
-@@ -447,11 +450,15 @@
+@@ -450,11 +453,15 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -79,7 +79,7 @@
          desired = {"paused": True, "rate": 1, "volume": 1, "muted": False}
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
-@@ -504,6 +511,16 @@
+@@ -507,6 +514,16 @@
                      resources.update(player=player, hwnd=hwnd, parent=self.parent, id=uuid.uuid4().hex)
              # Every source-dependent option is reset, including when switching
              # encrypted/clear input or recovering from the previous soft retry.
@@ -96,7 +96,7 @@
              per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
                          "volume": 100, "mute": "yes" if desired["muted"] else "no",
                          "hwdec": "auto-safe" if self.host.hardware else "no",
-@@ -552,6 +569,7 @@
+@@ -555,6 +572,7 @@
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
                      if command.get("paused") is True:
@@ -104,7 +104,7 @@
                          desired["paused"] = True
                          player.command("set", "pause", "yes")
                      for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
-@@ -571,6 +589,7 @@
+@@ -574,6 +592,7 @@
                          output_watch.since = None
                          grace = initial + 3
                      if command.get("paused") is False:
@@ -112,7 +112,7 @@
                          desired["paused"] = False
                          player.command("set", "pause", "no")
                          grace = time.monotonic() + 3
-@@ -610,6 +629,17 @@
+@@ -613,6 +632,17 @@
                              buffer_start, buffer_end = max(0, selected["start"]), selected["end"]
                      except (ValueError, TypeError, KeyError):
                          pass
@@ -130,7 +130,7 @@
                  if last_position is None or abs(position - last_position) > .01 or paused or seeking:
                      last_position, last_progress = position, now
                  unstable = not paused and not buffering and not seeking and not eof and now > grace
-@@ -639,6 +669,7 @@
+@@ -642,6 +672,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
@@ -138,7 +138,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops)
-@@ -650,6 +681,11 @@
+@@ -653,6 +684,11 @@
              with self.guard:
                  self.data.update(state="failed", failureCode="native-decode")
          finally:

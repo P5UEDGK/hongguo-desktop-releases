@@ -52,6 +52,14 @@ def bootstrap_within_envelope(value):
             and 0 < duration <= 12 and isinstance(size,int) and not isinstance(size,bool) and 0 < size <= 32*1024**2)
 
 
+def bootstrap_read_within_envelope(value):
+    native=value.get('native',{});progress=value.get('sourceProgress',{})
+    start,end=native.get('bufferStart',0),native.get('bufferEnd')
+    sizes=(native.get('cacheFileBytes'),progress.get('receivedBytes'))
+    return (all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) for v in (start,end))
+            and 0<=end-start<=12 and all(isinstance(v,int) and not isinstance(v,bool) and 0<=v<=32*1024**2 for v in sizes))
+
+
 def preload_outcome(value):
     native = value['native']
     if native['preloadLimited']:
@@ -217,7 +225,7 @@ def main():
             bounded=wait_bootstrap_quiet(lambda:request('/'+identifier+'/status'),
                 session.job.source.reading.is_set,timeout=timeout,quiet_seconds=max(1.,fixture.delay*3+.5))
             bootstrap_complete=bounded['native']['cacheComplete']
-            check('bootstrap-completion-within-envelope',not bootstrap_complete or bootstrap_within_envelope(bounded),bounded)
+            check('bootstrap-completion-within-envelope',bootstrap_read_within_envelope(bounded) and (not bootstrap_complete or bootstrap_within_envelope(bounded)),bounded)
             report['inputOutcome']='bootstrap-complete' if bootstrap_complete else 'requires-paused-fill'
             check('no-preload-before-user-pause',not preload_entered.is_set())
             request('/'+identifier+'/control','POST',{'paused':True})
