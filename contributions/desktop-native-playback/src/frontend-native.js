@@ -34,7 +34,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
     rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
     seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
-  let requestedStart = state.time;
+  let requestedStart = state.time, resetHlsOrigin = false;
   const negotiationMethods = new Map();
   const negotiationPause = () => {if (!native) state.paused = true;};
   const negotiationPlay = () => {if (!native) state.paused = false;};
@@ -124,8 +124,16 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
                   dispose() {if (!claimed) {claimed = true; release(old);}}};
     }
-    delegated = desktopCodecHls(media, url, Math.max(0, state.time), callbacks,
-      transfer, windowed, {forceH264, paused: state.paused});
+    const hlsCallbacks = resetHlsOrigin ? {...callbacks, onReady() {
+      if (seekPending !== null) {
+        const target = seekPending; seekPending = null;
+        queueMicrotask(() => {if (!disposed) delegated?.seek(target);});
+        return;
+      }
+      callbacks.onReady();
+    }} : callbacks;
+    delegated = desktopCodecHls(media, url, resetHlsOrigin ? 0 : Math.max(0, state.time), hlsCallbacks,
+      transfer, windowed && !resetHlsOrigin, {forceH264, paused: state.paused});
   }
   async function failPreparation() {
     if (disposed || fallbackStarted) return;
@@ -210,7 +218,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     property('play', {value: () => {
       if (state.ended) {state.ended = false; seek(0);}
       const wasPaused = state.paused; state.paused = false;
-      queue({paused: false}); if (wasPaused && ready) {event('play'); event('playing');}
+      queue({paused: false, rate: state.rate, volume: state.volume, muted: state.muted}); if (wasPaused && ready) {event('play'); event('playing');}
       return Promise.resolve();
     }});
     property('pause', {value: () => {
@@ -290,7 +298,6 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     try {
       const capability = await request('/capabilities');
       if (disposed) return;
-      if (capability.nativePlayback !== 1) {delegate(false); return;}
       const sourceUrl = new URL(endpoint.url);
       requestedStart = state.time;
       if (state.time > 0) sourceUrl.searchParams.set('start_seconds', state.time);
@@ -310,7 +317,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         const invalid = id; id = null;
         if (!await release(invalid)) throw Error('Invalid resume session release failed');
         if (state.time === requestedStart) {state.time = 0; seekPending = null;}
-        requestedStart = 0;
+        requestedStart = 0; resetHlsOrigin = true;
         sourceUrl.searchParams.delete('start_seconds');
         id = await createSession();
       }
@@ -323,6 +330,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         }
         if (result.state === 'failed') throw Error('Source preparation failed');
         if (result.source) {
+          if (capability.nativePlayback !== 1 && !(Number.isFinite(result.duration) && result.duration > 0)) resetHlsOrigin = true;
           if (requestedStart > 0 && (!Number.isFinite(result.duration) || result.duration <= 0 || requestedStart >= result.duration)) {
             // Saved EOF belongs to the old duration. Validate it before mode
             // commitment, while a new zero-origin session is still possible.
@@ -338,7 +346,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       if (disposed) return;
       // Source download/transport failure says nothing about decoder support.
       if (!metadata) {failPreparation(); return;}
-      if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
+      if (capability.nativePlayback !== 1 || !metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
       try {
         const context = await desktopNativeWindowContext();
         if (disposed) return;

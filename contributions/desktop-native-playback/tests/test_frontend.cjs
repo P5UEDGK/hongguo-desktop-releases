@@ -216,7 +216,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
       else if(url.endsWith('/mode')){selected=true;if(kind==='mode-conflict'||kind==='conflict-window-seek')return {ok:false,status:409};body={mode:'native'}}
       else if(url.endsWith('/control'))body={revision:1};
       else if(init.method==='POST'){body={id:'d'.repeat(32)};if(windowSeek)activeEnd.seek(20);}
-      else body={state:'complete',source:kind==='pause-hls'?{...desc,video:{contentType:'video/mp4; codecs="avc1.64001f"'}}:desc,
+      else body={state:'complete',duration:120,source:kind==='pause-hls'?{...desc,video:{contentType:'video/mp4; codecs="avc1.64001f"'}}:desc,
         videoMode:kind==='committed-hls'||kind==='committed-window-seek'||(kind==='mode-conflict'||kind==='conflict-window-seek')&&selected?'h264':null,
         startSeconds:windowSeek?90:0,windowOrigin:windowSeek?90:0,
         native:selected?{state:'ready',outputReady:true,width:1920,height:1080,time:0,duration:90,paused:true,revision:100}:null};
