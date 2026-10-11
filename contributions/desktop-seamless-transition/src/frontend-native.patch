@@ -28,26 +28,27 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -161,14 +164,14 @@
+@@ -161,15 +164,14 @@
                    dispose() {if (!claimed) {claimed = true; release(old);}}};
      }
      if (resetHlsOrigin && seekPending === null && state.time > 0) seekPending = state.time;
--    const hlsCallbacks = resetHlsOrigin ? {...callbacks, onReady() {
+-    const resumeCallbacks = {...callbacks, preserveResumePosition: seekPending !== null || callbacks.preserveResumePosition === true};
+-    const hlsCallbacks = resetHlsOrigin ? {...resumeCallbacks, onReady() {
 -      if (seekPending !== null) {
-+    const hlsCallbacks = {...callbacks, onReady() {
++    const hlsCallbacks = {...callbacks, preserveResumePosition: seekPending !== null || callbacks.preserveResumePosition === true, onReady() {
 +      if (resetHlsOrigin && seekPending !== null) {
          const target = seekPending; seekPending = null;
          queueMicrotask(() => {if (!disposed) delegated?.seek(target);});
          return;
        }
 -      callbacks.onReady();
--    }} : callbacks;
+-    }} : resumeCallbacks;
 +      preparation?.finishRetained?.(); callbacks.onReady?.();
 +    }, onError(...args) { preparation?.finishRetained?.(); callbacks.onError?.(...args); }};
      delegated = desktopCodecHls(media, url, resetHlsOrigin ? 0 : Math.max(0, state.time), hlsCallbacks,
        transfer, windowed && !resetHlsOrigin, {forceH264, paused: state.paused});
    }
-@@ -178,7 +181,7 @@
+@@ -179,7 +181,7 @@
      const old = id; id = null;
      restore();
      await release(old);
@@ -56,7 +57,7 @@
    }
    function delegateCommittedHls(status) {
      const start = Math.max(requestedStart, ...[status.startSeconds,status.windowOrigin].filter(Number.isFinite));
-@@ -190,16 +193,16 @@
+@@ -191,16 +193,16 @@
      if (disposed || !native || fallbackStarted) return;
      if (command.paused === false && !desktopNativeSurfaceVisible(media)) command = {...command, paused:true};
      Object.assign(pending, command);
@@ -77,7 +78,7 @@
        revision = result.revision;
      } catch {if (!disposed) failPreparation();}
      finally {
-@@ -230,13 +233,13 @@
+@@ -231,13 +233,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -93,7 +94,7 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -316,6 +319,7 @@
+@@ -317,6 +319,7 @@
            else {callbacks.onReady(); if (!state.paused) event('playing');}
          }
          const applied = value.revision >= revision && !controlBusy && !Object.keys(pending).length;
@@ -101,7 +102,7 @@
          if (reportedSeek && applied && !value.seeking) {
            state.time = value.time;
            reportedSeek = false; seekPending = null; state.seeking = false;
-@@ -331,12 +335,41 @@
+@@ -332,12 +335,41 @@
      } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
@@ -145,7 +146,7 @@
        if (disposed) return;
        const sourceUrl = new URL(endpoint.url);
        requestedStart = state.time;
-@@ -354,9 +387,9 @@
+@@ -355,9 +387,9 @@
          if (disposed) {await release(identifier); return null;}
          return identifier;
        }
@@ -157,7 +158,7 @@
        async function resetSavedPosition() {
          const invalid = id; id = null;
          if (!await release(invalid)) throw Error('Invalid resume session release failed');
-@@ -365,8 +398,8 @@
+@@ -366,8 +398,8 @@
          sourceUrl.searchParams.delete('start_seconds');
          id = await createSession();
        }
@@ -168,7 +169,7 @@
          const result = await request('/' + id + '/status');
          if (result.state === 'failed' && result.failureCode === 'start-position' && requestedStart > 0) {
            await resetSavedPosition();
-@@ -391,7 +424,7 @@
+@@ -392,7 +424,7 @@
        // Source download/transport failure says nothing about decoder support.
        if (!metadata) {failPreparation(); return;}
        if (capability.nativePlayback !== 1 || !metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
@@ -177,9 +178,9 @@
          let context;
          try {context = await desktopNativeWindowContext();}
          catch {delegate(false); return;}
-@@ -405,23 +438,99 @@
-         if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
-         delegateCommittedHls(latest); return;
+@@ -408,23 +440,100 @@
+         if (['h264', 'copy'].includes(latest.videoMode)) {delegateCommittedHls(latest); return;}
+         if (latest.videoMode !== 'native') throw error;
        }
 +      if (!preparedNative) {
 +        let registered = false;
@@ -210,6 +211,7 @@
 +        // Minimization and zero geometry are intentional visibility states,
 +        // not failures of a decoded standby. Park it paused until it can show.
 +        const canShow = () => desktopNativeSurfaceVisible(media);
++        const seekLanded = value => seekPending === null || !value.seeking && Number.isFinite(value.time) && Math.abs(value.time-seekPending) <= .05;
 +        while (!disposed && !canShow() && Date.now() < deadline) {
 +          layout();
 +          if (Object.keys(pending).length) {
@@ -264,7 +266,7 @@
 +            if (disposed || fallbackStarted || !id || !native) return;
 +          }
 +          const shown = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
-+          if (shown?.visible && shown.outputReady && shown.revision >= revision && !controlBusy && !Object.keys(pending).length) {
++          if (shown?.visible && shown.outputReady && shown.revision >= revision && seekLanded(shown) && !controlBusy && !Object.keys(pending).length) {
 +            await request('/' + id + '/activate', {method:'POST'}, untilVisible-Date.now());
 +            // Pause/layout can change while activate is in flight. Re-enter
 +            // the same bounded ACK loop before relinquishing the old owner.
@@ -276,7 +278,7 @@
 +              }
 +              if (disposed || fallbackStarted || !id || !native) return;
 +              const latest = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
-+              if (latest && latest.revision >= revision && !controlBusy && !Object.keys(pending).length &&
++              if (latest && latest.revision >= revision && seekLanded(latest) && !controlBusy && !Object.keys(pending).length &&
 +                  (canShow() ? latest.visible && latest.outputReady : !latest.visible)) {
 +                confirmed = true; if (latest.visible && latest.outputReady) preparation?.finishRetained?.(); break;
 +              }
@@ -292,7 +294,7 @@
      } catch {if (!disposed) failPreparation();}
    })();
    return Object.assign(() => {
-@@ -429,7 +538,14 @@
+@@ -432,7 +541,14 @@
      disposed = true; generation++;
      for (const request of pendingRequests) request.abort();
      if (creationToken) release('requests/'+creationToken);

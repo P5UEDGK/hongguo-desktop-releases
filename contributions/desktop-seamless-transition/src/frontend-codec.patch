@@ -65,15 +65,16 @@
      const active = () => !disposed && epoch === ownEpoch;
      let decoded = false;
      const frameCount = () => {
-@@ -137,6 +147,7 @@
+@@ -137,7 +147,7 @@
        }, 8000);
      };
      const wrapped = {...callbacks,
-+      preserveResumePosition: position > .05 && Number.isFinite(preparation?.resumePosition) && Math.abs(preparation.resumePosition-position) <= .05,
+-      preserveResumePosition: callbacks.preserveResumePosition === true,
++      preserveResumePosition: callbacks.preserveResumePosition === true || position > .05 && Number.isFinite(preparation?.resumePosition) && Math.abs(preparation.resumePosition-position) <= .05,
        onReady() {
          if (!active()) return;
          if (pendingSeek !== null) {
-@@ -216,7 +227,9 @@
+@@ -217,7 +227,9 @@
        if (pendingSeek !== null) {pendingSeek = value;return;}
        internalPause = true;
        try {controller?.seek(value);} finally {internalPause = false; internalPlay = false;}
