@@ -89,7 +89,7 @@
 +                                                CACHE_FILE_BUDGET, self.job.source.size)
 +                    self.job.input_cache = disk_cache
 +                    preloader = PreloadWorker(self.job.source, disk_cache,
-+                        lambda: self.stop.is_set() or self.job.cancelled.is_set() or not user_paused)
++                        lambda: self.stop.is_set() or self.job.cancelled.is_set() or not user_paused or bool(getattr(self.job, "prewarm_parent", None)))
 +                except OSError:
 +                    preload_reason = "cache-open"
              per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
