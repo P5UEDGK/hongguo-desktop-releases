@@ -19,6 +19,20 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_child_control_failure_restores_queued_parent_intent(self):
+        host=object.__new__(NativeHost);host.guard=threading.RLock()
+        calls=[];data={"paused":False,"revision":0}
+        def submit(body):
+            calls.append(body);data.update(body,revision=len(calls));return len(calls)
+        old=SimpleNamespace(job=SimpleNamespace(prewarm_parent=None),snapshot=lambda:dict(data),
+            desired_state=lambda:{"paused":True},submit=submit)
+        def rejected(_):raise queue.Full()
+        child=SimpleNamespace(job=SimpleNamespace(prewarm_parent="old"),stop=threading.Event(),
+            snapshot=lambda:{"outputReady":True},submit=rejected)
+        host.sessions={"old":old,"child":child}
+        with self.assertRaises(queue.Full):host.control("child",{"visible":True,"paused":False})
+        self.assertEqual(calls,[{"paused":True},{"paused":True}])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -119,6 +133,21 @@ class StandbyTests(unittest.TestCase):
         self.assertEqual(prefetch.generation,generation)
         self.assertEqual(prefetch.current,{'seriesId':'1234567890123457','episode':7})
         self.assertIn(next_job.id,prefetch.foreground)
+        self.assertNotIn(job.id,prefetch.foreground,'superseded metadata releases only its old ownership')
+
+    def test_superseded_metadata_does_not_release_unfinished_encoder(self):
+        prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)
+        self.addCleanup(prefetch.close)
+        old=SimpleNamespace(id='old',video_mode='h264',source=None,cancelled=threading.Event(),failed=False)
+        generation=prefetch.begin(old,'1234567890123456',1);prefetch.busy=old.id
+        new=SimpleNamespace(id='new',cancelled=threading.Event(),failed=False)
+        prefetch.begin(new,'1234567890123456',3)
+        prefetch._load_promoted(old,'1234567890123456',1,generation)
+        self.assertEqual(prefetch.busy,old.id)
+        self.assertIn(old.id,prefetch.foreground)
+        prefetch.finish(old,'1234567890123456',1,None)
+        self.assertIsNone(prefetch.busy)
+        self.assertNotIn(old.id,prefetch.foreground)
 
     def test_warm_encoding_uses_existing_gate_and_does_not_advance_generation(self):
         prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *args:None)
