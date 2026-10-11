@@ -24,6 +24,26 @@ HLS的activate请求、替换会话ID等待及重查共用2秒截止；POST期�
 
 HLS接管先保留旧帧，activate成功后清除codec控制器的备用父标记并播放新视频，新帧回调后释放旧资源。后续copy→H264回退使用普通前台会话，不再引用已释放的父ID。会话ID随当前transport读取，替换POST未返回时等待新ID；恢复宿主前保存实时倍速、音量和静音。接管失败撤销属性/监听器并转普通加载。
 
+## 控制栏跨集继承
+
+同时载入 src/frontend-controls.js。控制栏组件放在跨集保留的播放器层，不要以集号或片源URL作为控制栏组件的key，也不要在session变化时重设可见状态。沿用宿主现有鼠标、点击、焦点、快捷键和2.5秒自动隐藏计时器，不把隐藏状态写成新的全局偏好。
+
+宿主向控制栏提供实时 isTransitioning 回调，通过既有ref读取“正在解析/选集，或当前媒体尚未就绪”。选集owner必须先写入pending，再暂停和释放旧播放器；控制栏的事件回调ref也同步保存这个getter。媒体状态仍正常同步，仅决定是否需要展开控制栏时使用：
+
+```js
+if (desktopControlsShouldReveal(event, media, {
+  disabled: controls.current.disabled,
+  autoContinue: controls.current.autoContinue,
+  transitioning: controls.current.isTransitioning?.()
+})) revealControls();
+```
+
+不要仅凭 media.ended 判断自动续播：宿主的结束监听器可能先释放旧控制器，导致该属性恢复false，而控制栏随后才收到同一个ended事件。该策略同时识别事件类型，屏蔽选集/加载内部pause造成的误展开；末集结束和普通用户暂停仍可显示。鼠标、点击和焦点显示入口直接沿用，不经过这个媒体生命周期判断。
+
+```pwsh
+node contributions/desktop-seamless-transition/tests/test_controls_visibility.cjs
+```
+
 ## 验证与回滚
 
 ```pwsh
@@ -39,3 +59,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 用户随后授权安装本轮末帧holder/HLS回执修复。本机主环境14文件SHA核对及安装后回读一致，候选真实Tauri原生32项/HLS21项通过；安装后真实Tauri原生33项/HLS22项，以及无预热保帧原生11项/HLS10项全部通过。覆盖1×/2×/3×自动下一集、设置继承、手动3→1→3实例复用；故意禁用预热并延迟解析800ms时，旧画面保持到下一集就绪，末集不创建下一集holder。关闭后资源槽归零，测试进程已退出，并行功能更新保留。
 
 此前隔离Edge/真实libmpv检查仍保留：预热原生32项/HLS21项、无预热原生10项/HLS9项通过，Node及实际React结束owner回归通过。测试使用自有合成媒体、隔离接口与缓存，功能状态不证明正常短剧连续像素无闪黑或物理音频无空档。上游接入发布、正常片源观感及最新提交复审仍待完成。
+
+本轮控制栏回归：策略18项及完整公开前端回归通过；候选Tauri无预热原生14项/HLS12项、安装后原生Tauri14项通过。后续并行更新保留相同控制栏owner；当前安装资源隔离Edge/HLS11项通过，切集时未展开且opacity为0。覆盖自动切集、显示/隐藏、手动选集、慢解析、暂停、鼠标事件、焦点与末集。当前整包Tauri/HLS因其他运行实例占用未重启验收，不干扰该实例。

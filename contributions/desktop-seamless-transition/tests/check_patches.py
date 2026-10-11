@@ -3,6 +3,11 @@ import argparse,hashlib,json,shutil,subprocess,tempfile
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--native-package',type=Path,required=True);a=p.parse_args()
 package=Path(__file__).resolve().parents[1]
+baselines=json.loads((package/'BASELINES.json').read_text(encoding='utf-8'))
+policy=package/baselines['controlsPolicy']['path']
+assert hashlib.sha256(policy.read_text(encoding='utf-8').encode()).hexdigest()==baselines['controlsPolicy']['sha256']
+subprocess.run(['node','--check',str(policy)],check=True)
+subprocess.run(['node',str(package/'tests/test_controls_visibility.cjs')],check=True)
 with tempfile.TemporaryDirectory() as temp:
     root=Path(temp);frontend=root/'frontend';frontend.mkdir()
     for entry in json.loads((package/'BASELINES.json').read_text(encoding='utf-8'))['files']:

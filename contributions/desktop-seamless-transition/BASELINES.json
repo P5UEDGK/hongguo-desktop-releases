@@ -11,5 +11,9 @@
       "baseSha256": "1d0bf1e2053c50fc7102d02c4fd32f513142e61078cf246f989396344bf8012f",
       "patchedSha256": "c5ddc1e6500e02122c9b8e7f9ae224155d4334fca167bf822eb9d9faf042325a"
     }
-  ]
+  ],
+  "controlsPolicy": {
+    "path": "src/frontend-controls.js",
+    "sha256": "af283042c3d327fe4049cea3361a9b56f71a4d5548c906dbdb6cb8961ef7ba3b"
+  }
 }
