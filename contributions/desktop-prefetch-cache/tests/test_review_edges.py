@@ -10,6 +10,29 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_file_shaped_stage_counts_as_non_evictable_quota(self):
+        cache=self.cache()
+        stage=cache.root/('stage-'+'a'*32)
+        stage.write_bytes(b'x'*128)
+        cache.quota_bytes=100
+        with self.assertRaises(OSError):cache._reserve(1)
+        self.assertEqual(stage.read_bytes(),b'x'*128)
+
+    def test_blocked_source_snapshot_does_not_hold_scheduler_condition(self):
+        entered,release,changed=threading.Event(),threading.Event(),threading.Event()
+        def status(_):
+            entered.set();release.wait(2);return {'complete':False}
+        prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',
+            encoder=encoder,source_status=status,profile_files=PROFILE_FILES)
+        self.addCleanup(prefetch.close)
+        prefetch.current_source=object()
+        reader=threading.Thread(target=prefetch.snapshot);reader.start()
+        self.assertTrue(entered.wait(1))
+        writer=threading.Thread(target=lambda:(prefetch.begin(Job('new',self.root/'job'),'1234567890123456',2),changed.set()))
+        writer.start()
+        try:self.assertTrue(changed.wait(.5),'optional source status must not block episode switching')
+        finally:release.set();reader.join(2);writer.join(2)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.source=self.root/'source.mp4';self.source.write_bytes(b'fixture')

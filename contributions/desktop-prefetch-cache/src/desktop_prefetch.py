@@ -274,11 +274,12 @@ class EpisodePrefetcher:
 
     def snapshot(self):
         with self.condition:
-            return {
+            source = self.current_source
+            result = {
                 "schema": 2, "processId": os.getpid(), "ahead": self.ahead,
                 "cacheKind": "original-media" if self.playback_mode == "native" else "complete-playable-hls",
                 "playbackMode": self.playback_mode,
-                "currentSourceComplete": self._source_complete(self.current_source),
+                "currentSourceComplete": False,
                 "current": self.current,
                 "currentPlayableComplete": self.current_complete,
                 "foregroundRequests": len(self.foreground),
@@ -294,6 +295,8 @@ class EpisodePrefetcher:
                     or self.download_active) else "idle",
             }
 
+        result["currentSourceComplete"] = self._source_complete(source)
+        return result
     def _report(self):
         if self.status_path is None:
             return

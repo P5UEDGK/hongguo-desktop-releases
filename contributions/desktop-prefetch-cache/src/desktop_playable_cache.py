@@ -270,7 +270,7 @@ class PlayableEpisodeCache:
         for directory in self.root.iterdir():
             if cancelled():
                 raise EncodingCancelled()
-            if not re.fullmatch(r"(?:[0-9a-f]{64}|stage-[0-9a-f]{32})", directory.name) or not plain(directory) or not directory.is_dir():
+            if not re.fullmatch(r"(?:[0-9a-f]{64}|stage-[0-9a-f]{32})", directory.name) or not plain(directory):
                 continue
             # Unknown nested content still occupies disk, but is never evicted.
             # Fail closed on unreadable content or links rather than count it as zero.
@@ -284,6 +284,9 @@ class PlayableEpisodeCache:
                 if not path.is_file():
                     raise OSError("Cannot account for an unknown cache entry")
                 return path.stat().st_size
+            if not directory.is_dir():
+                total += size_of(directory)
+                continue  # A malformed stage is accounted for, never evicted.
             children = list(directory.iterdir())
             size = sum(size_of(p) for p in children)
             if directory == replacing:
