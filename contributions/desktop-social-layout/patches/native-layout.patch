@@ -43,7 +43,7 @@
                  "ShowWindow": ([W.HWND, C.c_int], W.BOOL),
                  "DestroyWindow": ([W.HWND], W.BOOL),
                  "PeekMessageW": ([C.POINTER(W.MSG), W.HWND, W.UINT, W.UINT, W.UINT], W.BOOL),
-@@ -457,6 +470,7 @@
+@@ -460,6 +473,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -51,7 +51,7 @@
          danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
          output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
-@@ -561,9 +575,33 @@
+@@ -564,9 +578,33 @@
                          if not user.GetClientRect(self.parent, C.byref(client)):
                              raise RuntimeError("Desktop parent unavailable")
                          width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
@@ -86,7 +86,7 @@
                      danmaku_track.update(command)
                      if command.get("paused") is True:
                          desired["paused"] = True
-@@ -645,6 +683,10 @@
+@@ -648,6 +686,10 @@
                          raise SourceReadError("Native media input timed out")
                      retry_software(no_frame=not frame_ready)
                      continue
@@ -97,7 +97,7 @@
                  with self.guard:
                      self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                       time=position, duration=player.number("duration", self.job.duration),
-@@ -657,6 +699,7 @@
+@@ -660,6 +702,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops,
