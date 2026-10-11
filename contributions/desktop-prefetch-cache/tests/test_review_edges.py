@@ -11,6 +11,19 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_complete_cache_rejects_discontinuous_and_invalid_sequence_tags(self):
+        playlist=self.output/'index.m3u8';original=playlist.read_text(encoding='utf8');cache=self.cache()
+        for tag in ('#EXT-X-DISCONTINUITY','#EXT-X-DISCONTINUITY-SEQUENCE:0',
+                    '#EXT-X-DISCONTINUITY-SEQUENCE:bad','#EXT-X-MEDIA-SEQUENCE:bad',
+                    '#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MEDIA-SEQUENCE:1'):
+            for body in (original.replace('#EXTM3U\n','#EXTM3U\n'+tag+'\n',1),original+tag+'\n'):
+                with self.subTest(tag=tag):
+                    playlist.write_text(body,encoding='utf8')
+                    with self.assertRaises(ValueError):cache.store(self.source,self.output)
+        playlist.write_text(original+'#EXT-X-MEDIA-SEQUENCE:0\n',encoding='utf8')
+        with self.assertRaises(ValueError):cache.store(self.source,self.output)
+        playlist.write_text(original.replace('#EXTM3U\n','#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n',1),encoding='utf8');self.assertTrue(cache.store(self.source,self.output))
+
     def test_resumed_full_cache_restores_without_encoder(self):
         cache=self.cache();cache.store(self.source,self.output);windows=[];ready=[]
         cache.encoder=lambda *a,**kw:self.fail('cache hit must not encode a seek window')

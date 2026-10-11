@@ -129,6 +129,11 @@ class PlayableEpisodeCache:
         if not lines or lines[0] != "#EXTM3U":
             raise ValueError("Artifact playlist header is invalid")
         parameters = {}
+        sequences = [line for line in lines if line.startswith('#EXT-X-MEDIA-SEQUENCE')]
+        if (len(sequences) > 1 or sequences and
+                (not re.fullmatch(r'#EXT-X-MEDIA-SEQUENCE:[0-9]{1,20}', sequences[0])
+                 or int(sequences[0].split(':', 1)[1]) > 2**64 - 1)):
+            raise ValueError("Invalid artifact media sequence")
         for tag, minimum in (("TARGETDURATION", 1), ("VERSION", 6)):
             prefix = "#EXT-X-" + tag + ":"
             values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
@@ -141,6 +146,10 @@ class PlayableEpisodeCache:
             raise ValueError("Artifact playlist is incomplete")
         mapped, ended, segments, pending = False, False, [], None
         for line in lines:
+            if line.startswith('#EXT-X-DISCONTINUITY'):
+                raise ValueError("Unsupported local artifact timeline")
+            if line.startswith('#EXT-X-MEDIA-SEQUENCE') and segments:
+                raise ValueError("Late artifact media sequence")
             if line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
                 raise ValueError("Unsupported local artifact HLS tag")
             if line.startswith("#EXT-X-MAP:"):
