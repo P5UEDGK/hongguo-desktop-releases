@@ -174,7 +174,10 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (media.play === play) {if (savedPlay) Object.defineProperty(media, 'play', savedPlay); else delete media.play;}
     media.removeEventListener('error', onError, true);
     media.removeEventListener('timeupdate', rememberTime);
-  }, {seek(value) {if (!disposed) {position = value; controller?.seek(value);}}});
+  }, {seek(value) {if (!disposed) {
+      position = value; internalPause = true;
+      try {controller?.seek(value);} finally {internalPause = false; internalPlay = false;}
+    }}});
 }
 
 // Complete backend prefetch owns speculative media. Keep the resolved episode

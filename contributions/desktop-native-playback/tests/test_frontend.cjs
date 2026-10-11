@@ -15,7 +15,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   const fake=(media,url,target,callbacks,prep,transport)=>{
     const index=controllers.length;
     media.pause?.(); // Existing windowed controller pauses synchronously at construction.
-    const dispose=()=>{};dispose.seek=()=>{};
+    const dispose=()=>{};dispose.seek=()=>{media.pause?.();callbacks.onReady();media.play?.();};
     controllers.push({target,callbacks,transport});
     // The wrapper must preserve selected transport and callback ownership.
     transport.usedCopy=()=>index===0;
@@ -86,6 +86,9 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   await flush();const pausesBeforeUserPlay=explicitPauses;
   await explicit.play();await flush();
   assert.equal(explicitPauses,pausesBeforeUserPlay,'explicit ready play bypasses the startup pause guard');
+  explicit.pause();closeExplicit.seek(18);const seekPauses=explicitPauses;
+  await explicit.play();await flush();
+  assert.equal(explicitPauses,seekPauses,'play immediately after synchronous seek/onReady is explicit user intent');
   closeExplicit();assert.equal(explicit.play,explicitPlay);
   console.log('PASS: codec detection, negotiation, position/rate/pause, one retry, stale callbacks and missing video');
   // HLS audio copy restrictions must not prevent native HEVC selection.
