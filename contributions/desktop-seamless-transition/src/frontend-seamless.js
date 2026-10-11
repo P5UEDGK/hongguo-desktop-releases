@@ -68,7 +68,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
   let parent = null;
   const previous = desktopStandbys.get(currentMedia);
   previous?.dispose();
-  let disposed = false, claimed = false, id = null, controller = null, video = null;
+  let disposed = false, claimed = false, id = null, controller = null, video = null, creationToken = null;
   let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null;
   let known = {}, knownDuration = null, failed = false, resumePosition = null, resumeFailed = false, resumeInvalid = false;
   const headers = {'x-api-key': endpoint.key};
@@ -101,10 +101,15 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     return fetchJson(endpoint.origin + '/desktop/hls' + path, init, budget);
   }
   async function release() {
-    if (!id) return;
-    const old = id; id = null;
-    try {await fetch(endpoint.origin + '/desktop/hls/' + old,
-      {...options, method:'DELETE', headers, keepalive:true});} catch {}
+    const targets = [id, creationToken && 'requests/'+creationToken].filter(Boolean);
+    id = creationToken = null;
+    await Promise.all(targets.map(async target => {
+      const local = new AbortController();let timer;
+      try {await Promise.race([
+        fetch(endpoint.origin+'/desktop/hls/'+target,{...options,method:'DELETE',headers,signal:local.signal,keepalive:true}),
+        new Promise(resolve=>{timer=setTimeout(()=>{local.abort();resolve();},15000);})
+      ]);} catch {} finally {clearTimeout(timer);}
+    }));
   }
   function finishRetained() {
     clearTimeout(retireTimer); retireTimer = null;
@@ -237,8 +242,12 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         await new Promise(resolve=>setTimeout(resolve,20));
       }
       if (disposed || !/^[a-f0-9]{32}$/.test(parent || '')) throw Error('Standby parent unavailable');
-      const created = await fetchJson(endpoint.url, {method:'POST',
+      const sourceUrl = new URL(endpoint.url);
+      creationToken = capability.requestCancellation === 1 ? (Date.now()+30000)+'-'+crypto.randomUUID().replace(/-/g,'') : null;
+      if (creationToken) sourceUrl.searchParams.set('request_token',creationToken);
+      const created = await fetchJson(sourceUrl.href, {method:'POST',
         headers:{'x-desktop-codec-negotiation':'1','x-desktop-prewarm-parent':parent}});
+      creationToken = null;
       const identifier = created.id;
       if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid standby');
       id = identifier;

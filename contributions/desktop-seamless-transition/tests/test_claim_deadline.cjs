@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),asse
 (async()=>{
  for(const probe of ['capability','window'])for(const cancel of [false,true]){
   let now=0,token=0,released=0,retired=0;const timers=new Map(),url='http://127.0.0.1/desktop/hls?ep=2';
-  const c={WeakMap,Map,Number,Math,AbortController,Date:{now:()=>now},
+  const c={URL,WeakMap,Map,Number,Math,AbortController,Date:{now:()=>now},
    setTimeout(fn,delay){timers.set(++token,{fn,delay});return token;},clearTimeout:id=>timers.delete(id),
    w0:()=>({origin:'http://127.0.0.1',url,key:'owned'}),
    desktopSupportsSource:()=>new Promise(()=>{}),desktopNativeWindowContext:()=>new Promise(()=>{}),
