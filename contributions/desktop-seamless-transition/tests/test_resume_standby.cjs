@@ -50,20 +50,26 @@ async function scenario(native,position,fault='',fallbackFrames=false){
         body={state:'complete',duration:90,source:{video:{contentType:'video/mp4; codecs="hvc1.1"'},audio:[]},
           native:selected?{state:'ready',outputReady:!(target&&fault==='timeout')&&!seeking,revision:seeking?revision-1:revision,
             time:fault==='advanced'? .051:seeking?0:target,duration:90,paused:true,muted:true,visible:false,seeking}:null};
+        if(fault.startsWith('prepare-failed')){body.state='failed';if(fault==='prepare-failed-unknown')delete body.duration;}
       }else if(request.endsWith('/activate')){activated=true;body={activated:true};}
       else if(init.method==='POST')body={id:'b'.repeat(32)};
       return {ok:true,status:200,json:async()=>body};
     }};
   vm.createContext(c);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),c);vm.runInContext(source,c);const prep=c.desktopPrepareNext(url,current);
   try{
-    for(let n=0;n<15;n++)await tick();
+    if(!fault.startsWith('prepare-failed'))for(let n=0;n<15;n++)await tick();
     assert.equal(plays,0);assert(!calls.some(x=>'seek'in x),'prewarm stays at the opening');
     if(videos[0]&&fault!=='advanced')assert(videos[0].paused&&videos[0].currentTime<=.05&&videos[0].style.opacity==='0');
     prep.retain(()=>retired++);claimed=true;
     const record=await prep.claimRecord(fault==='identity'?url+'&other=1':url,position);
     if(fault||!Number.isFinite(position)||position<0||position>=90){
       assert.equal(record,null,'unsafe/failed reuse must fall back');
-      if(['timeout','seek-error'].includes(fault)){assert.equal(prep.resumeFailed,true);assert.equal(prep.resumePosition,position);assert.equal(prep.settings.rate,2);assert.equal(prep.settings.volume,.4);assert.equal(prep.settings.muted,true);assert.equal(retired,0,'seek failure preserves old picture for ordinary loading');prep.finishRetained();assert.equal(retired,1);}
+      if(fault.startsWith('prepare-failed')){
+        assert.equal(prep.resumeInvalid,fault!=='prepare-failed-unknown'&&position>=90);
+        assert.equal(prep.resumePosition,fault==='prepare-failed-unknown'?null:position>=90?0:position,'failed preparation cannot bypass cold EOF validation without a known duration');
+        assert.equal(retired,0);prep.finishRetained();assert.equal(retired,1);
+      }
+      else if(['timeout','seek-error'].includes(fault)){assert.equal(prep.resumeFailed,true);assert.equal(prep.resumePosition,position);assert.equal(prep.settings.rate,2);assert.equal(prep.settings.volume,.4);assert.equal(prep.settings.muted,true);assert.equal(retired,0,'seek failure preserves old picture for ordinary loading');prep.finishRetained();assert.equal(retired,1);}
       else {
         if(!fault && (!Number.isFinite(position)||position<0||position>=90)){
           assert.equal(prep.resumeInvalid,true,'invalid saved progress is distinguished from a seek failure');
@@ -85,6 +91,8 @@ async function scenario(native,position,fault='',fallbackFrames=false){
 }
 (async()=>{
   for(const native of [true,false]){
+    for(const position of [30,90,91])await scenario(native,position,'prepare-failed');
+    await scenario(native,90,'prepare-failed-unknown');
     for(const position of [0,.05,.051,30,89.8])await scenario(native,position);
     for(const position of [-1,NaN,Infinity,90,91])await scenario(native,position);
     for(const fault of ['identity','cancel','timeout','seek-error'])await scenario(native,30,fault);
@@ -92,5 +100,5 @@ async function scenario(native,position,fault='',fallbackFrames=false){
   await scenario(true,0,'advanced');
   await scenario(false,0,'advanced');
   await scenario(false,.051,'',true);await scenario(false,89.8,'',true);
-  console.log('PASS: 32 native/HLS resume cases, first 50ms prewarm only, target-frame readiness, seeked fallback, identity, invalid positions, cancellation, timeout and retention');
+  console.log('PASS: 40 native/HLS resume cases, including failed preparation with known/unknown duration, target-frame readiness, invalid positions, cancellation, timeout and retention');
 })().catch(e=>{console.error(e);process.exitCode=1;});

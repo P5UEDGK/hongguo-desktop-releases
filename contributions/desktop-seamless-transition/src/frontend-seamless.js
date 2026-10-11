@@ -68,7 +68,7 @@ function desktopPrepareNext(url, currentMedia) {
   previous?.dispose();
   let disposed = false, claimed = false, id = null, controller = null, video = null;
   let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null;
-  let known = {}, failed = false, resumePosition = null, resumeFailed = false, resumeInvalid = false;
+  let known = {}, knownDuration = null, failed = false, resumePosition = null, resumeFailed = false, resumeInvalid = false;
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
   const abort = new AbortController();
@@ -180,10 +180,15 @@ function desktopPrepareNext(url, currentMedia) {
         resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
       }
       const result = await prepared;
-      if (!result || disposed) {cleanup(true); return null;}
-      const duration = result.mode === 'native' ? result.duration : known.onTimeline?.[0] || video.duration;
+      const duration = result?.mode === 'native' ? result.duration : known.onTimeline?.[0] || knownDuration || video?.duration;
       if (Number.isFinite(duration) && duration > 0 && position >= duration) {
         resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
+      }
+      if (!result || disposed) {
+        // A failed preparation cannot vouch for an unknown saved position.
+        // The cold controller must run its normal duration/EOF validation.
+        if (!(Number.isFinite(duration) && duration > 0)) resumePosition = null;
+        cleanup(true); return null;
       }
       if (position > .05) {
         try {await seekToResume(result,position);} catch {resumeFailed = true;cleanup(true);return null;}
@@ -213,6 +218,7 @@ function desktopPrepareNext(url, currentMedia) {
       let value;
       while (!disposed && Date.now() < deadline) {
         value = await request('/' + id + '/status');
+        if (Number.isFinite(value.duration) && value.duration > 0) knownDuration = value.duration;
         if (value.state === 'failed') throw Error('Standby source failed');
         if (value.source) break;
         await new Promise(resolve => setTimeout(resolve, 200));
@@ -220,7 +226,10 @@ function desktopPrepareNext(url, currentMedia) {
       if (disposed || !value?.source) throw Error('Standby source timed out');
       mode = capability.nativePlayback === 1 && value.source.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')
         ? 'native' : await desktopSupportsSource(value.source) ? 'copy' : 'h264';
-      await request('/' + id + '/mode', {method:'POST', headers:{'content-type':'application/json'},body:JSON.stringify({mode})});
+      const windowContext = mode === 'native' ? await desktopNativeWindowContext() : null;
+      if (disposed) return null;
+      await request('/' + id + '/mode', {method:'POST', headers:{'content-type':'application/json'},
+        body:JSON.stringify({mode, ...(windowContext ? {window:windowContext} : {})})});
       if (mode === 'native') {
         let placement = null;
         while (!disposed && Date.now() < deadline) {
