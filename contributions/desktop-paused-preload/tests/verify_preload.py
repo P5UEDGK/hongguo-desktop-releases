@@ -136,7 +136,6 @@ def main():
     from fastapi import FastAPI
     import uvicorn
     assert hashlib.sha256(args.source.read_bytes()).hexdigest() == args.sha
-    validate_budget(args.cache_budget,ProgressiveSource.block_size,args.source.stat().st_size)
     if args.cache_budget is not None: module.CACHE_FILE_BUDGET = args.cache_budget
     run = args.run.resolve()
     (run/'reports').mkdir(parents=True,exist_ok=True)
@@ -144,6 +143,7 @@ def main():
     work.mkdir(parents=True)
     app = FastAPI()
     fixture = ProgressiveFixture(app, work, [args.source])
+    validate_budget(args.cache_budget,ProgressiveSource.block_size,fixture.files[0].stat().st_size)
     fixture.delay = args.range_delay
     timeout = preload_timeout(fixture.files[0].stat().st_size, fixture.delay, args.preload_timeout)
     host = NativeHost(parent_pid=os.getpid(), hardware=not args.software,
@@ -244,7 +244,7 @@ def main():
             else:
                 check('paused-preload-past-12-seconds-to-eof',value['sourceProgress']['complete'] and
                       value['native']['cacheComplete'] and value['native']['bufferEnd']==value['duration'] and
-                      value['native']['bufferEnd']>12,value)
+                      value['native']['bufferEnd']>=min(12,value['duration']),value)
                 check('payload-cached-on-disk',value['native']['cacheFileBytes']>0 and not value['native']['preloadLimited'])
             for rate in (2,3):
                 request('/'+identifier+'/control','POST',{'paused':False,'rate':rate,'volume':0})

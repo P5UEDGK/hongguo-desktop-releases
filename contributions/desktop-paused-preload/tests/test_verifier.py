@@ -14,6 +14,32 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_budget_validation_uses_actual_served_fixture_after_remux(self):
+        tree=ast.parse(inspect.getsource(probe));main=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='main')
+        selected=[]
+        for node in main.body:
+            if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='fixture' for t in node.targets):selected.append(node)
+            if isinstance(node,ast.Expr) and isinstance(node.value,ast.Call) and isinstance(node.value.func,ast.Name) and node.value.func.id=='validate_budget':selected.append(node)
+        code=compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),'<actual-fixture-setup>','exec')
+        def path(size):return SimpleNamespace(stat=lambda:SimpleNamespace(st_size=size))
+        for original,served,valid in [(60000,80000,True),(80000,60000,False)]:
+            scope=dict(vars(probe),args=SimpleNamespace(cache_budget=65536,source=path(original)),
+                ProgressiveSource=SimpleNamespace(block_size=65536),app=None,work=None,
+                ProgressiveFixture=lambda *_:SimpleNamespace(files=[path(served)]))
+            if valid:exec(code,scope)
+            else:
+                with self.assertRaises(ValueError):exec(code,scope)
+
+    def test_full_preload_check_accepts_a_short_complete_clip(self):
+        tree=ast.parse(inspect.getsource(probe))
+        call=next(node for node in ast.walk(tree) if isinstance(node,ast.Call) and isinstance(node.func,ast.Name)
+                  and node.func.id=='check' and isinstance(node.args[0],ast.Constant)
+                  and node.args[0].value=='paused-preload-past-12-seconds-to-eof')
+        expression=compile(ast.fix_missing_locations(ast.Expression(call.args[1])),'<actual-short-clip-check>','eval')
+        value={'duration':5,'sourceProgress':{'complete':True},'native':{'cacheComplete':True,'bufferEnd':5}}
+        self.assertTrue(eval(expression,{'value':value}))
+        value['native']['bufferEnd']=4;self.assertFalse(eval(expression,{'value':value}))
+
     def test_bootstrap_must_be_quiet_after_growth_and_active_reads(self):
         now=[0];sizes=iter([1,2,3,3,3,3,3,3,3,3]);reads=iter([True,True,True,False,False,False,False,False,False,False])
         value=probe.wait_bootstrap_quiet(lambda:{'native':{'cacheFileBytes':next(sizes)}},lambda:next(reads),
