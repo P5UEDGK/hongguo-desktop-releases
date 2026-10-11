@@ -1,6 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../src/frontend-seamless.js'),'utf8');
-const tick=async()=>{for(let i=0;i<15;i++)await new Promise(setImmediate)};
+// Flush both promise work and the simulated 1 ms session polling timers.
+const tick=async()=>{for(let i=0;i<15;i++)await new Promise(resolve=>setTimeout(resolve,1))};
 class Video extends EventTarget {
   constructor(){super();Object.assign(this,{paused:true,currentTime:0,playbackRate:1,volume:1,muted:false,
     duration:90,readyState:2,videoWidth:1920,videoHeight:1080,buffered:{length:1,start:()=>0,end:()=>9},style:{},removed:false});}
