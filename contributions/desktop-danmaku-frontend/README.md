@@ -22,7 +22,7 @@ start(media,endpoint,status) 返回清理函数。DOM 回退使用 requestAnimat
 
 ## 验证
 
-Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。Python API 测试先安装本包 requirements-test.txt。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
+Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。本包 Python 校验只使用标准库。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
 
 ```pwsh
 node contributions/desktop-danmaku-frontend/tests/test_motion.cjs
@@ -49,3 +49,10 @@ node contributions/desktop-danmaku-frontend/tests/test_remaining.cjs
 DOM弹幕的轨道和字号按实际弹幕层高度计算，跟随布局owner测得的控制栏高度；无测量值时保留84像素回退。新增高度变化回归在旧实现失败，当前运动、迟到准入、剩余审查测试及74项跨包Chrome检查通过。
 
 同一30秒桶内保留不透明分页cursor，只有桶实际前进时才重基；late-only原始页不再每帧重排。鼠标点击toggle获得的焦点不阻止250ms pointerleave关闭；键盘焦点和面板内焦点仍保留设置。新调度失败回放、全部运动/迟到准入/审查测试及79项Chrome通过，旧鼠标聚焦实现浏览器回归失败。
+
+
+## 本轮二次反馈修复
+
+卸载清空重试提示，过期响应不能恢复提示。调速保留在途进度，原始 offset_ms 不变，可选 motion_start_ms 由 DOM 与更新后的 #207 共用；已结束弹幕不复活。车道拒绝的未来行在输入、设置、视口或已准入行结束时重算，暂停帧不重复排轨。旧代码回放失败，当前运动、迟到准入与13组审查回归通过。
+
+本机完整候选、安装回读与反馈观察期仍待完成。

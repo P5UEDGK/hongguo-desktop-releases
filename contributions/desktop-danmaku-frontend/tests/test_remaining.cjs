@@ -28,6 +28,39 @@ function fixture() {
     settings:{opacity:80,lanes:6,fontSize:18,duration:4}};
 }
 (async()=>{
+  await test('unmount clears retry status and old rejected requests cannot restore it',async()=>{
+    const f=fixture(),stop=f.start();await f.reject();assert.match(f.statuses.at(-1),/失败/);
+    stop();assert.equal(f.statuses.at(-1),'');
+    const g=fixture(),close=g.start();close();await g.reject();assert.equal(g.statuses.at(-1),'');
+  });
+  await test('duration changes preserve active DOM progress and native motion origin',async()=>{
+    const f=fixture(),stop=f.start();await f.resolve({items:[row('active',0)]});
+    for(let t=1;t<=7;t++)await f.tick(t);
+    const x=()=>Number(f.layer.children[0].style.transform.match(/translate3d\(([-.\d]+)/)[1]);
+    const halfway=x();
+    f.events.get('desktopsocialsettings')({detail:{settings:{...f.settings,duration:24}}});
+    await f.tick(7);assert.ok(Math.abs(x()-halfway)<.2);
+    assert.equal(f.media.desktopDanmaku[0].offset_ms,0);
+    assert.equal(f.media.desktopDanmaku[0].motion_start_ms,-5000);
+    f.events.get('desktopsocialsettings')({detail:{settings:{...f.settings,duration:4}}});
+    await f.tick(7);assert.ok(Math.abs(x()-halfway)<.2);
+    assert.equal(f.media.desktopDanmaku[0].motion_start_ms,5000);
+    await f.tick(8);assert.ok(x()<halfway);
+    await f.tick(9);assert.equal(f.layer.children.length,0);
+    f.events.get('desktopsocialsettings')({detail:{settings:{...f.settings,duration:24}}});
+    await f.tick(9);assert.equal(f.layer.children.length,0);stop();
+  });
+  await test('lane-rejected future rows do not reschedule on every paused frame',async()=>{
+    const f=fixture(),stop=f.start();
+    f.events.get('desktopsocialsettings')({detail:{settings:{...f.settings,lanes:1,fontSize:36,duration:24}}});
+    await f.resolve({items:[row('a',0),row('rejected',1000)]});await f.tick(0);
+    assert.equal(f.media.desktopDanmaku.length,1);let calls=0;
+    f.context.JSON={...JSON,stringify(...args){calls++;return JSON.stringify(...args);}};
+    for(let i=0;i<60;i++)await f.tick(0);
+    assert.equal(calls,0);
+    f.events.get('desktopsocialsettings')({detail:{settings:{...f.settings,lanes:1}}});
+    assert.ok(calls>0);assert.equal(f.media.desktopDanmaku.length,2);stop();
+  });
   await test('same bucket pagination preserves its opaque cursor while paused',async()=>{
     const f=fixture();f.media.currentTime=25;const stop=f.start();
     assert.equal(f.pending[0].params.offset_ms,0);
