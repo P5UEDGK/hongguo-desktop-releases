@@ -74,7 +74,7 @@
          with self.condition:
              if (generation == self.generation and not self.closed
                      and self.current == {"seriesId": str(series_id), "episode": episode}):
-@@ -137,6 +156,81 @@
+@@ -139,6 +158,81 @@
          self._report()
          return source
  
@@ -156,7 +156,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -161,6 +255,8 @@
+@@ -165,6 +259,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -165,7 +165,7 @@
              expected = self.foreground.get(job.id)
              cached_result = self.cache_results.pop(job.id, None)
              self.foreground_directories.pop(job.id, None)
-@@ -177,6 +273,9 @@
+@@ -181,6 +277,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -175,7 +175,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -318,6 +417,7 @@
+@@ -325,6 +424,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

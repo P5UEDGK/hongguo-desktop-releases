@@ -12,7 +12,7 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,39 @@
+@@ -291,7 +296,44 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -40,7 +40,12 @@
 +                                    raise ValueError("Previous audio not paused")
 +                    elif body.get("paused") is False or body.get("muted") is False:
 +                        raise ValueError("Standby must remain silent and paused")
-+                return session.submit(body)
++                revision = session.submit(body)
++                if previous_states and not getattr(session, "handoff_previous", None):
++                    session.handoff_previous = [(previous, paused,
++                        getattr(previous, "pause_revision", previous.snapshot().get("revision", 0)))
++                        for previous, paused in previous_states]
++                return revision
 +            except Exception:
 +                # No child command was accepted. Restore the old playback
 +                # state instead of leaving a visible episode paused on 429.
@@ -53,7 +58,32 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -451,7 +488,8 @@
+@@ -301,6 +343,15 @@
+         with self.guard:
+             if self.sessions.get(identifier) is session:
+                 self.sessions.pop(identifier, None)
++                if getattr(getattr(session, "job", None), "prewarm_parent", None):
++                    for previous, paused, pause_revision in getattr(session, "handoff_previous", ()):
++                        if any(previous is live for live in self.sessions.values()):
++                            try:
++                                current = getattr(previous, "pause_revision", previous.snapshot().get("revision", 0))
++                                if current == pause_revision:
++                                    previous.submit({"paused": paused})
++                            except Exception:
++                                pass
+         return True
+ 
+ 
+@@ -425,6 +476,8 @@
+             revision = self.revision + 1
+             self.commands.put_nowait((revision, command))
+             self.revision = revision
++            if "paused" in command:
++                self.pause_revision = revision
+             self.queued_state.update({key: value for key, value in command.items()
+                                       if key in self.queued_state})
+             return revision
+@@ -451,7 +504,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -63,7 +93,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -638,6 +676,7 @@
+@@ -638,6 +692,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

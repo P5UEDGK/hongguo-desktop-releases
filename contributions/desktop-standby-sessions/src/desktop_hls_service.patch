@@ -38,10 +38,16 @@
          if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
              raise HTTPException(400, "Invalid episode identity")
          if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
-@@ -129,19 +138,30 @@
+@@ -129,19 +138,36 @@
              self._expire()
              if self.closed.is_set():
                  raise HTTPException(503, "Desktop sessions are closed")
++            if prewarm_parent is None:
++                # Revoke even completed standbys before advancing the foreground
++                # generation. Their queued visible command is still provisional.
++                for standby in list(self.jobs.values()):
++                    if standby.prewarm_parent and self.release(standby.id) is False:
++                        raise HTTPException(503, "Previous standby teardown pending")
 +            if prewarm_parent is not None:
 +                parent = self.get(prewarm_parent)
 +                if (parent.prewarm_parent or parent.failed or parent.series_id != series_id
@@ -71,7 +77,7 @@
                  threading.Thread(target=self._run, args=(job, series_id, episode), daemon=True).start()
              except Exception:
                  job.failed = True
-@@ -158,7 +178,9 @@
+@@ -158,7 +184,9 @@
          source = None
          encoder_acquired = False
          try:
@@ -82,7 +88,7 @@
              job.source = source if isinstance(source, ProgressiveSource) else Path(source)
              if job.cancelled.is_set():
                  raise EncodingCancelled()
-@@ -278,6 +300,9 @@
+@@ -278,6 +306,9 @@
              job = self.jobs.get(identifier)
              if not job:
                  return
@@ -92,7 +98,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -290,6 +315,36 @@
+@@ -290,6 +321,39 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -107,6 +113,9 @@
 +                raise HTTPException(409, "Standby failed")
 +            if not job.prewarm_parent:
 +                return  # Already activated: idempotent success.
++            parent = self.jobs.get(job.prewarm_parent)
++            if parent and parent.video_mode == "native" and job.video_mode != "native":
++                raise HTTPException(409, "Cross-mode standby audio handoff unsupported")
 +            if job.video_mode == "native":
 +                value = self.native.snapshot(job.id) if self.native else None
 +                if (not value or not value.get("visible") or not value.get("outputReady")
@@ -129,7 +138,7 @@
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -387,7 +442,7 @@
+@@ -387,7 +451,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -138,7 +147,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -398,7 +453,11 @@
+@@ -398,7 +462,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -151,7 +160,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -496,6 +555,7 @@
+@@ -496,6 +564,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -159,7 +168,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -509,17 +569,32 @@
+@@ -509,17 +578,32 @@
  
      @router.post("/{identifier}/control")
      async def control(identifier: str, request: Request):

@@ -20,6 +20,43 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_cancelled_handoff_preserves_later_parent_pause_intent(self):
+        host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0}
+        def submit(body):
+            state.update(body,revision=state['revision']+1)
+            if 'paused' in body:parent.pause_revision=state['revision']
+            return state['revision']
+        parent=SimpleNamespace(job=SimpleNamespace(prewarm_parent=None),stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=submit)
+        child=SimpleNamespace(job=SimpleNamespace(prewarm_parent='parent'),stop=threading.Event(),snapshot=lambda:{'outputReady':True},submit=lambda _:1,close=lambda:True)
+        host.sessions={'parent':parent,'child':child};host.control('child',{'visible':True,'paused':False})
+        host.control('parent',{'paused':True});host.release('child');self.assertTrue(state['paused'])
+
+    def test_generation_advance_revokes_completed_pending_native_handoff_and_restores_parent(self):
+        jobs,_=self.jobs();generation=[0];observed=[]
+        def begin(job,*_):
+            generation[0]+=1;job.prefetch_generation=generation[0]
+            if generation[0]>1:observed.append((child.cancelled.is_set(),child_session.stop.is_set(),parent_state['paused']))
+        jobs.on_start=begin
+        parent=jobs.create('1234567890123456',1);parent.video_mode='native'
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='native';child.done.set();child.ready.set()
+        host=object.__new__(NativeHost);host.guard=threading.RLock();parent_state={'paused':False,'revision':0};pending=[]
+        def parent_submit(body):parent_state.update(body,revision=parent_state['revision']+1);return parent_state['revision']
+        parent_session=SimpleNamespace(job=parent,stop=threading.Event(),desired_state=lambda:dict(parent_state),snapshot=lambda:dict(parent_state),submit=parent_submit,close=lambda:True)
+        def close_child():child_session.stop.set();pending.clear();return True
+        def child_submit(body):pending.append(body);return len(pending)
+        child_session=SimpleNamespace(job=child,stop=threading.Event(),snapshot=lambda:{'outputReady':True},submit=child_submit,close=close_child)
+        host.sessions={parent.id:parent_session,child.id:child_session};jobs.native=host
+        host.control(child.id,{'visible':True,'paused':False,'muted':False});self.assertTrue(parent_state['paused']);self.assertTrue(pending)
+        jobs.create(parent.series_id,3)
+        self.assertEqual(observed,[(True,True,False)],'revocation and parent rollback must precede the new generation')
+        self.assertEqual(pending,[]);self.assertNotIn(child.id,host.sessions)
+
+    def test_native_parent_cannot_activate_an_hls_standby(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='native'
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='h264'
+        with self.assertRaises(HTTPException) as error:jobs.activate(child)
+        self.assertEqual(error.exception.status_code,409);self.assertEqual(child.prewarm_parent,parent.id)
+
     def wired_jobs(self, encoder):
         source=self.root/'cold-fixture.mp4';source.write_bytes(b'owned test bytes')
         metadata=[{'index':i,'vid':str(123456780000+i)} for i in (1,2,3)]
@@ -187,7 +224,8 @@ class StandbyTests(unittest.TestCase):
         newer=jobs.create(parent.series_id,3)
         generation=prefetch.generation
         with self.assertRaises(HTTPException) as error:jobs.activate(child)
-        self.assertEqual(error.exception.status_code,409)
+        self.assertEqual(error.exception.status_code,404)
+        self.assertTrue(child.cancelled.is_set(),'ordinary create revokes stale standby before advancing the generation')
         self.assertEqual(child.prewarm_parent,parent.id)
         self.assertEqual(prefetch.generation,generation)
         self.assertEqual(prefetch.current['episode'],3)
