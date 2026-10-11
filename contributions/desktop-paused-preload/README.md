@@ -55,3 +55,8 @@ pwsh -NoProfile -Command "python -I contributions/desktop-paused-preload/tests/v
 接入依赖以 BASELINES.json 为准，当前 #204 为 c7bfbc2ea269af4013ab971467d9ef68dc207b9a。本轮原生仅改前端，三个后端基线文件摘要未变；上轮84项暂停组合证据可复用。
 
 本机候选与安装仍待完成。
+
+
+本轮审查回归（2026-10-12，第四批）：4242235633/5639/4242299666/9671：探针等待bootstrap静稳并验证preload启动；预算至少一块、显式预算必须触顶且不超限；seek目标依时长取值。跨包实测发现暂停命令迁移后user_paused未更新，改在当前暂停/恢复分支同步。
+
+修改后公共回归、待机组合180项、Chrome87项和真实libmpv字幕检查通过。暂停预加载实测触及8MiB硬上限并稳定，2x/3x恢复及释放通过。本机候选融合与安装尚未完成，上游PR尚未合并；公共测试通过不等于安装验收通过。

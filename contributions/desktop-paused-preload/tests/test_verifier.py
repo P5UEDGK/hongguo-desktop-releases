@@ -14,6 +14,18 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_bootstrap_must_be_quiet_after_growth_and_active_reads(self):
+        now=[0];sizes=iter([1,2,3,3,3,3,3,3,3,3]);reads=iter([True,True,True,False,False,False,False,False,False,False])
+        value=probe.wait_bootstrap_quiet(lambda:{'native':{'cacheFileBytes':next(sizes)}},lambda:next(reads),
+            timeout=3,quiet_seconds=.3,clock=lambda:now[0],sleep=lambda amount:now.__setitem__(0,now[0]+amount))
+        self.assertEqual(value['native']['cacheFileBytes'],3);self.assertGreaterEqual(now[0],.6)
+
+    def test_budget_input_and_seek_stay_inside_owned_fixture(self):
+        for budget in (0,1,65535,131072,200000):
+            with self.assertRaises(ValueError):probe.validate_budget(budget,65536,131072)
+        probe.validate_budget(65536,65536,131072);probe.validate_budget(None,65536,1)
+        for duration in (13,24,90):self.assertTrue(0<probe.seek_target(duration)<duration)
+
     def test_actual_scenario_finally_cannot_skip_completion(self):
         tree=ast.parse(inspect.getsource(probe))
         scenario=next(node for node in ast.walk(tree) if isinstance(node,ast.FunctionDef) and node.name=='scenario')

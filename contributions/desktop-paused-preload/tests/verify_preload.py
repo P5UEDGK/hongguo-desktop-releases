@@ -19,6 +19,27 @@ import urllib.request
 from unittest.mock import patch
 
 
+def wait_bootstrap_quiet(sample, reading, *, timeout, quiet_seconds, clock=time.monotonic, sleep=time.sleep):
+    until=clock()+timeout;last=None;stable=None
+    while clock()<until:
+        value=sample();size=value['native']['cacheFileBytes'];now=clock()
+        if reading() or size!=last: stable=None
+        elif stable is None: stable=now
+        elif now-stable>=quiet_seconds: return value
+        last=size;sleep(.1)
+    raise AssertionError('Bootstrap readahead did not become quiet; use a longer fixture or timeout')
+
+
+def validate_budget(budget, block_size, source_size):
+    if budget is not None and not block_size<=budget<source_size:
+        raise ValueError('Budget probe requires at least one source block and a source larger than the budget')
+
+
+def seek_target(duration):
+    if not math.isfinite(duration) or duration<=0:raise ValueError('Invalid fixture duration')
+    return min(25.,duration/2)
+
+
 def preload_outcome(value):
     native = value['native']
     if native['preloadLimited']:
@@ -110,10 +131,12 @@ def main():
     from desktop_hls_service import HlsJobs, make_router
     from desktop_prefetch import EpisodePrefetcher
     from desktop_stream import ProgressiveSource, source_progress
+    import desktop_range_cache as range_module
     from progressive_fixture import ProgressiveFixture
     from fastapi import FastAPI
     import uvicorn
     assert hashlib.sha256(args.source.read_bytes()).hexdigest() == args.sha
+    validate_budget(args.cache_budget,ProgressiveSource.block_size,args.source.stat().st_size)
     if args.cache_budget is not None: module.CACHE_FILE_BUDGET = args.cache_budget
     run = args.run.resolve()
     (run/'reports').mkdir(parents=True,exist_ok=True)
@@ -147,6 +170,9 @@ def main():
               'sourceSha256':args.sha,'rangeDelay':fixture.delay,'preloadTimeout':timeout,
               'checks':[],'pausedSamples':[]}
     done = threading.Event()
+    preload_entered=threading.Event();original_preload=range_module.preload
+    def observed_preload(*a,**kw):
+        preload_entered.set();return original_preload(*a,**kw)
     errors = []
     def request(path,method='GET',body=None):
         headers={'x-api-key':key,'x-desktop-codec-negotiation':'1'}
@@ -175,8 +201,8 @@ def main():
             initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready')
             session=host.sessions[identifier]
             check('first-frame-before-full-input',not initial['sourceProgress']['complete'] and initial['native']['outputReady'],initial)
-            time.sleep(.8)
-            bounded=request('/'+identifier+'/status')
+            bounded=wait_bootstrap_quiet(lambda:request('/'+identifier+'/status'),
+                session.job.source.reading.is_set,timeout=timeout,quiet_seconds=max(1.,fixture.delay*3+.5))
             check('bootstrap-pause-does-not-fill-whole-file',not bounded['native']['cacheComplete'],bounded['native'])
             request('/'+identifier+'/control','POST',{'paused':True})
             started=time.monotonic()
@@ -187,6 +213,9 @@ def main():
             limited = preload_outcome(value) == 'limited'
             if preload_outcome(value) == 'failed':
                 raise AssertionError('Preloading failed: '+str(value['native'].get('preloadReason')))
+            if args.cache_budget is not None:
+                check('explicit-budget-reaches-cap',limited and value['native']['cacheFileBytes']<=module.CACHE_FILE_BUDGET,value['native'])
+            check('pause-worker-ran',preload_entered.is_set())
             if limited:
                 # Observe actual file bytes after the writer reports its cap.
                 # A state flag alone cannot prove the hard budget.
@@ -228,8 +257,9 @@ def main():
                 check(str(rate)+'x-resumes-default-audio',state['time']>position+1 and abs(state['avsync'])<.1 and
                       state['audioDevice']=='auto' and state['audioOutput']=='wasapi' and
                       (not args.software or state['hwdec']=='no'),state)
-            request('/'+identifier+'/control','POST',{'paused':True,'seek':25})
-            wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time']-25)<.15)
+            target=seek_target(value['duration'])
+            request('/'+identifier+'/control','POST',{'paused':True,'seek':target})
+            wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time']-target)<.15)
             check('future-three-downloads-zero-encoding',prefetch.wait_idle(3) and
                   prefetch.snapshot()['downloadCompletedEpisodes']==[2,3,4] and not encodes,prefetch.snapshot())
             directory=jobs.get(identifier).directory
@@ -240,7 +270,7 @@ def main():
         except BaseException as exc: errors.append(type(exc).__name__);report['errorType']=type(exc).__name__
         finally:
             cleanup_probe(jobs, prefetch, identifier, report, errors, done)
-    with patch.object(NativeSession,'forward_input',return_value=True):
+    with patch.object(NativeSession,'forward_input',return_value=True), patch.object(range_module,'preload',side_effect=observed_preload):
         try:
             wait_server_started(server, server_thread)
         except (RuntimeError, TimeoutError):

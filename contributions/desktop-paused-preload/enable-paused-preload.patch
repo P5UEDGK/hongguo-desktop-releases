@@ -42,7 +42,7 @@
      stream_url: str | None = None
      stream_key: str | None = field(default=None, repr=False)
      native_parent: int | None = field(default=None, repr=False)
-@@ -438,7 +439,7 @@
+@@ -440,7 +441,7 @@
          response_headers.pop("Content-Length", None)
          def chunks():
              try:
@@ -63,13 +63,14 @@
  from desktop_native_engine import EnginePool
  import uuid
  
-@@ -428,10 +431,14 @@
+@@ -440,11 +443,15 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
 +        disk_cache = None
 +        preloader = None
 +        preload_reason = None
+         output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
@@ -78,7 +79,7 @@
          desired = {"paused": True, "rate": 1, "volume": 1, "muted": False}
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
-@@ -482,6 +489,16 @@
+@@ -496,6 +503,16 @@
                      resources.update(player=player, hwnd=hwnd, parent=self.parent, id=uuid.uuid4().hex)
              # Every source-dependent option is reset, including when switching
              # encrypted/clear input or recovering from the previous soft retry.
@@ -95,16 +96,23 @@
              per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
                          "volume": 100, "mute": "yes" if desired["muted"] else "no",
                          "hwdec": "auto-safe" if self.host.hardware else "no",
-@@ -536,6 +553,8 @@
-                         if key in command:
-                             value = command[key]
-                             desired[key] = value
-+                            if key == "paused":
-+                                user_paused = value
-                             player.command("set", option, "yes" if value is True else "no" if value is False else value * 100 if key == "volume" else value)
-                             grace = time.monotonic() + 3
-                     if "seek" in command:
-@@ -587,6 +606,17 @@
+@@ -544,6 +561,7 @@
+                     if "visible" in command:
+                         user.ShowWindow(hwnd, 4 if command["visible"] else 0)
+                     if command.get("paused") is True:
++                        user_paused = True
+                         desired["paused"] = True
+                         player.command("set", "pause", "yes")
+                     for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
+@@ -563,6 +581,7 @@
+                         output_watch.since = None
+                         grace = initial + 3
+                     if command.get("paused") is False:
++                        user_paused = False
+                         desired["paused"] = False
+                         player.command("set", "pause", "no")
+                         grace = time.monotonic() + 3
+@@ -602,6 +621,17 @@
                              buffer_start, buffer_end = max(0, selected["start"]), selected["end"]
                      except (ValueError, TypeError, KeyError):
                          pass
@@ -122,7 +130,7 @@
                  if last_position is None or abs(position - last_position) > .01 or paused or seeking:
                      last_position, last_progress = position, now
                  unstable = not paused and not buffering and not seeking and not eof and now > grace
-@@ -615,6 +645,7 @@
+@@ -631,6 +661,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
@@ -130,7 +138,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops)
-@@ -626,6 +657,11 @@
+@@ -642,6 +673,11 @@
              with self.guard:
                  self.data.update(state="failed", failureCode="native-decode")
          finally:
