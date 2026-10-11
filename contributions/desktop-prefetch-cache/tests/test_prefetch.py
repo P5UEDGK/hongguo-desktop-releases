@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import uuid
@@ -159,7 +160,17 @@ class PrefetchTests(unittest.TestCase):
         self.complete(value, 2)
         self.assertTrue(value.wait_idle(3))
         value._report()
-        snapshot = json.loads((self.root / "status.json").read_text())
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                snapshot = json.loads((self.root / "status.json").read_text())
+                if snapshot["completedEpisodes"] == [4, 5]:
+                    break
+            except (OSError, ValueError):
+                pass
+            if time.monotonic() >= deadline:
+                self.fail('latest diagnostic was not published')
+            time.sleep(.01)
         self.assertEqual(snapshot["failedEpisodes"], [3])
         self.assertEqual(snapshot["completedEpisodes"], [4, 5])
         self.assertNotIn("private", (self.root / "status.json").read_text())

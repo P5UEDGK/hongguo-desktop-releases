@@ -22,7 +22,8 @@ class EpisodePrefetcher:
         self.cache = PlayableEpisodeCache(cache_root, encoder=encoder, quota_bytes=quota_bytes, profile_files=profile_files)
         self.ahead, self.status_path = ahead, Path(status_path) if status_path else None
         self.condition = threading.Condition()
-        self.report_guard = threading.Lock()
+        self.report_revision = 0
+        self.reporter = None
         self.generation = 0
         self.foreground = {}
         self.busy = None
@@ -300,19 +301,39 @@ class EpisodePrefetcher:
     def _report(self):
         if self.status_path is None:
             return
-        try:
+        with self.condition:
+            self.report_revision += 1
+            if self.reporter is None:
+                self.reporter = threading.Thread(target=self._write_reports, name="desktop-prefetch-report", daemon=True)
+                try:
+                    self.reporter.start()
+                except RuntimeError:
+                    self.reporter = None  # Diagnostics must not fail playback.
+            self.condition.notify_all()
+
+    def _write_reports(self):
+        # One writer coalesces requests; optional host I/O never occupies an
+        # encoder/downloader worker, and old snapshots cannot publish last.
+        handled = 0
+        while True:
             with self.condition:
+                self.condition.wait_for(lambda: self.report_revision > handled)
+                revision = self.report_revision
                 generation = self.generation
-            value = self.snapshot()  # Host I/O must not hold the report writer lock either.
-            with self.report_guard:
+            try:
+                value = self.snapshot()
                 with self.condition:
-                    if generation != self.generation:
-                        return  # Do not publish a diagnostic from an older episode.
-                temporary = self.status_path.with_suffix(".json.tmp")
-                temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-                os.replace(temporary, self.status_path)
-        except Exception:
-            pass
+                    fresh = revision == self.report_revision and generation == self.generation
+                if fresh:
+                    temporary = self.status_path.with_suffix(".json.tmp")
+                    temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+                    os.replace(temporary, self.status_path)
+            except Exception:
+                pass
+            handled = revision
+            with self.condition:
+                if self.closed and handled == self.report_revision:
+                    return
 
     def wait_idle(self, timeout=30):
         with self.condition:
@@ -332,3 +353,5 @@ class EpisodePrefetcher:
             self.worker.join(timeout=2)
         if self.downloader and self.downloader is not threading.current_thread():
             self.downloader.join(timeout=2)
+        if self.reporter and self.reporter is not threading.current_thread():
+            self.reporter.join(timeout=2)

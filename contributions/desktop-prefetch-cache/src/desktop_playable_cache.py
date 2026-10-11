@@ -151,7 +151,7 @@ class PlayableEpisodeCache:
                 segments.append(line)
                 pending = None
         if pending is not None or not segments or len(set(segments)) != len(segments) or any(
-                not re.fullmatch(r"seg[0-9]{6}\.m4s", name) for name in segments):
+                name != f"seg{index:06d}.m4s" for index,name in enumerate(segments)):
             raise ValueError("Invalid artifact segment names")
         # The marker is the commit signal, including when restoring a session.
         names = ["index.m3u8", "init.mp4", *segments, "complete.marker"]

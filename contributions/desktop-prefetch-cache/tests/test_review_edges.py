@@ -1,6 +1,7 @@
 """Regression cases from asynchronous upstream review; no real media or account."""
 from pathlib import Path
 import os
+import json
 import tempfile,threading,time,unittest,uuid
 from unittest.mock import patch
 from desktop_hls import EncodingCancelled
@@ -10,6 +11,50 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_numbered_fragment_gap_cannot_enter_complete_cache(self):
+        cache=self.cache();playlist=self.output/'index.m3u8'
+        (self.output/'seg000002.m4s').write_bytes(b'later')
+        playlist.write_text(playlist.read_text(encoding='utf8').replace('#EXT-X-ENDLIST',
+            '#EXTINF:2,\nseg000002.m4s\n#EXT-X-ENDLIST'),encoding='utf8')
+        with self.assertRaises(ValueError):cache.store(self.source,self.output)
+    def test_optional_diagnostic_cannot_hold_background_encoder_slot(self):
+        entered,release,encoded=threading.Event(),threading.Event(),threading.Event()
+        def status(_):
+            entered.set();release.wait(2);return {'complete':False}
+        def encode(*args,**kwargs):
+            encoded.set();release.wait(2);raise EncodingCancelled()
+        value=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',
+            encoder=encode,source_status=status,profile_files=PROFILE_FILES)
+        value.status_path=self.root/'status.json';value.current_source=self.source
+        value.current={'episode':1};value.pending=[(0,1,'10000001','h264')];value.sources['10000001']=self.source
+        worker=threading.Thread(target=value._run);value.worker=worker;worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            self.assertTrue(encoded.wait(.5),'optional diagnostic must run outside the encoder worker')
+        finally:release.set();value.close();worker.join(2)
+
+    def test_same_generation_old_report_cannot_overwrite_new_completion(self):
+        entered,release=threading.Event(),threading.Event();count=[0]
+        value=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=encoder,profile_files=PROFILE_FILES)
+        value.status_path=self.root/'status.json'
+        def snapshot():
+            count[0]+=1
+            if count[0]==1:
+                entered.set();release.wait(2);return {'completedEpisodes':[]}
+            return {'completedEpisodes':[2]}
+        value.snapshot=snapshot
+        first=threading.Thread(target=value._report);first.start()
+        try:
+            self.assertTrue(entered.wait(1));value._report();release.set();first.join(2)
+            deadline=time.monotonic()+2
+            while time.monotonic()<deadline:
+                try:
+                    if json.loads(value.status_path.read_text())=={'completedEpisodes':[2]}:break
+                except (OSError,ValueError):pass
+                time.sleep(.01)
+            self.assertEqual(json.loads(value.status_path.read_text()),{'completedEpisodes':[2]})
+        finally:release.set();value.close();first.join(2)
+
     def test_file_shaped_stage_counts_as_non_evictable_quota(self):
         cache=self.cache()
         stage=cache.root/('stage-'+'a'*32)
