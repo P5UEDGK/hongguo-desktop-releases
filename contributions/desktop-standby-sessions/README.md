@@ -70,3 +70,7 @@ HlsJobs新增可选standby_source_loader=prefetch.load_standby_source。该入�
 2026-10-12 第十三轮复核：依赖204新native实现重新生成patch与digest，不改变备用业务行为。
 
 验证：333 项融合后端测试无跳过，215 项备用组合测试、19 套前端测试和 88 项社交浏览器检查通过；真实 libmpv 字幕检查、1 秒片源（range-delay=1、timeout=60）2x/3x 检查及候选 Tauri 原生/HLS、社交交互与关闭释放通过。新增回归同时保留旧实现失败证据。本机安装验收随后执行，上游尚未合并发布。
+
+2026-10-12 第十五轮复核：4243146772/6776/6779：成功activate提交后释放父session引用；淘汰metadata同步移除对应foreground directory；control请求body必须是对象。
+
+验证：344 项融合后端测试无跳过，220 项备用组合测试、19 套前端测试和 88 项社交浏览器检查通过；真实 libmpv 字幕检查、1 秒片源（range-delay=1、timeout=60）2x/3x 检查及候选 Tauri 原生/HLS、社交交互与关闭释放通过。新增回归同时保留旧实现失败证据。本机安装验收随后执行，上游尚未合并发布。

@@ -63,9 +63,9 @@
 -    def load_source(self, series_id, episode):
 +    def load_source(self, series_id, episode, *, prepared_source=None):
          with self.condition:
-             generation = self.generation
-         _, metadata = self.episode_loader(series_id)
-@@ -114,7 +133,7 @@
+             if self.closed or self.current != {"seriesId": str(series_id), "episode": episode}:
+                 raise EncodingCancelled()
+@@ -116,7 +135,7 @@
              if (generation != self.generation or self.closed
                      or self.current != {"seriesId": str(series_id), "episode": episode}):
                  raise EncodingCancelled()
@@ -74,7 +74,7 @@
          with self.condition:
              if (generation == self.generation and not self.closed
                      and self.current == {"seriesId": str(series_id), "episode": episode}):
-@@ -141,6 +160,81 @@
+@@ -143,6 +162,82 @@
          self._report()
          return source
  
@@ -129,6 +129,7 @@
 +            finish_cancelled = invalid and (getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native")
 +            if invalid and finish_cancelled and self.foreground.get(job.id) == generation:
 +                self.foreground.pop(job.id, None)
++                self.foreground_directories.pop(job.id, None)
 +                if self.busy == job.id:
 +                    self.busy = None
 +                self.condition.notify_all()
@@ -156,7 +157,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -172,6 +266,8 @@
+@@ -174,6 +269,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -165,7 +166,7 @@
              expected = self.foreground.get(job.id)
              cached_result = self.cache_results.pop(job.id, None)
              self.foreground_directories.pop(job.id, None)
-@@ -189,6 +285,9 @@
+@@ -191,6 +288,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -175,7 +176,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -341,6 +440,7 @@
+@@ -343,6 +443,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

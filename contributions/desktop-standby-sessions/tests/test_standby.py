@@ -20,6 +20,24 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_activation_commit_releases_parent_session_ownership(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='native'
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='native';child.activation_revision=1
+        host=object.__new__(NativeHost);host.guard=threading.RLock()
+        previous=object();session=SimpleNamespace(handoff_previous=[(previous,False,1)],snapshot=lambda:{'visible':True,'outputReady':True,'revision':1})
+        host.sessions={child.id:session};jobs.native=host
+        try:
+            jobs.activate(child);self.assertEqual(session.handoff_previous,[]);self.assertIsNone(child.prewarm_parent)
+        finally:jobs.native=None
+
+    def test_control_rejects_non_object_json_with_400(self):
+        jobs,_=self.jobs();job=jobs.create('1234567890123456',1)
+        endpoint=next(route.endpoint for route in make_router(jobs,lambda _:True).routes if route.path.endswith('/control'))
+        for value in (None,[],42,'text'):
+            async def body():return value
+            with self.assertRaises(HTTPException) as error:asyncio.run(endpoint(job.id,SimpleNamespace(json=body)))
+            self.assertEqual(error.exception.status_code,400)
+
     def test_promotion_callback_failure_does_not_detach_parent(self):
         jobs,_=self.jobs();parent=jobs.create('1234567890123456',1);parent.video_mode='h264'
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id);child.video_mode='h264'
@@ -382,7 +400,7 @@ class StandbyTests(unittest.TestCase):
     def test_late_metadata_cannot_rewind_a_new_foreground_generation(self):
         prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)
         self.addCleanup(prefetch.close)
-        job=SimpleNamespace(id='a'*32,source=None,cancelled=threading.Event(),failed=False,video_mode='native')
+        job=SimpleNamespace(id='a'*32,source=None,directory=self.root/'old-directory',cancelled=threading.Event(),failed=False,video_mode='native')
         with patch('desktop_prefetch.threading.Thread') as thread:
             prefetch.promote(job,'1234567890123456',2)()
             target=thread.call_args.kwargs['target'];args=thread.call_args.kwargs['args']
@@ -394,6 +412,7 @@ class StandbyTests(unittest.TestCase):
         self.assertEqual(prefetch.current,{'seriesId':'1234567890123457','episode':7})
         self.assertIn(next_job.id,prefetch.foreground)
         self.assertNotIn(job.id,prefetch.foreground,'superseded metadata releases only its old ownership')
+        self.assertNotIn(job.id,prefetch.foreground_directories,'superseded metadata releases its completed directory')
 
     def test_superseded_metadata_does_not_release_unfinished_encoder(self):
         prefetch=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/'cache',encoder=lambda *_:None)

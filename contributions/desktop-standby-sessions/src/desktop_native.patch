@@ -12,7 +12,7 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,50 @@
+@@ -291,7 +296,56 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -61,10 +61,16 @@
 +                    except Exception:
 +                        pass  # Preserve the original control failure.
 +                raise
++
++    def commit_handoff(self, identifier):
++        with self.guard:
++            session = self.sessions.get(identifier)
++            if session is not None:
++                session.handoff_previous = []
  
      def release(self, identifier):
          with self.guard:
-@@ -301,6 +349,15 @@
+@@ -301,6 +355,15 @@
          with self.guard:
              if self.sessions.get(identifier) is session:
                  self.sessions.pop(identifier, None)
@@ -80,7 +86,7 @@
          return True
  
  
-@@ -427,6 +484,8 @@
+@@ -427,6 +490,8 @@
              revision = self.revision + 1
              self.commands.put_nowait((revision, command))
              self.revision = revision
@@ -89,7 +95,7 @@
              self.queued_state.update({key: value for key, value in command.items()
                                        if key in self.queued_state})
              return revision
-@@ -453,7 +512,8 @@
+@@ -453,7 +518,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -99,7 +105,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -640,6 +700,7 @@
+@@ -640,6 +706,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

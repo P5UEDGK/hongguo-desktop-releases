@@ -106,7 +106,7 @@
              job.cancelled.set()
              if self.native:
                  if self.native.release(identifier) is False:
-@@ -290,6 +322,36 @@
+@@ -290,6 +322,39 @@
                  except OSError:
                      return
                  self.jobs.pop(identifier, None)
@@ -136,6 +136,9 @@
 +                    raise HTTPException(409, "Standby generation expired")
 +                if callable(accepted):
 +                    after_detach = accepted
++            if job.video_mode == "native":
++                commit = getattr(self.native, "commit_handoff", None)
++                if commit: commit(job.id)
 +            job.prewarm_parent = None
 +            self.foreground_generation = job.prefetch_generation
 +        if after_detach:
@@ -143,7 +146,7 @@
  
      def playlist(self, identifier, wait_seconds=90):
          job = self.get(identifier)
-@@ -387,7 +449,7 @@
+@@ -387,7 +452,7 @@
      def capabilities():
          return {"service": "guoban-desktop-hls", "version": 1,
                  "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
@@ -152,7 +155,7 @@
  
      @router.post("")
      def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
-@@ -398,7 +460,11 @@
+@@ -398,7 +463,11 @@
          negotiation = request.headers.get("x-desktop-codec-negotiation", "")
          if negotiation not in ("", "1"):
              raise HTTPException(400, "Invalid codec negotiation")
@@ -165,7 +168,7 @@
          address, port = request.scope["server"]
          if address not in ("127.0.0.1", "localhost"):
              jobs.release(job.id)
-@@ -496,6 +562,7 @@
+@@ -496,6 +565,7 @@
                      "duration": job.duration, "failureCode": job.failure_code,
                      "playlistReady": job.ready.is_set() and not job.failed and not job.cancelled.is_set(),
                      "startSeconds": job.start_seconds, "windowOrigin": job.window_origin}
@@ -173,7 +176,7 @@
              if job.negotiate_codec:
                  result.update(source=job.source_description,
                                videoMode=job.video_mode if job.mode_selected.is_set() else None)
-@@ -509,17 +576,35 @@
+@@ -509,17 +579,36 @@
  
      @router.post("/{identifier}/control")
      async def control(identifier: str, request: Request):
@@ -183,6 +186,7 @@
          try:
              body = await request.json()
 -            revision = jobs.native.control(identifier, body)
++            if not isinstance(body, dict): raise ValueError("Invalid native control")
 +            def apply_control():
 +                with jobs.guard:
 +                    job = jobs.get(identifier)
