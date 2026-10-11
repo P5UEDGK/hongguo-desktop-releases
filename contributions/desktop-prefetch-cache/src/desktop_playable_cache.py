@@ -5,7 +5,6 @@ import math
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import threading
 import uuid
@@ -88,6 +87,21 @@ class PlayableEpisodeCache:
         return digest.hexdigest()
 
     @staticmethod
+    def _copy(source, destination, cancelled=lambda: False):
+        with source.open("rb") as reader, destination.open("wb") as writer:
+            while True:
+                if cancelled():
+                    raise EncodingCancelled()
+                block = reader.read(1024 * 1024)
+                if cancelled():
+                    raise EncodingCancelled()
+                if not block:
+                    break
+                writer.write(block)
+                if cancelled():
+                    raise EncodingCancelled()
+
+    @staticmethod
     def _media_files(directory):
         if not plain(directory) or not directory.is_dir():
             raise ValueError("Invalid artifact directory")
@@ -104,7 +118,8 @@ class PlayableEpisodeCache:
             prefix = "#EXT-X-" + tag + ":"
             values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
             if (len(values) != 1 or not re.fullmatch(r"[0-9]{1,20}", values[0])
-                    or int(values[0]) < minimum):
+                    or int(values[0]) < minimum
+                    or (tag == "VERSION" and int(values[0]) > 7)):
                 raise ValueError("Invalid artifact HLS " + tag)
             parameters[tag] = int(values[0])
         if "#EXT-X-ENDLIST" not in lines:
@@ -192,13 +207,15 @@ class PlayableEpisodeCache:
                     if cancelled():
                         raise EncodingCancelled()
                     destination = directory / name
-                    # copyfile may create a partial destination before raising.
+                    # Copying may create a partial destination before raising.
                     created.append(destination)
-                    shutil.copyfile(cached / name, destination)
+                    self._copy(cached / name, destination, cancelled)
                 try:
                     os.utime(cached / "cache.json", None)
                 except OSError:
                     pass  # Read-only metadata must not destroy an otherwise valid hit.
+                if cancelled():
+                    raise EncodingCancelled()
                 return True
             except BaseException:
                 for path in created:
@@ -220,13 +237,24 @@ class PlayableEpisodeCache:
 
     def _remove_owned(self, directory, cancelled=lambda: False):
         children = self._owned_children(directory)
+        owner = directory / "owner.marker"
         for path in children:
+            if path == owner:
+                continue
             if cancelled():
                 raise EncodingCancelled()
             path.unlink()
         if cancelled():
             raise EncodingCancelled()
-        directory.rmdir()
+        # Keep proof of ownership through every cancellable/fallible file removal.
+        owner.unlink()
+        try:
+            directory.rmdir()
+        except OSError:
+            if plain(directory) and directory.is_dir() and not owner.exists():
+                with owner.open("x", encoding="ascii") as stream:
+                    stream.write(OWNER)
+            raise
 
     def _reserve(self, needed, *, replacing=None, cancelled=lambda: False):
         if cancelled():
@@ -298,6 +326,10 @@ class PlayableEpisodeCache:
                      and re.fullmatch(r"stage-[0-9a-f]{32}", directory.name)
                      and plain(directory)
                      and (directory / "owner.marker").read_text(encoding="ascii") == OWNER)
+            if adopt:
+                children = self._owned_children(directory)
+                if any(path.name not in {*names, "owner.marker", "cache.json"} for path in children):
+                    raise ValueError("Unknown content in adopted playable cache stage")
             if cancelled():
                 raise EncodingCancelled()
             stage = directory if adopt else self.root / ("stage-" + uuid.uuid4().hex)
@@ -311,7 +343,7 @@ class PlayableEpisodeCache:
                         raise EncodingCancelled()
                     target = stage / name
                     if not adopt:
-                        shutil.copyfile(directory / name, target)
+                        self._copy(directory / name, target, cancelled)
                     files[name] = {"bytes": target.stat().st_size, "sha256": self._digest(target, cancelled)}
                 if cancelled():
                     raise EncodingCancelled()

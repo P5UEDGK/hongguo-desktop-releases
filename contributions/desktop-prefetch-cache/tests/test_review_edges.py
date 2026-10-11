@@ -329,4 +329,59 @@ class ReviewEdges(unittest.TestCase):
         finally:release.set();loading.join(2)
         old.cancelled.set();value.finish(old,'series',1,None);new.failed=True;value.finish(new,'series',2,None)
 
+    def test_unknown_stage_content_is_not_adopted_or_deleted(self):
+        from desktop_playable_cache import OWNER
+        for nested in (True, False):
+            cache=self.cache(self.root/uuid.uuid4().hex)
+            stage=cache.root/('stage-'+uuid.uuid4().hex);complete_output(stage)
+            (stage/'owner.marker').write_text(OWNER,encoding='ascii')
+            unknown=stage/'unknown'
+            if nested:unknown.mkdir();unknown=unknown/'data'
+            unknown.write_bytes(b'keep')
+            with self.assertRaises(ValueError):cache.store(self.source,stage)
+            self.assertEqual(unknown.read_bytes(),b'keep')
+            self.assertFalse(cache.contains(self.source))
+
+    def test_cancel_during_large_restoration_copy_removes_partial_session(self):
+        cache=self.cache();(self.output/'seg000000.m4s').write_bytes(b'x'*(3*1024*1024))
+        target=cache.store(self.source,self.output);stopped=threading.Event();original=Path.open
+        class Reader:
+            def __init__(self,stream):self.stream=stream
+            def __enter__(self):return self
+            def __exit__(self,*args):self.stream.close()
+            def read(self,size):
+                value=self.stream.read(size)
+                if size>0:stopped.set()
+                return value
+        def opened(path,*args,**kw):
+            stream=original(path,*args,**kw)
+            return Reader(stream) if path==target/'seg000000.m4s' and args==('rb',) else stream
+        # Validation finishes first; cancellation occurs while copying, not hashing.
+        with patch.object(cache,'_validated',return_value=(target,cache._media_files(target))):
+            with patch.object(Path,'open',opened):
+                with self.assertRaises(EncodingCancelled):cache.restore(self.source,self.root/'partial',stopped.is_set)
+        self.assertFalse((self.root/'partial').exists())
+
+    def test_cleanup_failure_or_cancellation_preserves_ownership(self):
+        from desktop_playable_cache import OWNER
+        cache=self.cache();target=cache.store(self.source,self.output);original=Path.unlink
+        def failing(path,*args,**kw):
+            if path.name.endswith('.m4s'):raise OSError('blocked')
+            return original(path,*args,**kw)
+        with patch.object(Path,'unlink',failing):
+            with self.assertRaises(OSError):cache._remove_owned(target)
+        self.assertEqual((target/'owner.marker').read_text(encoding='ascii'),OWNER)
+        stopped=threading.Event()
+        def cancelling(path,*args,**kw):
+            value=original(path,*args,**kw);stopped.set();return value
+        with patch.object(Path,'unlink',cancelling):
+            with self.assertRaises(EncodingCancelled):cache._remove_owned(target,stopped.is_set)
+        self.assertEqual((target/'owner.marker').read_text(encoding='ascii'),OWNER)
+        cache._remove_owned(target);self.assertFalse(target.exists())
+
+    def test_future_hls_version_is_not_cached(self):
+        cache=self.cache();playlist=self.output/'index.m3u8'
+        playlist.write_text(playlist.read_text(encoding='utf-8').replace('#EXT-X-VERSION:7','#EXT-X-VERSION:999'),encoding='utf-8')
+        with self.assertRaises(ValueError):cache.store(self.source,self.output)
+
 if __name__=='__main__':unittest.main()

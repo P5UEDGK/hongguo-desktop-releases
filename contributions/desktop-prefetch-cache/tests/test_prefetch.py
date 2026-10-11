@@ -342,17 +342,17 @@ class PlayableCacheTests(unittest.TestCase):
     def test_restore_publishes_completion_marker_after_every_media_file(self):
         self.cache.store(self.source, self.output)
         replay = self.root / "replay"
-        copy = shutil.copyfile
+        copy = self.cache._copy
         observed = []
-        def watched(source, destination):
+        def watched(source, destination, cancelled=lambda: False):
             observed.append(Path(destination).name)
             self.assertFalse((replay / "complete.marker").exists())
             if Path(destination).name == "complete.marker":
                 self.assertTrue((replay / "index.m3u8").is_file())
                 self.assertTrue((replay / "init.mp4").is_file())
                 self.assertTrue((replay / "seg000000.m4s").is_file())
-            return copy(source, destination)
-        with patch("desktop_playable_cache.shutil.copyfile", side_effect=watched):
+            return copy(source, destination, cancelled)
+        with patch.object(self.cache, "_copy", side_effect=watched):
             self.assertTrue(self.cache.restore(self.source, replay))
         self.assertEqual(observed[-1], "complete.marker")
 
@@ -360,14 +360,14 @@ class PlayableCacheTests(unittest.TestCase):
         self.cache.store(self.source, self.output)
         replay = self.root / "cancelled-replay"
         cancel = threading.Event()
-        copy = shutil.copyfile
-        def watched(source, destination):
-            result = copy(source, destination)
+        copy = self.cache._copy
+        def watched(source, destination, cancelled=lambda: False):
+            result = copy(source, destination, cancelled)
             if Path(destination).name.endswith(".m4s"):
                 self.assertFalse((replay / "complete.marker").exists())
                 cancel.set()
             return result
-        with patch("desktop_playable_cache.shutil.copyfile", side_effect=watched):
+        with patch.object(self.cache, "_copy", side_effect=watched):
             with self.assertRaises(EncodingCancelled):
                 self.cache.restore(self.source, replay, cancel.is_set)
         self.assertFalse(replay.exists())
@@ -375,13 +375,13 @@ class PlayableCacheTests(unittest.TestCase):
     def test_restore_partial_copy_failure_cleans_incomplete_session(self):
         self.cache.store(self.source, self.output)
         replay = self.root / "interrupted-replay"
-        copy = shutil.copyfile
-        def interrupted(source, destination):
+        copy = self.cache._copy
+        def interrupted(source, destination, cancelled=lambda: False):
             if Path(destination).name.endswith(".m4s"):
                 Path(destination).write_bytes(b"partial")
                 raise OSError("copy interrupted")
-            return copy(source, destination)
-        with patch("desktop_playable_cache.shutil.copyfile", side_effect=interrupted):
+            return copy(source, destination, cancelled)
+        with patch.object(self.cache, "_copy", side_effect=interrupted):
             with self.assertRaisesRegex(OSError, "copy interrupted"):
                 self.cache.restore(self.source, replay)
         self.assertFalse(replay.exists())
