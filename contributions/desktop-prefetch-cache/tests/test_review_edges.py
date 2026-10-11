@@ -11,6 +11,21 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_same_episode_restart_rejects_old_job_before_loaders(self):
+        calls=[];prefetch=EpisodePrefetcher(lambda vid:(calls.append(vid),self.source)[1],lambda series:(calls.append(series),[{'index':1,'vid':'123456780001'}]),self.root/'same-episode',encoder=encoder,profile_files=PROFILE_FILES,ahead=0)
+        self.addCleanup(prefetch.close);old=Job(uuid.uuid4().hex,self.root/'old');new=Job(uuid.uuid4().hex,self.root/'new')
+        prefetch.begin(old,'series',1);prefetch.begin(new,'series',1)
+        with self.assertRaises(EncodingCancelled):getattr(old,'source_loader',prefetch.load_source)('series',1)
+        self.assertEqual(calls,[]);self.assertIsNone(prefetch.current_source)
+        self.assertEqual(new.source_loader('series',1),self.source);self.assertEqual(calls,['series','123456780001'])
+
+    def test_complete_cache_rejects_low_latency_part_uri_family(self):
+        path=self.output/'index.m3u8';original=path.read_text(encoding='utf8')
+        for tag in ('#EXT-X-PART:DURATION=1,URI="part0.m4s"','#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part1.m4s"','#EXT-X-RENDITION-REPORT:URI="other.m3u8",LAST-MSN=1'):
+            with self.subTest(tag=tag):
+                path.write_text(original.replace('#EXTM3U\n','#EXTM3U\n'+tag+'\n',1),encoding='utf8')
+                with self.assertRaises(ValueError):self.cache().store(self.source,self.output)
+
     def test_load_source_rejects_obsolete_or_closed_before_metadata(self):
         for closed in (False,True):
             calls=[];prefetch=EpisodePrefetcher(lambda _:None,lambda series:(calls.append(series),[{'index':n,'vid':str(123456780000+n)} for n in (1,2)]),self.root/('metadata-'+str(closed)),encoder=encoder,profile_files=PROFILE_FILES)
@@ -24,7 +39,7 @@ class ReviewEdges(unittest.TestCase):
         cache=self.cache();cache.quota_bytes=1
         before=set(cache.root.iterdir())
         with patch.object(cache,'_copy',side_effect=AssertionError('must not stage impossible artifact')) as copy:
-            with self.assertRaises(CacheQuotaExceeded):cache.store(self.source,self.output)
+            with self.assertRaises(ValueError):cache.store(self.source,self.output)
             copy.assert_not_called()
         self.assertEqual(set(cache.root.iterdir()),before)
 

@@ -45,6 +45,15 @@ def encoder(source, directory, on_ready=lambda: None, *, cancelled=lambda: False
 
 
 class PrefetchTests(unittest.TestCase):
+    def test_oversized_future_episode_does_not_drop_smaller_later_episode(self):
+        encoded=[]
+        def varied(source,directory,on_ready=lambda:None,**kw):
+            encoded.append(Path(source).stem);complete_output(directory,b'x'*(128*1024) if Path(source).stem=='10000002' else b'small');on_ready()
+        value=self.make(encode=varied,ahead=2,quota_bytes=100*1024);self.complete(value,1)
+        self.assertTrue(value.wait_idle(3));self.assertEqual(encoded,['10000001','10000002','10000003'])
+        self.assertEqual(value.snapshot()['failedEpisodes'],[2]);self.assertEqual(value.snapshot()['completedEpisodes'],[3])
+        self.assertTrue(value.cache.contains(self.sources['10000001']));self.assertTrue(value.cache.contains(self.sources['10000003']))
+
     def test_close_cancels_running_foreground_encoder(self):
         entered=threading.Event();finished=threading.Event()
         def blocking(source,directory,on_ready=lambda:None,*,cancelled,**kwargs):

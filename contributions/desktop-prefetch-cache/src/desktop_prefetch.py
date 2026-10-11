@@ -63,6 +63,7 @@ class EpisodePrefetcher:
         with self.condition:
             self.generation += 1
             self.foreground[job.id] = self.generation
+            job.source_loader = lambda sid, ep: self.load_source(sid, ep, job=job)
             if getattr(job, "directory", None) is not None:
                 self.foreground_directories[job.id] = Path(job.directory)
             self.pending = []
@@ -102,9 +103,10 @@ class EpisodePrefetcher:
         except Exception:
             return False  # Optional status cannot invalidate an acquired source.
 
-    def load_source(self, series_id, episode):
+    def load_source(self, series_id, episode, *, job=None):
         with self.condition:
-            if self.closed or self.current != {"seriesId": str(series_id), "episode": episode}:
+            if (self.closed or self.current != {"seriesId": str(series_id), "episode": episode}
+                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation)):
                 raise EncodingCancelled()
             generation = self.generation
         _, metadata = self.episode_loader(series_id)
@@ -114,11 +116,13 @@ class EpisodePrefetcher:
             raise ValueError("Episode media identity unavailable")
         with self.condition:
             if (generation != self.generation or self.closed
+                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation)
                     or self.current != {"seriesId": str(series_id), "episode": episode}):
                 raise EncodingCancelled()
         source = self.source_loader(vid)
         with self.condition:
             if (generation == self.generation and not self.closed
+                    and (job is None or not job.cancelled.is_set() and self.foreground.get(job.id) == generation)
                     and self.current == {"seriesId": str(series_id), "episode": episode}):
                 self.latest_episodes = items
                 self.sources[vid] = source
