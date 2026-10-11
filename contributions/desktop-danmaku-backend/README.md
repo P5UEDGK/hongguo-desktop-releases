@@ -41,3 +41,7 @@ python -X utf8 -m unittest discover -s contributions/desktop-danmaku-backend/tes
 ```pwsh
 pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/verify_mpv.py --native-package contributions/desktop-native-playback --dll <verified-libmpv-dll>"
 ```
+
+## 剩余审查回归（2026-10-11）
+
+移除ASS运动宽度的6000上限；200个中日韩字符、36px字号按7200宽度完整移出画面。输入长度与条数边界继续生效，13项Python回归通过。

@@ -71,7 +71,7 @@ def ass_document(items, settings=None, *, assets=None):
         text = row["text"].replace("\\", "＼").replace("{", "｛").replace("}", "｝")
         text = " ".join(text.split())
         parts=emoji_parts(text)
-        width = min(6000, max(60,sum(size+4 if part in assets else len(part)*size for part in parts)))
+        width = max(60,sum(size+4 if part in assets else len(part)*size for part in parts))
         y = 25 + row["lane"] * (size + 15)
         start = row['offset_ms']
         prefix=f'Dialogue: 0,{stamp(start)},{stamp(start + duration * 1000)},Default,,0,0,0,,'

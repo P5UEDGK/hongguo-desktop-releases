@@ -33,6 +33,9 @@ class DanmakuTests(unittest.TestCase):
         self.assertEqual(len(active_danmaku([ITEM],1,DEFAULT_SETTINGS)),1)
         self.assertEqual(active_danmaku([ITEM],15,DEFAULT_SETTINGS),[])
         self.assertEqual(active_danmaku([ITEM],float('nan'),DEFAULT_SETTINGS),[])
+    def test_long_cjk_text_moves_its_entire_width_offscreen(self):
+        doc=ass_document([{**ITEM,'text':'字'*200}],{**DEFAULT_SETTINGS,'fontSize':36})
+        self.assertIn(r'\move(1000,25,-7200,25,0,14000)',doc)
     def test_speed_opacity_and_lane_settings(self):
         for duration in (4,14,24):
             doc=ass_document([ITEM],{**DEFAULT_SETTINGS,'duration':duration,'opacity':50,'fontSize':36})
