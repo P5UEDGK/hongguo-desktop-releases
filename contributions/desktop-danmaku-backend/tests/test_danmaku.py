@@ -19,6 +19,20 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_conflict_close_failure_releases_active_id_before_retry(self):
+        clock=[0];p=Player();p.properties['secondary-sid']='7';track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p);old=track.track_id
+        p.command('set','sid','8');p.fail_remove=True;track.apply(p)
+        self.assertTrue(track.failed);self.assertIsNone(track.track_id);self.assertIn(old,track.pending_removals)
+        p.command('set','secondary-sid','no');p.fail_remove=False;clock[0]=2;track.apply(p)
+        self.assertFalse(track.failed);self.assertNotEqual(track.track_id,old);self.assertNotIn(track.track_id,track.pending_removals)
+        self.assertEqual(p.get('sid'),track.track_id);self.assertIn(('sub-remove',old),p.commands)
+
+    def test_ass_coalesces_unknown_tokens_and_bounds_rendered_events(self):
+        items=[{'text':'[x]'*66+'xx','offset_ms':n*100,'lane':n%6} for n in range(300)];settings={**DEFAULT_SETTINGS,'lanes':6}
+        document=ass_document(items,settings);self.assertEqual(document.count('Dialogue:'),300);self.assertLess(len(document),200000)
+        asset={'resolution':48,'drawing':[{'color':[255,0,0],'alpha':1,'paths':[[[0,0],[48,0],[48,48],[0,48]]]}]}
+        vector=ass_document(items,settings,assets={'[x]':asset});self.assertGreater(vector.count('Dialogue:'),0);self.assertLessEqual(vector.count('Dialogue:'),2048)
+
     def test_clean_overlay_reconciles_changed_secondary(self):
         p=Player();p.properties['sid']='7';track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
         self.assertFalse(track.dirty);p.command('set','secondary-sid','8');track.apply(p)

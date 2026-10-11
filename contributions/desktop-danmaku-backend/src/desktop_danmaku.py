@@ -66,6 +66,7 @@ def ass_document(items, settings=None, *, assets=None):
         minutes, rest = divmod(rest, 6000)
         seconds, fraction = divmod(rest, 100)
         return f'{hours}:{minutes:02}:{seconds:02}.{fraction:02}'
+    event_count=0
     for row in items:
         if row["lane"] >= settings["lanes"]:
             continue
@@ -73,7 +74,13 @@ def ass_document(items, settings=None, *, assets=None):
         # preserve readability, including literal backslashes and braces.
         text = row["text"].replace("\\", "＼").replace("{", "｛").replace("}", "｝")
         text = " ".join(text.split())
-        parts=emoji_parts(text)
+        parts=[]
+        for part in emoji_parts(text):
+            if part not in assets and parts and parts[-1] not in assets:parts[-1]+=part
+            else:parts.append(part)
+        events=sum(len(assets[part]['drawing']) if part in assets else 1 for part in parts)
+        if event_count+events>2048:break
+        event_count+=events
         width = max(60,sum(size+4 if part in assets else len(part)*size for part in parts))
         y = 25 + row["lane"] * (size + 15)
         origin = row.get('motion_start_ms', row['offset_ms'])
