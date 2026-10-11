@@ -7,7 +7,7 @@ import threading
 import uuid
 
 from desktop_hls import EncodingCancelled
-from desktop_playable_cache import PlayableEpisodeCache, OWNER, plain
+from desktop_playable_cache import PlayableEpisodeCache, CacheQuotaExceeded, OWNER, plain
 
 
 class EpisodePrefetcher:
@@ -32,6 +32,7 @@ class EpisodePrefetcher:
         self.pending = []
         self.active = None
         self.completed = []
+        self.window_keys = set()
         self.failed = []
         self.current = None
         self.current_complete = False
@@ -69,6 +70,7 @@ class EpisodePrefetcher:
             self.sources = {}
             self.download_completed = []
             self.completed = []
+            self.window_keys = set()
             self.failed = []
             self.current = {"seriesId": str(series_id), "episode": episode}
             self.current_complete = False
@@ -173,10 +175,11 @@ class EpisodePrefetcher:
         def cancelled():
             with self.condition:
                 return self.closed or job.cancelled.is_set() or expected != self.generation
-        current_complete = False
+        current_complete, current_key = False, None
         try:
             if expected is not None and source is not None and mode != "native" and not job.failed and not cancelled():
                 current_complete = cached_result if cached_result is not None else self.cache.contains(source, mode, cancelled=cancelled)
+                if current_complete:current_key = self.cache._identity(source, mode, cancelled)[0]
         except Exception:
             pass  # Completion bookkeeping still releases the old foreground slot.
         with self.condition:
@@ -196,6 +199,7 @@ class EpisodePrefetcher:
                     self.current_complete = False  # This field describes HLS completeness.
                 else:
                     self.current_complete = current_complete
+                    if current_key is not None:self.window_keys.add(current_key)
                     selected, seen = [], set()
                     current_vid = next((vid for index, vid in self.latest_episodes if index == episode), None)
                     if current_vid:
@@ -235,8 +239,9 @@ class EpisodePrefetcher:
                 self.background_cancelled = threading.Event()
                 cancel = self.background_cancelled
                 source = self.sources[task[2]]
+                protected = set(self.window_keys)
             self._report()
-            failed, cancelled = False, False
+            failed, cancelled, window_full = False, False, False
             temporary = self.cache.root / ("stage-" + uuid.uuid4().hex)
             stage_started = False
             try:
@@ -255,9 +260,14 @@ class EpisodePrefetcher:
                     stage_started = True
                     self.cache.encoder(source, temporary, cancelled=cancel.is_set, **extra)
                     (temporary / "owner.marker").write_text(OWNER, encoding="ascii")
-                    self.cache.store(source, temporary, cancel.is_set, video_mode=mode, _identity_result=identity_result)
+                    stored = self.cache.store(source, temporary, cancel.is_set, video_mode=mode, _identity_result=identity_result, protected=protected)
+                    if stored is None:raise OSError("Playable cache store unavailable")
                 if cancel.is_set():
                     raise EncodingCancelled()
+                with self.condition:
+                    if task[0] == self.generation:self.window_keys.add(identity_result[0])
+            except CacheQuotaExceeded:
+                cancelled, window_full = True, True
             except EncodingCancelled:
                 cancelled = True
             except Exception:
@@ -275,6 +285,7 @@ class EpisodePrefetcher:
                 except (OSError, ValueError):
                     failed = True
                 with self.condition:
+                    if task[0] == self.generation and window_full:self.pending = []
                     if task[0] == self.generation and not cancelled:
                         if task[1] == self.current["episode"]:
                             self.current_complete = not failed

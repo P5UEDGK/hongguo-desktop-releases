@@ -14,6 +14,9 @@ from desktop_hls import EncodingCancelled
 
 OWNER = "desktop-playable-cache-v1"
 
+class CacheQuotaExceeded(OSError):
+    pass
+
 
 def plain(path):
     try:
@@ -163,7 +166,7 @@ class PlayableEpisodeCache:
             if line.startswith(('#EXT-X-STREAM-INF', '#EXT-X-I-FRAME-STREAM-INF',
                                 '#EXT-X-MEDIA:', '#EXT-X-SESSION-DATA', '#EXT-X-SESSION-KEY')):
                 raise ValueError("Master playlist tag in local media artifact")
-            if line.startswith('#EXT-X-DISCONTINUITY'):
+            if line.startswith(('#EXT-X-DISCONTINUITY', '#EXT-X-START')):
                 raise ValueError("Unsupported local artifact timeline")
             if line.startswith('#EXT-X-MEDIA-SEQUENCE') and segments:
                 raise ValueError("Late artifact media sequence")
@@ -304,13 +307,13 @@ class PlayableEpisodeCache:
         owner.unlink()
         self._rmdir_with_owner(directory)
 
-    def _reserve(self, needed, *, replacing=None, cancelled=lambda: False):
+    def _reserve(self, needed, *, replacing=None, cancelled=lambda: False, protected=()):
         if cancelled():
             raise EncodingCancelled()
         if not self.available:
             raise OSError("Playable cache is unavailable")
         if not 0 <= needed <= self.quota_bytes:
-            raise OSError("Playable cache reservation cannot fit")
+            raise CacheQuotaExceeded("Playable cache reservation cannot fit")
         if replacing is not None:
             self._owned_children(replacing)
         entries = []
@@ -349,11 +352,11 @@ class PlayableEpisodeCache:
                         modified = (directory / "cache.json").stat().st_mtime_ns
                     except FileNotFoundError:
                         modified = directory.stat().st_mtime_ns
-                    entries.append((modified, directory, size))
+                    if directory.name not in protected:entries.append((modified, directory, size))
             except (OSError, UnicodeError):
                 continue
         if total + needed - sum(size for _, _, size in entries) > self.quota_bytes:
-            raise OSError("Playable cache reservation cannot fit")
+            raise CacheQuotaExceeded("Playable cache reservation cannot fit")
         for _, directory, size in sorted(entries):
             if cancelled():
                 raise EncodingCancelled()
@@ -362,9 +365,9 @@ class PlayableEpisodeCache:
             self._remove_owned(directory, cancelled)
             total -= size
         if total + needed > self.quota_bytes:
-            raise OSError("Playable cache budget is exhausted")
+            raise CacheQuotaExceeded("Playable cache budget is exhausted")
 
-    def store(self, source, directory, cancelled=lambda: False, *, video_mode="h264", _identity_result=None):
+    def store(self, source, directory, cancelled=lambda: False, *, video_mode="h264", _identity_result=None, protected=()):
         if cancelled():
             raise EncodingCancelled()
         if not self.available:
@@ -419,7 +422,7 @@ class PlayableEpisodeCache:
                 # all cancellable copying/hashing and manifest construction.
                 metadata_bytes = sum((stage / name).stat().st_size for name in ("owner.marker", "cache.json"))
                 self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target_present else None,
-                              cancelled=cancelled)
+                              cancelled=cancelled, protected=protected)
                 if cancelled():
                     raise EncodingCancelled()
                 # Once destructive replacement starts, finish this commit even
@@ -443,7 +446,7 @@ class PlayableEpisodeCache:
         except EncodingCancelled:
             raise
         except Exception:
-            pass
+            if os.path.lexists(directory):raise
         if restored:
             if start_seconds: on_window(0, None)  # Full artifact; host keeps its source duration.
             on_ready()

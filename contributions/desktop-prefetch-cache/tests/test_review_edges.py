@@ -11,6 +11,38 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_prefetch_quota_keeps_current_and_nearer_episodes(self):
+        for capacity in (1,2):
+            with self.subTest(capacity=capacity):
+                sources={str(10000000+n):self.root/('source-'+str(capacity)+'-'+str(n)) for n in range(1,5)}
+                for vid,path in sources.items():path.write_bytes(vid.encode())
+                episodes=[{'index':n,'vid':str(10000000+n)} for n in range(1,5)]
+                value=EpisodePrefetcher(sources.get,lambda _:({},episodes),self.root/('quota-'+str(capacity)),encoder=encoder,profile_files=PROFILE_FILES)
+                self.addCleanup(value.close);job=Job(uuid.uuid4().hex,self.root/('session-'+str(capacity)));value.begin(job,'series',1)
+                source=value.load_source('series',1);value.before_work(job);value.encode(source,job.directory)
+                entry=value.cache.root/value.cache._identity(source)[0]
+                value.cache.quota_bytes=sum(p.stat().st_size for p in entry.iterdir())*capacity+65536
+                value.finish(job,'series',1,source);self.assertTrue(value.wait_idle(3))
+                self.assertTrue(value.cache.contains(source),'current episode remains resident')
+                self.assertEqual(value.snapshot()['completedEpisodes'],list(range(2,capacity+1)))
+                for n in range(2,capacity+1):self.assertTrue(value.cache.contains(sources[str(10000000+n)]))
+
+    def test_complete_cache_rejects_preferred_start_tag(self):
+        playlist=self.output/'index.m3u8';original=playlist.read_text(encoding='utf8')
+        for offset in ('1','-1'):
+            playlist.write_text(original.replace('#EXTM3U\n','#EXTM3U\n#EXT-X-START:TIME-OFFSET='+offset+'\n',1),encoding='utf8')
+            with self.assertRaises(ValueError):self.cache().store(self.source,self.output)
+
+    def test_partial_restore_cleanup_failure_does_not_call_encoder(self):
+        cache=self.cache();cache.store(self.source,self.output);target=self.root/'partial';unlink=Path.unlink
+        def copy(source,destination,cancelled):destination.write_bytes(b'partial');raise OSError('original copy failure')
+        def remove(path,*args,**kwargs):
+            if path.parent==target:raise OSError('sharing violation')
+            return unlink(path,*args,**kwargs)
+        with patch.object(cache,'_copy',copy),patch.object(Path,'unlink',remove),patch.object(cache,'encoder') as encode:
+            with self.assertRaisesRegex(OSError,'original copy failure'):cache.encode(self.source,target)
+            encode.assert_not_called()
+
     def test_complete_cache_rejects_master_playlist_tags(self):
         playlist=self.output/'index.m3u8';original=playlist.read_text(encoding='utf8')
         for tag in ('#EXT-X-STREAM-INF:BANDWIDTH=1000','#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1000,URI="x"','#EXT-X-MEDIA:TYPE=AUDIO','#EXT-X-SESSION-DATA:DATA-ID="x",VALUE="y"'):
