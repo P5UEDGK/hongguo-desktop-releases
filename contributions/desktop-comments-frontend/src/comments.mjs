@@ -30,6 +30,40 @@ async function desktopSocialRead(endpoint, resource, params = {}, signal) {
   } finally {clearTimeout(timer); signal?.removeEventListener('abort', cancel);}
 }
 
+// One store per episode session. Visibility controls subscribers, not the request.
+function desktopSocialStore(endpoint) {
+  const entries = new Map();
+  const identity = (resource, params) => JSON.stringify([resource, params.kind || params.comment_id || '']);
+  function clear(resource, params) {
+    for (const [key, entry] of entries) if ((!resource || entry.resource === resource)
+      && (!params || key === identity(resource, params))) {entry.abort.abort(); entries.delete(key);}
+  }
+  function read(resource, params = {}) {
+    const key = identity(resource, params), cursor = params.cursor || '';
+    let entry = entries.get(key);
+    if (!entry) {
+      if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).abort.abort(); entries.delete(oldest);}
+      entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set()}; entries.set(key, entry);
+    }
+    if (entry.value && (!cursor || entry.cursors.has(cursor))) return Promise.resolve(entry.value);
+    if (entry.pending) return entry.pending;
+    if (entry.abort.signal.aborted) entry.abort = new AbortController();
+    const timer = setTimeout(() => entry.abort.abort(), 15000);
+    entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal).then(result => {
+      if (entry.abort.signal.aborted || entries.get(key) !== entry) throw new DOMException('Aborted', 'AbortError');
+      const page = resource === 'comments' || resource === 'replies';
+      entry.value = page ? {...result, has_more:result.has_more && result.cursor !== cursor,
+        items:cursor && entry.value ? [...new Map([...entry.value.items, ...result.items].map(item => [item.id,item])).values()] : result.items} : result;
+      entry.cursors.add(cursor); return entry.value;
+    }).catch(error => {
+      if (!entry.value && entries.get(key) === entry) entries.delete(key);
+      throw error;
+    }).finally(() => {clearTimeout(timer); entry.pending = null;});
+    return entry.pending;
+  }
+  return {read, clear, dispose:() => clear()};
+}
+
 function desktopSocialPreference(name, fallback) {
   try {const value = localStorage.getItem('hongguo:' + name); return value === null ? fallback : value === 'on';}
   catch {return fallback;}
@@ -72,11 +106,14 @@ function DesktopSocialControls({media, sessionKey}) {
 
 function SocialSession({session, media}) {
   const endpoint = desktopSocialEndpoint(session), key = session.streamUrl;
+  const [store] = O.useState(() => desktopSocialStore(endpoint));
+  O.useEffect(() => () => store.dispose(), [store]);
   const [stats, setStats] = O.useState(null), [statsError, setStatsError] = O.useState('');
   const [tab, setTab] = O.useState('episodes'), [page, setPage] = O.useState(null);
   const [error, setError] = O.useState(''), [busy, setBusy] = O.useState(false);
   const [refresh, setRefresh] = O.useState(0), [metricsRefresh, setMetricsRefresh] = O.useState(0);
   const consumedMetricsRefresh = O.useRef(0);
+  const consumedCommentsRefresh = O.useRef(0);
   const [danmaku, setDanmaku] = O.useState(() => desktopSocialPreference('danmaku', true));
   const [drawer, setDrawer] = O.useState(() => desktopSocialPreference('social', false));
   const [comments, setComments] = O.useState(false);
@@ -114,7 +151,8 @@ function SocialSession({session, media}) {
     const abort = new AbortController(); setStats(null); setStatsError('');
     const forceRefresh = metricsRefresh !== consumedMetricsRefresh.current;
     consumedMetricsRefresh.current = metricsRefresh;
-    if (endpoint && commenting) desktopSocialRead(endpoint, 'metrics', {refresh: forceRefresh}, abort.signal)
+    if (forceRefresh) store.clear('metrics');
+    if (endpoint && commenting) store.read('metrics', {refresh: forceRefresh})
       .then(value => {if (!abort.signal.aborted) setStats(value);})
       .catch(e => {if (!abort.signal.aborted) setStatsError('互动计数加载失败，请重试');});
     return () => abort.abort();
@@ -123,6 +161,8 @@ function SocialSession({session, media}) {
     const own = {abort: new AbortController(), busy: false}; current.current = own;
     setPage(null); setError('');
     setBusy(false);
+    if (refresh !== consumedCommentsRefresh.current) {store.clear('comments', {kind:tab}); if (tab === 'episode') store.clear('replies');}
+    consumedCommentsRefresh.current = refresh;
     if (endpoint && commenting) load('', own);
     return () => {own.abort.abort(); if (current.current === own) current.current = null;};
   }, [key, tab, refresh, commenting]);
@@ -130,7 +170,7 @@ function SocialSession({session, media}) {
     if (!own || own.busy || own.abort.signal.aborted) return;
     own.busy = true; setBusy(true); setError('');
     try {
-      const result = await desktopSocialRead(endpoint, 'comments', {kind: tab, cursor}, own.abort.signal);
+      const result = await store.read('comments', {kind: tab, cursor});
       if (current.current !== own) return;
       setPage(previous => ({...result, has_more: result.has_more && result.cursor !== cursor,
         items: cursor && previous ? [...new Map([...previous.items, ...result.items].map(item => [item.id, item])).values()] : result.items}));
@@ -169,7 +209,7 @@ function SocialSession({session, media}) {
       b.jsxs('div', {className: 'desktop-social-list-heading', children: [
         b.jsx('small', {className: 'desktop-social-status', children: page ? '共 ' + page.total.toLocaleString('zh-CN') + ' 条' : '评论'}),
         b.jsx('button', {disabled: busy, onClick: () => setRefresh(n => n + 1), children: '刷新评论'})]}),
-      page?.items.map(item => b.jsx(DesktopSocialComment, {item, endpoint, replies: tab === 'episode'}, key + tab + item.id)),
+      page?.items.map(item => b.jsx(DesktopSocialComment, {item, endpoint, store, replies: tab === 'episode'}, key + tab + item.id)),
       page && !page.items.length && b.jsx('p', {className: 'desktop-social-status', children: '暂无评论'}),
       error && b.jsxs('p', {className: 'desktop-social-error', role: 'status', children: [error, ' ', b.jsx('button', {
         onClick: () => load(page?.cursor || ''), children: '重试'})]}),
@@ -177,7 +217,7 @@ function SocialSession({session, media}) {
       page?.has_more && b.jsx('button', {disabled: busy, onClick: () => load(page.cursor), children: '加载更多评论'})]})]});
 }
 
-function DesktopSocialComment({item, endpoint, replies}) {
+function DesktopSocialComment({item, endpoint, store, replies}) {
   const [open, setOpen] = O.useState(false), [page, setPage] = O.useState(null);
   const [busy, setBusy] = O.useState(false), [error, setError] = O.useState('');
   const own = O.useRef(null);
@@ -190,7 +230,8 @@ function DesktopSocialComment({item, endpoint, replies}) {
     if (!request || request.busy || request.abort.signal.aborted) return;
     request.busy = true; setBusy(true); setError('');
     try {
-      const result = await desktopSocialRead(endpoint, 'replies', {comment_id: item.id, cursor}, request.abort.signal);
+      const params = {comment_id:item.id, cursor};
+      const result = await (store ? store.read('replies', params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
       if (own.current === request && !request.abort.signal.aborted) setPage(previous => ({...result, has_more: result.has_more && result.cursor !== cursor,
         items: cursor && previous ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : result.items}));
     } catch (e) {if (!request.abort.signal.aborted) setError('回复加载失败，请重试');}
@@ -203,7 +244,7 @@ function DesktopSocialComment({item, endpoint, replies}) {
     replies && item.replies > 0 && b.jsx('button', {'aria-expanded': open, onClick: () => {
       setOpen(!open); if (open) {own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!page && !busy) load();}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
     open && b.jsxs('div', {className: 'desktop-social-replies', children: [
-      page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, replies: false}, row.id)),
+      page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, store, replies: false}, row.id)),
       page && !page.items.length && b.jsx('p', {children: '暂无回复'}),
       busy && b.jsx('p', {role: 'status', children: '正在加载回复…'}),
       error && b.jsxs('p', {role: 'status', children: [error, ' ', b.jsx('button', {onClick: () => load(page?.cursor || ''), children: '重试'})]}),
@@ -212,5 +253,5 @@ function DesktopSocialComment({item, endpoint, replies}) {
 
 function DesktopSocial(props) {return b.jsx(SocialSession, props, props.session.streamUrl);}
 return {Drawer:DesktopSocial, Controls:DesktopSocialControls, Comment:DesktopSocialComment,
-  read:desktopSocialRead, preference:desktopSocialPreference, set:desktopSocialSet, endpoint:desktopSocialEndpoint};
+  read:desktopSocialRead, createStore:desktopSocialStore, preference:desktopSocialPreference, set:desktopSocialSet, endpoint:desktopSocialEndpoint};
 }
