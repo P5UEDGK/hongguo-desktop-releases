@@ -90,7 +90,8 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
         end = min(duration, origin + available)
         if (job.done.is_set() and not incomplete and pending is None
                 and "#EXT-X-ENDLIST" in lines
-                and (job.directory / "complete.marker").is_file()):
+                and (job.directory / "complete.marker").is_file()
+                and duration - (origin + available) <= parameters["TARGETDURATION"]):
             end = duration  # Include final audio/video duration rounding.
         if job.cancelled.is_set() or job.failed:
             return [0, 0]

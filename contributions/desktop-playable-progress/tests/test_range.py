@@ -41,7 +41,7 @@ class RangeTests(unittest.TestCase):
         for anchor in ('#EXT-X-MAP:', '#EXTINF:', 'seg000000.m4s'):
             with self.subTest(anchor=anchor):
                 playlist.write_text(body.replace(anchor,'#EXT-X-ENDLIST\n'+anchor,1),encoding='utf-8')
-                self.assertEqual(playable_range(self.job),[0,63])
+                self.assertEqual(playable_range(self.job),[0,2])
 
     def test_raw_download_is_not_playable(self):
         self.job.source = self.path / "source.mp4"
@@ -90,7 +90,9 @@ class RangeTests(unittest.TestCase):
     def test_committed_complete_covers_duration_but_missing_fragment_does_not(self):
         self.output()
         self.job.done.set()
-        self.assertEqual(playable_range(self.job), [0, 63])
+        self.assertEqual(playable_range(self.job), [0, 2])
+        self.job.duration = 2.1
+        self.assertEqual(playable_range(self.job), [0, 2.1])
         (self.path / "seg000000.m4s").unlink()
         self.assertEqual(playable_range(self.job), [0, 0])
 
@@ -101,7 +103,8 @@ class RangeTests(unittest.TestCase):
         self.assertAlmostEqual(start, 30.02)
         self.assertAlmostEqual(end, 32.02)
         self.job.done.set()
-        self.assertEqual(playable_range(self.job), [30.02, 63])
+        self.assertAlmostEqual(playable_range(self.job)[0], 30.02)
+        self.assertAlmostEqual(playable_range(self.job)[1], 32.02)
 
     def test_verified_cache_callback_and_eviction(self):
         self.job.start_seconds, self.job.window_origin, self.job.source = 30., 30.02, self.path / "source.mp4"

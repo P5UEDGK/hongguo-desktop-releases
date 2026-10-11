@@ -83,3 +83,5 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 普通可播覆盖拒绝I-FRAMES-ONLY清单，单帧trick-play片段不能算整集音视频。当前Python24项及Node6项通过。
 
 恢复既有可播范围契约。完整片段之后仍有悬空EXTINF、重复片段URI或未来HLS版本均不报告可播。Python25项、Node6项通过。
+
+完成标记不能把截断清单扩到整集，仅在目标片段时长容差内补尾部舍入。Python25项及Node6项通过。 本次修复对应已收到的审查意见；尚无连续像素证据可证明零黑屏。
