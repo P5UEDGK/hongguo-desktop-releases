@@ -11,7 +11,7 @@ const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
     play:()=>Promise.resolve(),pause(){},dispatchEvent(){},
     addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name),
     getBoundingClientRect:()=>({left:20,top:50,width:800,height:500})};
-  const context={URL,Event,DOMException,Number,Math,Date,window:{devicePixelRatio:1.5},
+  const context={URL,Event,DOMException,AbortController,Number,Math,Date,window:{devicePixelRatio:1.5},
     ResizeObserver:class{constructor(fn){this.fn=fn;context.resize=this;}observe(node){observed.push(node);}disconnect(){observed.length=0;}},
     document:{hidden:false,head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
     setTimeout:(fn,delay)=>{timers.set(++tick,{fn,delay});return tick;},clearTimeout:id=>timers.delete(id),
