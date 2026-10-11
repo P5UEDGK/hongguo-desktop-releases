@@ -16,7 +16,7 @@
          self.foreground_directories = {}
          self.cache_results = {}
          self.busy = None
-@@ -59,10 +61,17 @@
+@@ -59,11 +61,18 @@
                  by_index.setdefault(index, vid)
          return sorted(by_index.items())
  
@@ -32,11 +32,12 @@
 +            self.warm_jobs.clear()
              self.generation += 1
              self.foreground[job.id] = self.generation
+             job.source_loader = lambda sid, ep: self.load_source(sid, ep, job=job)
 +            job.prefetch_generation = self.generation
              if getattr(job, "directory", None) is not None:
                  self.foreground_directories[job.id] = Path(job.directory)
              self.pending = []
-@@ -79,15 +88,26 @@
+@@ -80,15 +89,26 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
@@ -64,25 +65,25 @@
                      self.busy = job.id
                      if getattr(job, "directory", None) is not None:
                          self.foreground_directories[job.id] = Path(job.directory)
-@@ -102,7 +122,7 @@
+@@ -103,7 +123,7 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
--    def load_source(self, series_id, episode):
-+    def load_source(self, series_id, episode, *, prepared_source=None):
+-    def load_source(self, series_id, episode, *, job=None):
++    def load_source(self, series_id, episode, *, job=None, prepared_source=None):
          with self.condition:
-             if self.closed or self.current != {"seriesId": str(series_id), "episode": episode}:
-                 raise EncodingCancelled()
-@@ -116,7 +136,7 @@
-             if (generation != self.generation or self.closed
+             if (self.closed or self.current != {"seriesId": str(series_id), "episode": episode}
+                     or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation)):
+@@ -119,7 +139,7 @@
+                     or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation)
                      or self.current != {"seriesId": str(series_id), "episode": episode}):
                  raise EncodingCancelled()
 -        source = self.source_loader(vid)
 +        source = prepared_source if prepared_source is not None else self.source_loader(vid)
          with self.condition:
              if (generation == self.generation and not self.closed
-                     and self.current == {"seriesId": str(series_id), "episode": episode}):
-@@ -143,6 +163,95 @@
+                     and (job is None or not job.cancelled.is_set() and self.foreground.get(job.id) == generation)
+@@ -147,6 +167,95 @@
          self._report()
          return source
  
@@ -178,7 +179,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -174,6 +283,8 @@
+@@ -178,6 +287,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -187,7 +188,7 @@
              expected = self.foreground.get(job.id)
              cached_result = self.cache_results.pop(job.id, None)
              self.foreground_directories.pop(job.id, None)
-@@ -191,6 +302,9 @@
+@@ -195,6 +306,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -197,7 +198,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -343,6 +457,7 @@
+@@ -347,6 +461,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result
