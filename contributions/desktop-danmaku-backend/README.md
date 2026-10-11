@@ -45,3 +45,5 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 ## 剩余审查回归（2026-10-11）
 
 移除ASS运动宽度的6000上限；200个中日韩字符、36px字号按7200宽度完整移出画面。输入长度与条数边界继续生效，13项Python回归通过。
+
+原生事件补丁已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee，保留其首帧、源一致性、输出预算及几何监听修复。与布局包两份补丁按依赖顺序精确应用，原生校验和前端桥接回归通过。

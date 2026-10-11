@@ -1,13 +1,14 @@
 --- a/contributions/desktop-native-playback/src/frontend-native.js
 +++ b/contributions/desktop-native-playback/src/frontend-native.js
-@@ -61,5 +61,6 @@
+@@ -78,6 +78,7 @@
+     restored = true;
      clearTimeout(timer); clearTimeout(controlTimer);
      resize?.disconnect();
 +    media.removeEventListener('desktopdanmaku', updateDanmaku);
+     chromeChanges?.disconnect();
+     stage?.removeEventListener?.('transitionend', layout);
      document.removeEventListener('fullscreenchange', layout);
-     document.removeEventListener('visibilitychange', layout);
-     stage?.classList.remove('desktop-native-playback');
-@@ -124,6 +125,10 @@
+@@ -151,6 +152,10 @@
        if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, 250);
      }
    }
@@ -18,8 +19,8 @@
    function layout() {
      if (!native || !stage) return;
      const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
-@@ -190,6 +195,8 @@
-     resize = new ResizeObserver(layout); resize.observe(media);
+@@ -218,6 +223,8 @@
+     stage?.addEventListener?.('transitionend', layout);
      document.addEventListener('fullscreenchange', layout);
      document.addEventListener('visibilitychange', layout);
 +    media.addEventListener('desktopdanmaku', updateDanmaku);
