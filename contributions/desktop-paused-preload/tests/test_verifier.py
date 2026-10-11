@@ -14,6 +14,22 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_source_hash_streams_bounded_chunks_and_main_uses_it(self):
+        import io,hashlib
+        payload=b'x'*(2*1024*1024+17)
+        sizes=[]
+        class Source(io.BytesIO):
+            def read(self,size=-1):
+                self_outer.assertTrue(0<size<=1024*1024);sizes.append(size)
+                return super().read(size)
+        self_outer=self
+        source=SimpleNamespace(open=lambda mode:Source(payload))
+        self.assertEqual(probe.source_sha256(source),hashlib.sha256(payload).hexdigest());self.assertGreater(len(sizes),2)
+        tree=ast.parse(inspect.getsource(probe));calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call)]
+        self.assertTrue(any(isinstance(n.func,ast.Name) and n.func.id=='source_sha256' and ast.unparse(n.args[0])=='args.source' for n in calls))
+        self.assertFalse(any(isinstance(n.func,ast.Attribute) and n.func.attr=='read_bytes' and ast.unparse(n.func.value)=='args.source' for n in calls))
+
+
     def test_bootstrap_complete_is_limited_to_documented_envelope(self):
         good={'duration':12.,'sourceProgress':{'totalBytes':32*1024**2}}
         self.assertTrue(probe.bootstrap_within_envelope(good))

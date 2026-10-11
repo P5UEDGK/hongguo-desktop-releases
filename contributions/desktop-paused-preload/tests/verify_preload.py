@@ -19,6 +19,12 @@ import urllib.request
 from unittest.mock import patch
 
 
+def source_sha256(path):
+    digest=hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+    return digest.hexdigest()
+
 def wait_bootstrap_quiet(sample, reading, *, timeout, quiet_seconds, clock=time.monotonic, sleep=time.sleep):
     until=clock()+timeout;last=None;stable=None
     while clock()<until:
@@ -141,7 +147,7 @@ def main():
     from progressive_fixture import ProgressiveFixture
     from fastapi import FastAPI
     import uvicorn
-    assert hashlib.sha256(args.source.read_bytes()).hexdigest() == args.sha
+    assert source_sha256(args.source) == args.sha
     if args.cache_budget is not None: module.CACHE_FILE_BUDGET = args.cache_budget
     run = args.run.resolve()
     (run/'reports').mkdir(parents=True,exist_ok=True)
