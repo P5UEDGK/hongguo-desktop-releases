@@ -2,7 +2,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync(process.argv[2]||path.join(__dirname,'../src/frontend-native.js'),'utf8');
 const tick=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate)};
 (async()=>{
- for(const fault of (process.argv[3]?[process.argv[3]]:['unknown-late','teardown-seek','delete-retry'])){
+ for(const fault of (process.argv[3]?[process.argv[3]]:['unknown-late','teardown-seek','delete-retry','position-reject','size-reject'])){
   let selected=false,failed=false,deletes=0,ready=0,errors=0,args,seekTarget;
   const timers=new Map();let token=0;
   const media=new EventTarget();Object.assign(media,{playbackRate:2,volume:.4,muted:false,pause(){},play(){return Promise.resolve();},
@@ -29,9 +29,10 @@ const tick=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate)};
      native:selected?{state:failed?'failed':'ready',revision:100,outputReady:true,width:1920,height:1080,time:37,duration:90}:null};
     return {ok:true,status:200,json:async()=>body};
    }};
+  if(fault.endsWith('-reject'))context.window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'owned'}},invoke:async command=>{if(command.endsWith(fault==='position-reject'?'inner_position':'inner_size'))throw Error('window IPC rejected');return {x:0,y:0,width:800,height:600};}};
   vm.createContext(context);vm.runInContext(source,context);
   const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',0,{onReady(){ready++;},onError(){errors++;}},null,true);
-  await tick();assert.equal(ready,1);failed=true;
+  await tick();if(fault.endsWith('-reject')){assert(args,'geometry IPC rejection delegates to HLS');assert.equal(args[6].forceH264,false);assert.equal(errors,0);assert.equal(selected,false);assert.equal(deletes,1);dispose();timers.clear();continue;}assert.equal(ready,1);failed=true;
   for(let n=0;n<4&&!args;n++){
    for(const [id,timer] of [...timers])if(timer.delay===250||timer.delay===100){timers.delete(id);await timer.fn();await tick();}
    await tick();

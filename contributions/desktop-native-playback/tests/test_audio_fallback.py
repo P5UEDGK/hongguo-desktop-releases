@@ -12,6 +12,24 @@ from desktop_codec import aac_lc
 
 
 class AudioFallbackTests(unittest.TestCase):
+    def test_odd_source_dimensions_encode_with_original_display_ratio(self):
+        odd=self.root/'odd.mkv'
+        with av.open(str(odd),'w') as writer:
+            video=writer.add_stream('ffv1',rate=10);video.width=33;video.height=35;video.pix_fmt='yuv444p'
+            video.codec_context.sample_aspect_ratio=Fraction(4,3)
+            for n in range(10):
+                frame=av.VideoFrame(33,35,'yuv444p');frame.pts=n;frame.time_base=Fraction(1,10)
+                for plane in frame.planes:plane.update(bytes(plane.buffer_size))
+                for packet in video.encode(frame):writer.mux(packet)
+            for packet in video.encode():writer.mux(packet)
+        with av.open(str(odd)) as source:expected=Fraction(source.streams.video[0].width,source.streams.video[0].height)*(source.streams.video[0].sample_aspect_ratio or Fraction(1))
+        target=self.root/'odd-output';encode_hls(odd,target)
+        with av.open(str(target/'index.m3u8')) as media:
+            stream=media.streams.video[0];frames=list(media.decode(video=0))
+            self.assertEqual((stream.width,stream.height),(34,36));self.assertEqual(len(frames),10)
+            self.assertEqual(Fraction(stream.width,stream.height)*stream.sample_aspect_ratio,expected)
+        self.assertTrue((target/'complete.marker').is_file())
+
     def test_pcm_input_uses_aac_output_bitrate_for_budget(self):
         pcm=self.root/'pcm.mkv'
         with av.open(str(self.source)) as reader,av.open(str(pcm),'w') as writer:

@@ -76,8 +76,11 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
         budget = OutputBudget(directory,max_output_bytes,cancelled)
         with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options,io_open=budget.open) as writer:
             video = writer.add_stream("libx264", rate=rate)
-            video.width = original.codec_context.width
-            video.height = original.codec_context.height
+            width, height = original.codec_context.width, original.codec_context.height
+            video.width = width + width % 2
+            video.height = height + height % 2
+            # yuv420p needs even coded dimensions; retain the source display ratio.
+            video.codec_context.sample_aspect_ratio = (original.sample_aspect_ratio or Fraction(1)) * Fraction(width * video.height, height * video.width)
             video.pix_fmt = "yuv420p"
             # Average rate can differ from actual presentation intervals.
             # Preserve the source clock instead of rounding frames to 1/rate.

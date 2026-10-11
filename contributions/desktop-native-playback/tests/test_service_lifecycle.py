@@ -21,6 +21,47 @@ def eventually(predicate, timeout=3):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_creation_cancellation_covers_lost_response_and_early_delete(self):
+        import uuid
+        jobs=self.jobs();jobs._run=lambda job,*_:job.done.set()
+        for _ in range(8):
+            token=f'{int((time.time()+30)*1000):013d}-{uuid.uuid4().hex}'
+            job=jobs.create('1234567890123456',1,request_token=token)
+            self.assertTrue(job.done.wait(1));self.assertEqual(job.id,token[14:])
+            self.assertIsNot(jobs.cancel_request(token),False);self.assertNotIn(job.id,jobs.jobs)
+            self.assertIsNot(jobs.cancel_request(token),False)
+            with self.assertRaises(HTTPException) as error:jobs.create('1234567890123456',1,request_token=token)
+            self.assertEqual(error.exception.status_code,409)
+        early=f'{int((time.time()+30)*1000):013d}-{uuid.uuid4().hex}';jobs.cancel_request(early)
+        with self.assertRaises(HTTPException):jobs.create('1234567890123456',1,request_token=early)
+        self.assertFalse(jobs.jobs)
+
+    def test_creation_tokens_validate_expiry_and_bound_cancellation_state(self):
+        import uuid
+        jobs=self.jobs();jobs._run=lambda job,*_:job.done.set()
+        for token in ('invalid',f'{int((time.time()+120)*1000):013d}-{uuid.uuid4().hex}',f'{int((time.time()-1)*1000):013d}-{uuid.uuid4().hex}'):
+            with self.assertRaises(HTTPException):jobs.create('1234567890123456',1,request_token=token)
+        ordinary=jobs.create('1234567890123456',1);self.assertTrue(ordinary.done.wait(1))
+        for _ in range(1030):jobs.cancel_request(f'{int((time.time()+30)*1000):013d}-{uuid.uuid4().hex}')
+        self.assertLessEqual(len(jobs.cancelled_requests),1024);self.assertIn(ordinary.id,jobs.jobs)
+        with self.assertRaises(HTTPException):jobs.create('1234567890123456',1,request_token=f'{int((time.time()+30)*1000):013d}-{uuid.uuid4().hex}')
+
+    def test_creation_cancel_endpoint_is_idempotent_and_authenticated(self):
+        import uuid
+        from starlette.requests import Request
+        jobs=self.jobs();router=make_router(jobs,lambda key:key=='owned')
+        cancel=next(route.endpoint for route in router.routes if route.path.endswith('/requests/{token}'))
+        prepare=next(route.endpoint for route in router.routes if route.path=='/desktop/hls')
+        token=f'{int((time.time()+30)*1000):013d}-{uuid.uuid4().hex}'
+        self.assertEqual(cancel(token).status_code,204)
+        request=Request({'type':'http','query_string':b'series_id=1234567890123456&ep=1','headers':[(b'x-api-key',b'owned')],'server':('127.0.0.1',1234)})
+        router.dependencies[0].dependency(request)
+        with self.assertRaises(HTTPException) as error:prepare(request,'1234567890123456',1,request_token=token)
+        self.assertEqual(error.exception.status_code,409)
+        with self.assertRaises(HTTPException):cancel('bad')
+        with self.assertRaises(HTTPException) as error:router.dependencies[0].dependency(Request({'type':'http','headers':[]}))
+        self.assertEqual(error.exception.status_code,401)
+
     def test_resumed_complete_cache_has_zero_origin_without_reencoding(self):
         from desktop_playable_cache import PlayableEpisodeCache
         from desktop_hls import encode_hls

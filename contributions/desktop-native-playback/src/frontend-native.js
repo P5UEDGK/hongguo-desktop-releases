@@ -26,7 +26,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   if (typeof ResizeObserver !== 'function') return desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed);
   const endpoint = w0(url);
   if (!endpoint) return desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed);
-  let disposed = false, delegated = null, id = null, native = false, restored = false;
+  let disposed = false, delegated = null, id = null, native = false, restored = false, creationToken = null;
   let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
   let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
   let resize = null, chromeChanges = null, lastRect = '', generation = 0, seekPending = null;
@@ -323,8 +323,13 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       requestedStart = state.time;
       if (state.time > 0) sourceUrl.searchParams.set('start_seconds', state.time);
       async function createSession() {
-        const created = await request(sourceUrl, {method: 'POST',
-          headers: {'x-desktop-codec-negotiation': '1'}});
+        const token = capability.requestCancellation === 1 ? (Date.now()+30000) + '-' + crypto.randomUUID().replace(/-/g,'') : null;
+        creationToken = token;
+        if (token) sourceUrl.searchParams.set('request_token',token);
+        let created;
+        try {created = await request(sourceUrl, {method:'POST',headers:{'x-desktop-codec-negotiation':'1'}});}
+        catch (error) {if (token) await release('requests/'+token);throw error;}
+        finally {if (creationToken === token) creationToken = null;}
         const identifier = created.id;
         if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid native session');
         if (disposed) {await release(identifier); return null;}
@@ -368,7 +373,9 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
       if (!metadata) {failPreparation(); return;}
       if (capability.nativePlayback !== 1 || !metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
       try {
-        const context = await desktopNativeWindowContext();
+        let context;
+        try {context = await desktopNativeWindowContext();}
+        catch {delegate(false); return;}
         if (disposed) return;
         await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
           body: JSON.stringify({mode: 'native', ...(context ? {window:context} : {})})});
@@ -402,6 +409,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     if (disposed) return;
     disposed = true; generation++;
     for (const request of pendingRequests) request.abort();
+    if (creationToken) release('requests/'+creationToken);
     delegated?.(); preparation?.dispose(); restore();
     const old = id; id = null; release(old);
   }, {seek});

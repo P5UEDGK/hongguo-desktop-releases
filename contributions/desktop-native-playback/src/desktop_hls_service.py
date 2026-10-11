@@ -45,6 +45,7 @@ class Job:
     negotiate_codec: bool = False
     source_description: dict | None = None
     video_mode: str = "h264"
+    request_token: str | None = None
     mode_selected: threading.Event = field(default_factory=threading.Event)
 
 
@@ -57,6 +58,8 @@ class HlsJobs:
         self.source_loader, self.encoder = source_loader, encoder
         self.max_jobs, self.max_workers, self.idle_seconds = max_jobs, max_workers, idle_seconds
         self.jobs = {}
+        self.cancelled_requests = {}
+        self.reject_requests_until = 0
         self.guard = threading.RLock()
         self.on_start, self.before_work, self.on_finish = on_start, before_work, on_finish
         self.full_cache_ready = full_cache_ready
@@ -119,22 +122,53 @@ class HlsJobs:
             if time.monotonic() - job.touched > self.idle_seconds:
                 self.release(job.id)
 
-    def create(self, series_id, episode, *, start_seconds=0, negotiate_codec=False):
+    @staticmethod
+    def request_expiry(token):
+        if not isinstance(token,str) or not re.fullmatch(r'[0-9]{13}-[0-9a-f]{32}',token):
+            raise HTTPException(400, "Invalid creation token")
+        expiry = int(token[:13]) / 1000
+        if expiry > time.time() + 60:
+            raise HTTPException(400, "Invalid creation deadline")
+        return expiry
+
+    def cancel_request(self, token):
+        expiry = self.request_expiry(token)
+        with self.guard:
+            now = time.time()
+            self.cancelled_requests = {key:end for key,end in self.cancelled_requests.items() if end > now}
+            if expiry > now:
+                if len(self.cancelled_requests) >= 1024 and token not in self.cancelled_requests:
+                    # Under overload, deny new tokened creation for the entire
+                    # permitted deadline horizon rather than lose a cancellation.
+                    self.reject_requests_until = max(self.reject_requests_until, now + 60)
+                else:
+                    self.cancelled_requests[token] = expiry
+            job = self.jobs.get(token[14:])
+            return self.release(job.id) if job and job.request_token == token else True
+
+    def create(self, series_id, episode, *, start_seconds=0, negotiate_codec=False, request_token=None):
         if not re.fullmatch(r"[0-9]{8,24}", series_id) or not 1 <= episode <= 100000:
             raise HTTPException(400, "Invalid episode identity")
         if (not isinstance(start_seconds, (int, float)) or isinstance(start_seconds, bool)
                 or not math.isfinite(start_seconds) or not 0 <= start_seconds <= 86400):
             raise HTTPException(400, "Invalid desktop start position")
+        expiry = self.request_expiry(request_token) if request_token is not None else None
         with self.guard:
+            now = time.time()
+            self.cancelled_requests = {key:end for key,end in self.cancelled_requests.items() if end > now}
+            if request_token is not None and (expiry <= now or request_token in self.cancelled_requests or now < self.reject_requests_until):
+                raise HTTPException(409, "Desktop creation cancelled or expired")
             self._expire()
             if self.closed.is_set():
                 raise HTTPException(503, "Desktop sessions are closed")
             if len(self.jobs) >= self.max_jobs:
                 raise HTTPException(503, "Desktop session limit reached; retry shortly")
-            identifier = uuid.uuid4().hex
+            identifier = request_token[14:] if request_token else uuid.uuid4().hex
+            if identifier in self.jobs:
+                raise HTTPException(409, "Desktop creation already registered")
             job = Job(identifier, self.root / identifier,
                       start_seconds=float(start_seconds), window_origin=None if start_seconds else 0.0,
-                      negotiate_codec=negotiate_codec)
+                      negotiate_codec=negotiate_codec, request_token=request_token)
             self.jobs[identifier] = job
             try:
                 if self.reaper is None:
@@ -387,18 +421,18 @@ def make_router(jobs, valid_key):
     def capabilities():
         return {"service": "guoban-desktop-hls", "version": 1,
                 "seekWindow": True, "windowVersion": 1, "maxStartSeconds": 86400,
-                "codecNegotiation": 1, "nativePlayback": 1 if jobs.native and jobs.native.available else 0}
+                "codecNegotiation": 1, "requestCancellation": 1, "nativePlayback": 1 if jobs.native and jobs.native.available else 0}
 
     @router.post("")
-    def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0):
+    def prepare(request: Request, series_id: str, ep: int, start_seconds: float = 0, request_token: str | None = None):
         names = [name for name, _ in request.query_params.multi_items()]
-        if (any(name not in {"series_id", "ep", "start_seconds"} for name in names)
+        if (any(name not in {"series_id", "ep", "start_seconds", "request_token"} for name in names)
                 or len(set(names)) != len(names)):
             raise HTTPException(400, "Invalid desktop request parameters")
         negotiation = request.headers.get("x-desktop-codec-negotiation", "")
         if negotiation not in ("", "1"):
             raise HTTPException(400, "Invalid codec negotiation")
-        job = jobs.create(series_id, ep, start_seconds=start_seconds, negotiate_codec=negotiation == "1")
+        job = jobs.create(series_id, ep, start_seconds=start_seconds, negotiate_codec=negotiation == "1", request_token=request_token)
         address, port = request.scope["server"]
         if address not in ("127.0.0.1", "localhost"):
             jobs.release(job.id)
@@ -406,6 +440,12 @@ def make_router(jobs, valid_key):
         job.stream_url = f"http://127.0.0.1:{port}/desktop/hls/{job.id}/source.mp4"
         job.stream_key = request.headers["x-api-key"]
         return {"id": job.id}
+
+    @router.delete("/requests/{token}")
+    def cancel_creation(token: str):
+        if jobs.cancel_request(token) is False:
+            return JSONResponse({"released": False}, status_code=202, headers=headers)
+        return Response(status_code=204)
 
     @router.api_route("/{identifier}/source.mp4", methods=["GET", "HEAD"])
     def media_source(identifier: str, request: Request):
