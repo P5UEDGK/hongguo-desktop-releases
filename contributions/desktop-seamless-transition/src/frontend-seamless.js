@@ -184,7 +184,15 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       if (!Number.isFinite(position) || position < 0 || position > 86400) {
         resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
       }
-      const result = await prepared;
+      let result, timer, cancelled;
+      try {
+        result = await Promise.race([prepared,new Promise(resolve=>{
+          cancelled=()=>resolve(null);
+          abort.signal.addEventListener('abort',cancelled,{once:true});
+          timer=setTimeout(cancelled,Math.max(0,deadline-Date.now()));
+          if(abort.signal.aborted)cancelled();
+        })]);
+      } finally {clearTimeout(timer);abort.signal.removeEventListener('abort',cancelled);}
       const duration = result?.mode === 'native' ? result.duration : known.onTimeline?.[0] || knownDuration || video?.duration;
       if (Number.isFinite(duration) && duration > 0 && position >= duration) {
         resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
