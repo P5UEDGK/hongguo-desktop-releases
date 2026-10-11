@@ -1,6 +1,6 @@
 --- a/contributions/desktop-native-playback/src/frontend-native.js
 +++ b/contributions/desktop-native-playback/src/frontend-native.js
-@@ -79,6 +79,7 @@
+@@ -89,6 +89,7 @@
      clearTimeout(timer); clearTimeout(controlTimer);
      resize?.disconnect();
      media.removeEventListener('desktopdanmaku', updateDanmaku);
@@ -8,7 +8,7 @@
      chromeChanges?.disconnect();
      stage?.removeEventListener?.('transitionend', layout);
      document.removeEventListener('fullscreenchange', layout);
-@@ -149,7 +150,7 @@
+@@ -159,7 +160,7 @@
      } catch {if (!disposed) failPreparation();}
      finally {
        controlBusy = false;
@@ -17,7 +17,7 @@
      }
    }
    function updateDanmaku() {
-@@ -161,8 +162,22 @@
+@@ -171,8 +172,22 @@
      const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
      const bounds = desktopNativeSurfaceRect(media);
      const visible = !document.hidden && rect.width > 0 && rect.height > 0;
@@ -42,7 +42,7 @@
    }
    function seek(value) {
      if (disposed || !Number.isFinite(value)) return;
-@@ -224,6 +239,7 @@
+@@ -234,6 +249,7 @@
      document.addEventListener('fullscreenchange', layout);
      document.addEventListener('visibilitychange', layout);
      media.addEventListener('desktopdanmaku', updateDanmaku);

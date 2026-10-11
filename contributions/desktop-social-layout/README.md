@@ -58,3 +58,5 @@ python contributions/desktop-social-layout/tests/test_native_control.py contribu
 评论开关通过aria-pressed表示评论页签是否启用；不以aria-expanded描述仍展开的选集抽屉。选集按钮继续按实际抽屉状态报告展开/收起。浏览器回归覆盖记忆打开、启用、返回选集及关闭评论。
 
 当前79项Chrome组合通过，追加评论开关aria-pressed和鼠标/键盘聚焦区别；旧评论/弹幕owner分别失败回放。
+
+布局补丁同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516，保留请求窗口、可取消prepare、音频顺序与seek revision修复。遮挡裁剪先执行，再更新弹幕并应用有序音频控制；四份补丁精确组合和现有布局桥接回归通过。本机安装待完成。

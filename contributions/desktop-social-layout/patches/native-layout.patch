@@ -1,7 +1,7 @@
 --- a/contributions/desktop-native-playback/src/desktop_native.py
 +++ b/contributions/desktop-native-playback/src/desktop_native.py
 @@ -25,7 +25,7 @@
-
+ 
  def validate_control(body):
      if not isinstance(body, dict) or not body or set(body) - {
 -            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings"}:
@@ -19,9 +19,9 @@
 +                or any(type(v) is not int or not 0 <= v <= 32768 for v in value)):
 +            raise ValueError('Invalid native occlusion')
      return result
-
-
-@@ -129,6 +134,13 @@
+ 
+ 
+@@ -132,6 +137,13 @@
                  function = getattr(self.dll, name)
                  function.argtypes, function.restype = args, result
              self.user = C.WinDLL("user32", use_last_error=True)
@@ -35,7 +35,7 @@
              self.enum_callback = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
              self.window_callback = C.WINFUNCTYPE(C.c_ssize_t, W.HWND, W.UINT, W.WPARAM, W.LPARAM)
              definitions = {
-@@ -149,6 +161,7 @@
+@@ -152,6 +164,7 @@
                  "CreateWindowExW": ([W.DWORD, W.LPCWSTR, W.LPCWSTR, W.DWORD, C.c_int,
                      C.c_int, C.c_int, C.c_int, W.HWND, W.HMENU, W.HINSTANCE, C.c_void_p], W.HWND),
                  "SetWindowPos": ([W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT], W.BOOL),
@@ -43,7 +43,7 @@
                  "ShowWindow": ([W.HWND, C.c_int], W.BOOL),
                  "DestroyWindow": ([W.HWND], W.BOOL),
                  "PeekMessageW": ([C.POINTER(W.MSG), W.HWND, W.UINT, W.UINT, W.UINT], W.BOOL),
-@@ -371,6 +384,7 @@
+@@ -435,6 +448,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -51,7 +51,7 @@
          danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
-@@ -472,9 +486,33 @@
+@@ -536,9 +550,33 @@
                          if not user.GetClientRect(self.parent, C.byref(client)):
                              raise RuntimeError("Desktop parent unavailable")
                          width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
@@ -84,9 +84,9 @@
 +                                if region: self.host.gdi.DeleteObject(region)
 +                                if cutout: self.host.gdi.DeleteObject(cutout)
                      danmaku_track.update(command)
-                     for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
-                         if key in command:
-@@ -547,6 +585,10 @@
+                     if command.get("paused") is True:
+                         desired["paused"] = True
+@@ -618,6 +656,10 @@
                          raise SourceReadError("Native media input timed out")
                      retry_software(no_frame=not frame_ready)
                      continue
@@ -97,7 +97,7 @@
                  with self.guard:
                      self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                       time=position, duration=player.number("duration", self.job.duration),
-@@ -559,6 +601,7 @@
+@@ -630,6 +672,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops,
