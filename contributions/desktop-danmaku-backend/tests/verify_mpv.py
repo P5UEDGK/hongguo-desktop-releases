@@ -97,5 +97,15 @@ try:
                     time.sleep(.02)
                 assert ('speed compensated overlay' in (player.get('sub-text') or ''))==visible,(speed,position,player.get('sub-text'))
             timed.close(player);assert float(player.get('sub-speed'))==speed
+        player.command('set','sub-speed','1')
+        live=DanmakuTrack();live.update({'danmaku':[{'text':'live option overlay','offset_ms':1000,'lane':0}], 'danmakuSettings':{'opacity':80,'lanes':3,'fontSize':28,'duration':4}});live.apply(player)
+        for name,value in (('sub-delay','3'),('sub-ass-override','strip'),('sub-visibility','no')):player.command('set',name,value)
+        live.apply(player)
+        assert not live.failed and float(player.get('sub-delay'))==0 and player.get('sub-ass-override')=='no' and player.get('sub-visibility')=='yes'
+        player.command('seek','2','absolute+exact');deadline=time.monotonic()+3
+        while time.monotonic()<deadline and 'live option overlay' not in (player.get('sub-text') or ''):time.sleep(.02)
+        assert 'live option overlay' in (player.get('sub-text') or '')
+        live.close(player)
+        assert float(player.get('sub-delay'))==3 and player.get('sub-ass-override')=='strip' and player.get('sub-visibility')=='no'
         print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration and sub-speed timing; no pixel or Win32 claim'}))
 finally:player.close()

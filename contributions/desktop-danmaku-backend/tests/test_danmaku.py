@@ -19,6 +19,14 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_live_primary_options_are_neutralized_and_latest_user_values_restore(self):
+        p=Player();p.properties['sid']='7';track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        self.assertFalse(track.dirty)
+        for name,changed,neutral in (('sub-delay','3','0'),('sub-ass-override','strip','no'),('sub-visibility','no','yes')):
+            p.command('set',name,changed);track.apply(p);self.assertEqual(p.get(name),neutral)
+        self.assertEqual(p.get('secondary-sub-delay'),'3');track.close(p)
+        self.assertEqual((p.get('sub-delay'),p.get('sub-ass-override'),p.get('sub-visibility')),('3','strip','no'))
+
     def test_failed_clear_recaptures_user_options_before_reenable(self):
         clock=[0];p=Player();p.properties.update({'sid':'7','sub-delay':'2'})
         track=DanmakuTrack(clock=lambda:clock[0]);track.update({'danmaku':[ITEM]});track.apply(p)
