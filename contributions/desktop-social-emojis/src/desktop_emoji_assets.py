@@ -41,6 +41,8 @@ def validate_png(png, width, height):
         elif kind==b'IEND':
             if length or not idat or end!=len(png): raise ValueError('Invalid emoji PNG end')
             ended=True
+        elif kind in (b'acTL',b'fcTL',b'fdAT'):
+            raise ValueError('Animated emoji PNG is unsupported')
         elif not kind[0]&32:
             raise ValueError('Unknown critical emoji PNG chunk')
         if idat and kind!=b'IDAT': idat_closed=True
@@ -52,7 +54,7 @@ def validate_png(png, width, height):
     size=sum(h*(1+(w*bits+7)//8) for w,h in shapes if w and h)
     try:
         decoder=zlib.decompressobj();raw=decoder.decompress(compressed,size+1)
-        if len(raw)!=size or not decoder.eof or decoder.unconsumed_tail: raise ValueError('Invalid emoji PNG pixels')
+        if len(raw)!=size or not decoder.eof or decoder.unconsumed_tail or decoder.unused_data: raise ValueError('Invalid emoji PNG pixels')
     except zlib.error: raise ValueError('Invalid emoji PNG compression') from None
     offset=0;bpp=max(1,(bits+7)//8)
     for w,h in shapes:

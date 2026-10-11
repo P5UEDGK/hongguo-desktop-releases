@@ -7,6 +7,16 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from desktop_emoji_assets import validate_assets,catalog
 FIXTURE={'[测试]':{'src':'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','resolution':1,'drawing':[{'color':[255,0,0],'alpha':1,'paths':[[[0,0],[1,0],[1,1],[0,1]]]}]}}
 class EmojiTests(unittest.TestCase):
+    def test_apng_and_concatenated_idat_streams_are_rejected(self):
+        raw=base64.b64decode(FIXTURE['[测试]']['src'].split(',')[1])
+        def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
+        for extra in (chunk(b'acTL',struct.pack('>II',2,0)),chunk(b'fcTL',b'\0'*26),chunk(b'fdAT',b'\0'*4+zlib.compress(b'\0\xff\0\0\xff'))):
+            row=copy.deepcopy(FIXTURE);row['[测试]']['src']='data:image/png;base64,'+base64.b64encode(raw[:33]+extra+raw[33:]).decode()
+            with self.subTest(kind=extra[4:8]),self.assertRaises(ValueError):validate_assets(row)
+        png=raw[:33]+chunk(b'IDAT',zlib.compress(b'\0\xff\0\0\xff')+zlib.compress(b'ignored tail'))+chunk(b'IEND',b'')
+        row=copy.deepcopy(FIXTURE);row['[测试]']['src']='data:image/png;base64,'+base64.b64encode(png).decode()
+        with self.assertRaises(ValueError):validate_assets(row)
+
     def test_filtered_palette_indices_are_checked_after_reconstruction(self):
         def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
         for samples,valid in ((b'\1\1\0',True),(b'\1\1\1',False)):
