@@ -20,6 +20,23 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_duplicate_creation_token_does_not_revoke_existing_standby(self):
+        import uuid
+        jobs,_=self.jobs();token=f'{int((time.time()+30)*1000):013d}-{uuid.uuid4().hex}'
+        parent=jobs.create('1234567890123456',1,request_token=token)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        with self.assertRaises(HTTPException) as error:jobs.create(parent.series_id,1,request_token=token)
+        self.assertEqual(error.exception.status_code,409);self.assertIn(child.id,jobs.jobs);self.assertFalse(child.cancelled.is_set())
+
+    def test_retained_standby_membership_blocks_foreground_creation(self):
+        jobs,_=self.jobs();parent=jobs.create('1234567890123456',1)
+        child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
+        release=jobs.release;jobs.release=lambda identifier:None
+        try:
+            with self.assertRaises(HTTPException) as error:jobs.create(parent.series_id,3)
+            self.assertEqual(error.exception.status_code,503);self.assertIn(child.id,jobs.jobs)
+        finally:jobs.release=release
+
     def test_stale_parent_create_does_not_block_current_standby(self):
         jobs,_=self.jobs();generation=[0]
         def begin(job,*_):generation[0]+=1;job.prefetch_generation=generation[0]
@@ -230,8 +247,11 @@ class StandbyTests(unittest.TestCase):
         parent=jobs.create('1234567890123456',1);self.assertTrue(parent.done.wait(2))
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
         self.assertTrue(entered.wait(2));self.assertEqual(prefetch.busy,child.id)
+        with self.assertRaises(HTTPException) as error:jobs.create(parent.series_id,3)
+        self.assertEqual(error.exception.status_code,503)
+        self.assertTrue(cancelled.wait(1));self.assertTrue(child.done.wait(1))
         newer=jobs.create(parent.series_id,3)
-        self.assertTrue(cancelled.wait(1));self.assertTrue(child.cancelled.is_set())
+        self.assertTrue(child.cancelled.is_set())
         self.assertTrue(newer.done.wait(2));self.assertFalse(newer.failed,newer.failure_code)
         self.assertEqual(encodes,[parent.id,child.id,newer.id])
 
@@ -334,7 +354,7 @@ class StandbyTests(unittest.TestCase):
         jobs,_=self.jobs();jobs.on_start=prefetch.begin;jobs.on_activate=prefetch.promote
         parent=jobs.create('1234567890123456',1)
         child=jobs.create(parent.series_id,2,negotiate_codec=True,prewarm_parent=parent.id)
-        child.video_mode='copy';child.source=self.root/'prepared.mp4'
+        child.video_mode='copy';child.source=self.root/'prepared.mp4';child.done.set()
         newer=jobs.create(parent.series_id,3)
         generation=prefetch.generation
         with self.assertRaises(HTTPException) as error:jobs.activate(child)
