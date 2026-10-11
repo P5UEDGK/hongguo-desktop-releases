@@ -223,7 +223,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
   const callbacks = Object.fromEntries(['onTimeline','onPlayableRange','onComplete','onWindowOrigin',
     'onReady','onError','onAcceptanceHlsTransition'].map(name => [name, (...args) => {
     known[name] = args;
-    if (name === 'onError') {failed = true; if (!claimed) cleanup(retained.length > 0);}
+    if (name === 'onError') {failed = true; if (claimed) finishRetained(); else cleanup(retained.length > 0);}
     consumer?.[name]?.(...args);
   }]));
   const prepared = (async () => {

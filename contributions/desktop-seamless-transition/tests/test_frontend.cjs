@@ -14,7 +14,7 @@ class Video extends EventTarget {
 }
 async function scenario(native,fail=false,fault=null){
   const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0,retired=0;
-  let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget,acceptanceCallback;
+  let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget,acceptanceCallback,terminalCallback;
   const activated=new Promise(resolve=>confirmActivation=resolve);
   const current=new Video();current.volume=.3;current.playbackRate=3;current.paused=false;
   current.desktopSessionId=()=> 'a'.repeat(32);current.stage={append:v=>{v.stage=current.stage;children.push(v);}};
@@ -26,7 +26,7 @@ async function scenario(native,fail=false,fault=null){
     document:{createElement:()=>new Video()},
     desktopCodecHls(video,url,start,callbacks,prep,windowed,state){
       callbacks={...callbacks}; // Production codec copies/enumerates callback keys.
-      acceptanceCallback=callbacks.onAcceptanceHlsTransition;
+      acceptanceCallback=callbacks.onAcceptanceHlsTransition;terminalCallback=callbacks.onError;
       assert.equal(state.paused,true);assert(video.paused&&video.muted&&video.volume===0);
       queueMicrotask(()=>{callbacks.onAcceptanceHlsTransition({from:'copy',to:'h264'},7);callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault!=='no-frame')callbacks.onReady();});
       return Object.assign(()=>{stopped++;},{seek:value=>{video.currentTime=value;},sessionId:()=>controllerId});
@@ -110,6 +110,12 @@ async function scenario(native,fail=false,fault=null){
     media.playbackRate=2;media.volume=.6;media.muted=true;
     if(['pause-activation','paused-frame-hold','activate-paused'].includes(fault))media.pause();
     if(fault==='paused-frame-hold')children[0].requestVideoFrameCallback=()=>1;
+    if(fault==='terminal-error'){
+      children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();
+      assert.equal(started,1,'old picture stays until the first actual HLS frame');
+      terminalCallback(Error('adopted HLS terminal error'));assert.equal(errors,1);assert.equal(started,2,'adopted HLS error releases retained predecessor before forwarding error');
+      dispose();await tick();for(const timer of timers)clearTimeout(timer);return;
+    }
     if(fault&&fault!=='replacement-id'&&fault!=='pending-id'&&fault!=='pause-activation'&&fault!=='paused-frame-hold'){
       if(fault==='cancel')dispose();
       confirmActivation();await tick();
@@ -119,7 +125,7 @@ async function scenario(native,fail=false,fault=null){
       const before=ended;children[0].dispatchEvent(new Event('ended'));assert.equal(ended,before);
       dispose();for(const timer of timers)clearTimeout(timer);return;
     }
-    confirmActivation();await tick();assert.equal(media.paused,['pause-activation','paused-frame-hold'].includes(fault));assert(started>=2);
+    confirmActivation();await tick();assert.equal(media.paused,['pause-activation','paused-frame-hold','terminal-error'].includes(fault));assert(started>=2);
     assert(calls.filter(c=>c.url.endsWith('/activate')).at(-1).url.endsWith('/'+controllerId+'/activate'),'activation follows a session replaced during POST');
     assert(activationBudget>0&&activationBudget<=2000);
     dispose();await tick();assert.equal(stopped,1);assert.equal(released,1);
@@ -129,7 +135,7 @@ async function scenario(native,fail=false,fault=null){
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold'])await scenario(false,false,fault);
+  for(const fault of ['activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});
