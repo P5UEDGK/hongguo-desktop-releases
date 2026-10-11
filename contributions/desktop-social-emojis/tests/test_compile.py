@@ -14,6 +14,15 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_palette_preserves_opaque_foreground_over_translucent_noise(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'weighted.png';image=Image.new('RGBA',(48,48))
+            image.putdata([(230,20,20,255)]*64+[(int((i%24)*255/24),20,20,36) for i in range(2304-64)])
+            image.save(path);row=compiler.compile_assets({'[测试]':path})['[测试]']
+            self.assertEqual({tuple(group['color']) for group in row['drawing'] if group['alpha']==1},{(230,20,20)})
+            with Image.open(io.BytesIO(base64.b64decode(row['src'].split(',',1)[1]))) as png:self.assertEqual(png.convert('RGBA').tobytes(),image.tobytes())
+
     def test_surrogate_mapping_rejected_before_opening_images(self):
         import json
         for point in (0xD800,0xDBFF,0xDC00,0xDFFF):

@@ -41,7 +41,8 @@ def compile_assets(mapping):
             # Fully transparent RGB carries no visible color and must not
             # compete for the limited ASS palette (including unused RGB in PNG).
             rgba=small.load()
-            visible=[rgba[x,y][:3] for y in range(48) for x in range(48) if round(rgba[x,y][3]/255*7)]
+            visible=[rgba[x,y][:3] for y in range(48) for x in range(48)
+                     for _ in range(round(rgba[x,y][3]/255*7))]
             colors=Image.new('RGB',(max(1,len(visible)),1))
             if visible: colors.putdata(visible)
             palette=colors.quantize(colors=16)
