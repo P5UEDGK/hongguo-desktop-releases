@@ -74,7 +74,9 @@ function DesktopDanmakuSettings({media, sessionKey}) {
       b.jsxs('div', {className: 'desktop-danmaku-heading', children: [b.jsx('strong', {children: '弹幕设置'}),
         b.jsx('button', {'aria-label': '恢复默认弹幕设置', onClick: () => desktopSocialSet(media.current,
           {settings: {opacity:80,lanes:3,fontSize:28,duration:14}}), children: '恢复默认'}),
-        b.jsx('button', {'aria-label': '关闭弹幕设置', onClick: () => setOpen(false), children: '×'})]}),
+        b.jsx('button', {'aria-label': '关闭弹幕设置', onClick: () => {
+          control.current?.querySelector('.desktop-danmaku-toggle')?.focus(); setOpen(false);
+        }, children: '×'})]}),
       ...[['opacity','不透明度',10,100,10,settings.opacity+'%'], ['lanes','显示区域',1,6,1,'顶部 '+settings.lanes+' 行'],
         ['fontSize','字体大小',18,36,2,settings.fontSize+''], ['duration','移动速度',4,24,1,
           settings.duration<14?'较快':settings.duration>14?'较慢':'适中']].map(([name,label,min,max,step,text]) =>
@@ -107,7 +109,11 @@ function desktopUniqueDanmaku(items) {
 
 function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous = [], viewportWidth = 1000, notBefore = 0) {
   const unique = new Map(desktopUniqueDanmaku(items).map(item => [item.id, item]));
-  const kept = new Map(previous.filter(row => unique.has(row.id) && row.lane < settings.lanes).map(row=>[row.id,row]));
+  const previousById = new Map(previous.filter(row => unique.has(row.id) && row.lane < settings.lanes).map(row=>[row.id,row]));
+  // Only in-flight rows keep their lane unconditionally. Future rows must
+  // satisfy spacing again after speed, font or viewport changes.
+  const kept = new Map([...previousById].filter(([,row]) => row.offset_ms < notBefore &&
+    row.offset_ms + settings.duration * 1000 > notBefore));
   const lanes = Array.from({length:settings.lanes},()=>[]);
   const width = text => Math.max(60,[...String(text)].slice(0,160).length*settings.fontSize);
   const screen = Math.max(1,Math.min(1000,viewportWidth));
@@ -124,11 +130,13 @@ function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous
     // Already-started new rows would first appear mid-flight. Keep them in the
     // raw list, but admit only future arrivals to the DOM and native timelines.
     if (item.offset_ms < notBefore) return [];
-    const lane = lanes.findIndex(intervals => intervals.every(row => separated(item,row)));
+    const preferred = previousById.get(item.id)?.lane;
+    const fits = lane => lanes[lane].every(row => separated(item,row));
+    const lane = preferred !== undefined && fits(preferred) ? preferred : lanes.findIndex((_,lane) => fits(lane));
     if (lane < 0) return [];
     lanes[lane].push(item);
     return [{id: item.id, text: [...item.text].slice(0, 160).join(''), offset_ms: item.offset_ms, lane}];
-  }).slice(-300);
+  }).slice(0,300);
 }
 
 function desktopStartDanmaku(media, endpoint, status) {
@@ -140,6 +148,7 @@ function desktopStartDanmaku(media, endpoint, status) {
   let next = 0, cursor = '', ended = false, retryAt = 0, frame;
   let loadAbort = null, enabled = desktopSocialPreference('danmaku',true);
   let settings = desktopDanmakuSettings();
+  let lastViewport = null;
   const publish = () => {
     media.desktopDanmaku = enabled ? rows.map(({text, offset_ms, lane}) => ({text, offset_ms, lane})) : [];
     media.desktopDanmakuSettings = settings;
@@ -148,7 +157,11 @@ function desktopStartDanmaku(media, endpoint, status) {
     media.dispatchEvent(new Event('desktopdanmakulist'));
   };
   const changed = event => {
-    if (event.detail.settings) settings = desktopDanmakuSettings(event.detail.settings);
+    if (event.detail.settings) {
+      const time = Math.max(0, media.currentTime || 0) * 1000;
+      rows = rows.filter(row => row.offset_ms + settings.duration * 1000 > time);
+      settings = desktopDanmakuSettings(event.detail.settings);
+    }
     if (typeof event.detail.danmaku === 'boolean' && enabled !== event.detail.danmaku) {
       enabled = event.detail.danmaku; reset();
     } else if (event.detail.settings) {
@@ -162,18 +175,27 @@ function desktopStartDanmaku(media, endpoint, status) {
     raw = []; rows = []; cursor = ''; ended = false; retryAt = 0;
     last = -1; lastClock = Date.now();
     next = Math.floor(Math.max(0, media.currentTime || 0) / 30) * 30000;
-    publish(); layer.replaceChildren();
+    lastViewport = null; status(''); publish(); layer.replaceChildren();
   }
   async function load() {
     const time = Math.max(0, media.currentTime || 0) * 1000;
-    if (!enabled || busy || ended || Date.now() < retryAt || time + 5000 < next) return;
+    if (!enabled || busy || Date.now() < retryAt) return;
+    if (next < time - 24000) {
+      next = Math.floor(time / 30000) * 30000; cursor = ''; ended = false;
+    }
+    if (ended || time + 5000 < next) return;
     busy = true; const own = generation, offset = next, ownCursor = cursor;
     const request = new AbortController(); loadAbort=request;
     try {
       const page = await desktopSocialRead(endpoint, 'danmaku', {offset_ms: offset, cursor: ownCursor}, request.signal);
       if (stopped || own !== generation) return;
       const receivedAt = Math.max(0, media.currentTime || 0) * 1000;
-      raw = desktopUniqueDanmaku(raw.filter(item => item.offset_ms >= receivedAt - 24000).concat(page.items)).slice(-600);
+      const inFlight = new Set(rows.filter(row => row.offset_ms <= receivedAt &&
+        row.offset_ms + settings.duration * 1000 > receivedAt).map(row => row.id));
+      const priority = row => inFlight.has(row.id) ? 0 : row.offset_ms >= receivedAt ? 1 : 2;
+      raw = desktopUniqueDanmaku(raw.filter(item => item.offset_ms >= receivedAt - 24000).concat(page.items))
+        .sort((a,b)=>priority(a)-priority(b) || (priority(a)===2 ? b.offset_ms-a.offset_ms : a.offset_ms-b.offset_ms))
+        .slice(0,600).sort((a,b)=>a.offset_ms-b.offset_ms);
       rows = desktopDanmakuRows(raw, settings, rows, viewport(), receivedAt); publish();
       const advance = page.next_offset_ms > offset;
       if (advance) {next = page.next_offset_ms; cursor = page.cursor;}
@@ -194,6 +216,12 @@ function desktopStartDanmaku(media, endpoint, status) {
     const clock = Date.now(), elapsed = Math.max(0, (clock-lastClock)/1000) * (media.playbackRate || 1);
     if (last >= 0 && (time < last - .7 || time > last + Math.max(3, elapsed + .7))) reset();
     last = time; lastClock = clock; load();
+    const widthNow = viewport(), through = rows.at(-1)?.offset_ms ?? -1;
+    if (widthNow !== lastViewport || (through < time * 1000 + 5000 && raw.some(row => row.offset_ms > through))) {
+      const updated = desktopDanmakuRows(raw, settings, rows, widthNow, time * 1000);
+      if (JSON.stringify(updated) !== JSON.stringify(rows)) {rows = updated; publish();}
+      lastViewport = widthNow;
+    }
     layer.hidden = !!stage?.classList.contains('desktop-native-playback');
     if (!layer.hidden) {
       const width = media.clientWidth || stage?.clientWidth || 1000;

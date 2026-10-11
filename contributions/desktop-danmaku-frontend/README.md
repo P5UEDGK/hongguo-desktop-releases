@@ -27,6 +27,7 @@ Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributio
 ```pwsh
 node contributions/desktop-danmaku-frontend/tests/test_motion.cjs
 node contributions/desktop-danmaku-frontend/tests/test_ingress.cjs
+node contributions/desktop-danmaku-frontend/tests/test_remaining.cjs
 ```
 
 公开测试为人工构造输入，不连接上游。新导出模块已经独立验证；跨包 Chrome 用例由布局包统一维护。此前本机安装还完成53项窗口功能与21项原生像素检查，快/中/慢档（8/14/24秒）实测为161.25/92.5/53.75物理像素/视频秒；这些属于当时本机接线证据，不是本公开包在所有设备或上游发布后的保证。
@@ -40,3 +41,7 @@ node contributions/desktop-danmaku-frontend/tests/test_ingress.cjs
 迟到准入回归使用可控的延迟响应，覆盖响应期间视频继续前进、首帧位于右边界、分页位置连续、设置不复活迟到项、seek 过期响应及清理；不连接上游接口。
 
 同一回归还覆盖异 ID 的单页／跨页重复、代表 ID 和在途位置稳定、不同毫秒及完整原文边界、缓存上限、设置与 seek，以及 DOM／原生日程一致。
+
+## 剩余审查回归（2026-10-11）
+
+密集数据优先保留在途和最近未来条目，滚动补充300条日程；未来轨道在速度、字号或视口变化后重新校验。在途原始数据不会被迟到密集页挤出，已结束条目不会因减速重新出现。长断网恢复直接读取当前30秒桶；关闭清空错误提示，关闭设置恢复焦点后保持收起。新增8组回归，原运动及迟到准入测试继续通过。
