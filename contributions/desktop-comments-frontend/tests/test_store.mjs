@@ -72,4 +72,22 @@ try{
   now=16000;for(const [id,timer] of [...timers])if(timer.due<=now){timers.delete(id);timer.fn();}
   await assert.rejects(queued,error=>['AbortError','TimeoutError'].includes(error.name));pending.shift();
 }finally{slow.dispose();Date.now=realNow;globalThis.setTimeout=realTimer;globalThis.clearTimeout=realClear;}
+// A prior cursor timing out cannot spend a later read's remaining budget.
+now=0;timers.clear();Date.now=()=>now;
+globalThis.setTimeout=(fn,ms)=>{timers.set(++token,{fn,due:now+ms,ms});return token;};
+globalThis.clearTimeout=id=>timers.delete(id);
+const timedOutCursor=createStore(endpoint);
+try{
+  const late=timedOutCursor.read('comments',{kind:'episode',cursor:'late'});
+  const rejected=assert.rejects(late,{name:'AbortError'});pending.shift();now=14000;
+  const queued=timedOutCursor.read('comments',{kind:'episode'});
+  const count=calls.length;now=15000;
+  for(const [id,timer] of [...timers])if(timer.due<=now){timers.delete(id);timer.fn();}
+  await rejected;await new Promise(setImmediate);
+  assert.equal(calls.length,count+1,'page one must use a fresh controller after old cursor timeout');
+  assert.equal(calls.at(-1).url.searchParams.get('cursor'),null);
+  assert(!calls.at(-1).options.signal.aborted);
+  pending.shift().resolve(page(['reopened']));
+  assert.deepEqual((await queued).items.map(x=>x.id),['reopened']);
+}finally{timedOutCursor.dispose();Date.now=realNow;globalThis.setTimeout=realTimer;globalThis.clearTimeout=realClear;}
 console.log('PASS session cache, in-flight reuse, pagination, tab/reply isolation, refresh, failure retry and disposal');

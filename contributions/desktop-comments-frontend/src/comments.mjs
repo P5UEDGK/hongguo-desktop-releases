@@ -38,14 +38,14 @@ function desktopSocialStore(endpoint) {
   const identity = (resource, params) => JSON.stringify([resource, params.kind || params.comment_id || '']);
   function clear(resource, params) {
     for (const [key, entry] of entries) if ((!resource || entry.resource === resource)
-      && (!params || key === identity(resource, params))) {entry.abort.abort(); entries.delete(key);}
+      && (!params || key === identity(resource, params))) {entry.cancelled = true; entry.abort.abort(); entries.delete(key);}
   }
   function read(resource, params = {}, deadline = Date.now()+15000) {
     if (Date.now() >= deadline) return Promise.reject(new DOMException("Read deadline expired", "TimeoutError"));
     const key = identity(resource, params), cursor = params.cursor || '';
     let entry = entries.get(key);
     if (!entry) {
-      if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).abort.abort(); entries.delete(oldest);}
+      if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).cancelled = true; entries.get(oldest).abort.abort(); entries.delete(oldest);}
       entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set()}; entries.set(key, entry);
     }
     if (entry.value && entry.cursors.has(cursor)) return Promise.resolve(entry.value);
@@ -54,7 +54,7 @@ function desktopSocialStore(endpoint) {
       let timer;
       return Promise.race([
         entry.pending.catch(() => {}).then(() => {
-          if (entry.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          if (entry.cancelled) throw new DOMException('Aborted', 'AbortError');
           return read(resource, params, deadline);
         }),
         new Promise((_,reject)=>{timer=setTimeout(()=>reject(new DOMException('Read deadline expired','TimeoutError')),Math.max(0,deadline-Date.now()));})
