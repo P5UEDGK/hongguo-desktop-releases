@@ -45,6 +45,25 @@ def encoder(source, directory, on_ready=lambda: None, *, cancelled=lambda: False
 
 
 class PrefetchTests(unittest.TestCase):
+    def test_stale_download_active_is_reported_after_generation_changes(self):
+        reports=[];value=self.make(ahead=0)
+        with value.condition:value.download_pending=[(value.generation,2,'10000002')]
+        def report():
+            reports.append(value.snapshot())
+            if len(reports)==1:
+                with value.condition:value.generation+=1
+            elif len(reports)==2:
+                with value.condition:value.closed=True;value.condition.notify_all()
+        value._report=report
+        worker=threading.Thread(target=value._download,daemon=True);worker.start()
+        for _ in range(100):
+            if len(reports)>1:break
+            time.sleep(.001)
+        with value.condition:value.closed=True;value.condition.notify_all()
+        worker.join(1)
+        self.assertGreaterEqual(len(reports),2)
+        self.assertIsNone(reports[-1]['downloadActiveEpisode'])
+
     def test_oversized_future_episode_does_not_drop_smaller_later_episode(self):
         encoded=[]
         def varied(source,directory,on_ready=lambda:None,**kw):
@@ -336,6 +355,29 @@ class PlayableCacheTests(unittest.TestCase):
         self.cache = PlayableEpisodeCache(self.root / "cache", encoder=encoder, profile_files=PROFILE_FILES)
         self.output = self.root / "original-output"
         complete_output(self.output)
+
+    def test_lru_cancellation_after_destructive_commit_keeps_valid_result(self):
+        for cancel_after in ('file','directory'):
+            with self.subTest(cancel_after=cancel_after):
+                self.cache.quota_bytes=512*1024
+                first=self.cache.store(self.source,self.output)
+                other=self.root/('other-'+cancel_after+'.mp4');other.write_bytes(cancel_after.encode())
+                first_bytes=sum(p.stat().st_size for p in first.iterdir())
+                output_bytes=sum(p.stat().st_size for p in self.output.iterdir())
+                self.cache.quota_bytes=first_bytes+output_bytes+65536-1
+                cancelled=threading.Event();unlink=Path.unlink;rmdir=Path.rmdir
+                def remove_file(path,*a,**kw):
+                    result=unlink(path,*a,**kw)
+                    if path.parent==first and cancel_after=='file':cancelled.set()
+                    return result
+                def remove_dir(path,*a,**kw):
+                    result=rmdir(path,*a,**kw)
+                    if path==first and cancel_after=='directory':cancelled.set()
+                    return result
+                with patch.object(Path,'unlink',remove_file),patch.object(Path,'rmdir',remove_dir):
+                    result=self.cache.store(other,self.output,cancelled.is_set)
+                self.assertTrue(cancelled.is_set());self.assertTrue(result.is_dir());self.assertTrue(self.cache.contains(other))
+                self.cache._remove_owned(result)
 
     def test_incomplete_and_corrupted_cache_are_not_hits(self):
         artifact = self.cache.store(self.source, self.output)

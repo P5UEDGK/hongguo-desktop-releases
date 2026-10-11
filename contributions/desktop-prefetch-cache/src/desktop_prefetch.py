@@ -158,10 +158,13 @@ class EpisodePrefetcher:
             self._report()
             try:
                 with self.condition:
-                    if self.closed or task[0] != self.generation:
+                    stale = self.closed or task[0] != self.generation
+                    if stale:
                         self.download_active = None
                         self.condition.notify_all()
-                        continue
+                if stale:
+                    self._report()
+                    continue
                 source = self.download_loader(task[2])
             except Exception:
                 source = None

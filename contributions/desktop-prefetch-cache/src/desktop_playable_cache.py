@@ -360,15 +360,20 @@ class PlayableEpisodeCache:
                 continue
         if total + needed - sum(size for _, _, size in entries) > self.quota_bytes:
             raise CacheQuotaExceeded("Playable cache reservation cannot fit")
+        committing = False
         for _, directory, size in sorted(entries):
-            if cancelled():
+            if not committing and cancelled():
                 raise EncodingCancelled()
             if total + needed <= self.quota_bytes:
-                return
-            self._remove_owned(directory, cancelled)
+                return committing
+            # The first victim removal starts the store transaction. From here
+            # finish eviction and publication even if the caller is cancelled.
+            committing = True
+            self._remove_owned(directory)
             total -= size
         if total + needed > self.quota_bytes:
             raise CacheQuotaExceeded("Playable cache budget is exhausted")
+        return committing
 
     def store(self, source, directory, cancelled=lambda: False, *, video_mode="h264", _identity_result=None, protected=()):
         if cancelled():
@@ -426,9 +431,9 @@ class PlayableEpisodeCache:
                 # Stage bytes are already counted. Evict only at commit, after
                 # all cancellable copying/hashing and manifest construction.
                 metadata_bytes = sum((stage / name).stat().st_size for name in ("owner.marker", "cache.json"))
-                self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target_present else None,
-                              cancelled=cancelled, protected=protected)
-                if cancelled():
+                committing = self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target_present else None,
+                                           cancelled=cancelled, protected=protected)
+                if not committing and cancelled():
                     raise EncodingCancelled()
                 # Once destructive replacement starts, finish this commit even
                 # if the episode generation changes during removal.
