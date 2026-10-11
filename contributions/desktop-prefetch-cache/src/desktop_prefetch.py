@@ -33,7 +33,6 @@ class EpisodePrefetcher:
         self.failed = []
         self.current = None
         self.current_complete = False
-        self.current_source_complete = False
         self.current_source = None
         self.playback_mode = None
         self.latest_episodes = []
@@ -69,7 +68,6 @@ class EpisodePrefetcher:
             self.failed = []
             self.current = {"seriesId": str(series_id), "episode": episode}
             self.current_complete = False
-            self.current_source_complete = False
             self.current_source = None
             self.playback_mode = None
             self.latest_episodes = []
@@ -109,14 +107,12 @@ class EpisodePrefetcher:
                     or self.current != {"seriesId": str(series_id), "episode": episode}):
                 raise EncodingCancelled()
         source = self.source_loader(vid)
-        source_complete = self._source_complete(source)
         with self.condition:
             if (generation == self.generation and not self.closed
                     and self.current == {"seriesId": str(series_id), "episode": episode}):
                 self.latest_episodes = items
                 self.sources[vid] = source
                 self.current_source = source
-                self.current_source_complete = source_complete
                 seen = {vid}
                 for index, future_vid in items:
                     if index > episode and future_vid not in seen and len(self.download_pending) < self.ahead:
@@ -230,6 +226,7 @@ class EpisodePrefetcher:
             self._report()
             failed, cancelled = False, False
             temporary = self.cache.root / ("stage-" + uuid.uuid4().hex)
+            stage_started = False
             try:
                 if not self.cache.available:
                     raise EncodingCancelled()
@@ -240,6 +237,9 @@ class EpisodePrefetcher:
                 mode = task[3]
                 if not self.cache.contains(source, mode, cancelled=cancel.is_set):
                     extra = {"video_mode": "copy"} if mode == "copy" else {}
+                    if temporary.exists():
+                        raise ValueError("Prefetch stage already exists")
+                    stage_started = True
                     self.cache.encoder(source, temporary, cancelled=cancel.is_set, **extra)
                     (temporary / "owner.marker").write_text(OWNER, encoding="ascii")
                     self.cache.store(source, temporary, cancel.is_set, video_mode=mode)
@@ -251,12 +251,14 @@ class EpisodePrefetcher:
                 failed = True
             finally:
                 try:
-                    if temporary.exists():
+                    if stage_started and temporary.exists():
                         if (temporary.parent != self.cache.root or not plain(temporary)
                                 or not re.fullmatch(r"stage-[0-9a-f]{32}", temporary.name)):
                             raise ValueError("Unsafe prefetch stage")
-                        (temporary / "owner.marker").write_text(OWNER, encoding="ascii")
-                        self.cache._remove_owned(temporary)
+                        # This nonce path was absent before our encoder call.
+                        # Its known outputs can be unlinked without allocating
+                        # a marker on a full disk; unknown content is retained.
+                        self.cache._remove_fresh_stage(temporary)
                 except (OSError, ValueError):
                     failed = True
                 with self.condition:

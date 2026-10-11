@@ -86,6 +86,21 @@ class PlayableEpisodeCache:
                 digest.update(block)
         return digest.hexdigest()
 
+    def _remove_fresh_stage(self, directory):
+        """Only for the caller's newly allocated encoder nonce, never quota scans."""
+        if (directory.parent.resolve() != self.root or not plain(self.root)
+                or not plain(directory) or not directory.is_dir()
+                or not re.fullmatch(r'stage-[0-9a-f]{32}', directory.name)):
+            raise ValueError('Unsafe fresh encoder stage')
+        files = list(directory.iterdir())
+        if any(not plain(file) or not file.is_file() or not (
+                file.name in {'init.mp4','index.m3u8','index.m3u8.tmp','complete.marker','owner.marker'}
+                or re.fullmatch(r'seg[0-9]{6}\.m4s', file.name)) for file in files):
+            raise ValueError('Unknown fresh encoder stage content')
+        for file in files:
+            file.unlink()
+        directory.rmdir()
+
     @staticmethod
     def _copy(source, destination, cancelled=lambda: False):
         with source.open("rb") as reader, destination.open("wb") as writer:

@@ -11,6 +11,49 @@ from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 class ReviewEdges(unittest.TestCase):
+    def test_optional_source_status_never_blocks_foreground_load(self):
+        for reporting in (False,True):
+            with self.subTest(reporting=reporting):
+                gate,loaded=threading.Event(),threading.Event();errors=[]
+                def status(_):gate.wait(2);return {'complete':True}
+                value=EpisodePrefetcher(lambda _:self.source,lambda _:({},[{'index':1,'vid':'10000001'}]),
+                    self.root/uuid.uuid4().hex,encoder=encoder,source_status=status,profile_files=PROFILE_FILES,
+                    status_path=self.root/'status.json' if reporting else None)
+                value.begin(Job(uuid.uuid4().hex,self.root/'session'),'series',1)
+                def load():
+                    try:self.assertEqual(value.load_source('series',1),self.source);loaded.set()
+                    except BaseException as exc:errors.append(exc)
+                worker=threading.Thread(target=load);worker.start()
+                try:self.assertTrue(loaded.wait(.5),'foreground cannot await the optional callback')
+                finally:gate.set();worker.join(2);value.close()
+                self.assertEqual(errors,[])
+
+    def test_background_stage_marker_failure_reclaims_known_encoder_outputs(self):
+        for partial in (False,True):
+            with self.subTest(partial=partial):
+                value=EpisodePrefetcher(lambda _:None,lambda _:({},[]),self.root/uuid.uuid4().hex,
+                    encoder=encoder,profile_files=PROFILE_FILES)
+                value.current={'episode':1};value.pending=[(0,2,'10000002','h264')];value.sources['10000002']=self.source
+                original=Path.write_text
+                def write(path,data,*args,**kwargs):
+                    if path.name=='owner.marker':
+                        if partial:original(path,'partial',encoding='ascii')
+                        raise OSError('fixture disk full')
+                    return original(path,data,*args,**kwargs)
+                worker=threading.Thread(target=value._run);value.worker=worker
+                with patch.object(Path,'write_text',write):
+                    worker.start()
+                    try:
+                        self.assertTrue(value.wait_idle(2));self.assertEqual(value.failed,[2])
+                        self.assertEqual(list(value.cache.root.glob('stage-*')),[])
+                    finally:value.close();worker.join(2)
+
+    def test_fresh_stage_cleanup_preserves_unknown_or_reparse_content(self):
+        cache=self.cache();stage=cache.root/('stage-'+'c'*32);stage.mkdir()
+        (stage/'seg000000.m4s').write_bytes(b'owned');(stage/'unknown').write_bytes(b'preserve')
+        with self.assertRaises(ValueError):cache._remove_fresh_stage(stage)
+        self.assertEqual((stage/'unknown').read_bytes(),b'preserve')
+        self.assertTrue((stage/'seg000000.m4s').exists(),'validate every file before any deletion')
     def test_stale_metadata_never_starts_media_loading(self):
         for closed in (False,True):
             with self.subTest(closed=closed):
