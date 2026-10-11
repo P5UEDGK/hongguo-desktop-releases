@@ -77,13 +77,16 @@ class ProgressiveSource:
             with self.guard:
                 if index in self.blocks:
                     self.blocks.move_to_end(index)
+                    self.network_failed.clear()
                     return self.blocks[index]
             start = index * self.block_size
             if self.size and start >= self.size:
                 return b""
             if self.pinned is not None:
                 self.pinned.seek(start)
-                return self.pinned.read(self.block_size)
+                value=self.pinned.read(self.block_size)
+                self.network_failed.clear()
+                return value
             end = start + self.block_size - 1
             headers = {"Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"}
             if self.if_range:
@@ -119,6 +122,7 @@ class ProgressiveSource:
                         self.received += len(value)
                     while len(self.blocks) > self.max_blocks:
                         self.blocks.popitem(last=False)
+                self.network_failed.clear()
                 return value
             except InterruptedError:
                 raise

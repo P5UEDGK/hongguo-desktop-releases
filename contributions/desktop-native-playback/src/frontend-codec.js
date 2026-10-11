@@ -98,7 +98,8 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   };
   const onRateChange = () => {rate = media.playbackRate || rate;};
   function fallback() {
-    if (disposed || retried || !transport?.usedCopy() || transport.failureCode?.() === 'source-read') return false;
+    const invalidStart = transport?.failureCode?.() === 'start-position' && !transport.durationKnown() && position > 0;
+    if (disposed || retried || !transport || !transport.usedCopy() && !invalidStart || transport.failureCode?.() === 'source-read') return false;
     retried = true;
     rememberTime();
     const resume = position;
@@ -187,10 +188,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     } finally {internalPause = false;}
   }
   const onError = event => {
-    if (!disposed && !retried && transport?.usedCopy() && transport.failureCode?.() !== 'source-read') {
-      event.stopImmediatePropagation();
-      fallback();
-    }
+    if (fallback()) event.stopImmediatePropagation();
   };
   media.addEventListener('play', onPlay);
   media.addEventListener('pause', onPause);

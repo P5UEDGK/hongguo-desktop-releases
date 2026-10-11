@@ -50,6 +50,20 @@ def source_for(data, **kwargs):
 
 
 class StreamTests(unittest.TestCase):
+    def test_successful_source_retry_clears_previous_network_failure(self):
+        payload=b'x'*131072;source,_=source_for(payload)
+        with patch.object(source,'_range',side_effect=[requests.exceptions.ConnectionError()]*3+[(payload[:65536],len(payload),'"fixture"')]):
+            with self.assertRaises(SourceReadError):source.block(0,lambda:False)
+            self.assertTrue(source.network_failed.is_set())
+            self.assertEqual(source.block(0,lambda:False),payload[:65536]);self.assertFalse(source.network_failed.is_set())
+        with patch.object(source,'_range',side_effect=RuntimeError('offline')):
+            with self.assertRaises(SourceReadError):source.block(1,lambda:False)
+            self.assertTrue(source.network_failed.is_set())
+            self.assertEqual(source.block(2,lambda:False),b'');self.assertTrue(source.network_failed.is_set(),'EOF is not recovered input')
+            self.assertEqual(source.block(0,lambda:False),payload[:65536]);self.assertFalse(source.network_failed.is_set(),'successful cached probe may reuse source after a failed reader')
+        source.close()
+
+
     def test_lost_validator_after_a_cached_block_rejects_new_representation(self):
         payload = b'x' * 131072
         first = Response(payload, 0, 65535)
