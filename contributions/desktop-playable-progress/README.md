@@ -108,3 +108,8 @@ pwsh -NoProfile -Command "python -I contributions/desktop-playable-progress/test
 
 
 时间线声明回归（2026-10-12）：4242511867：固定本机fMP4不支持DISCONTINUITY/DISCONTINUITY-SEQUENCE，拒绝其有效或异常声明，避免灰条报可播。旧代码回放失败，修改后缓存85项、可播范围31项通过。此策略适用于本包固定生成器的单时间线fMP4，本机融合与安装仍待验收。
+
+
+本轮第六批审查（2026-10-12）：4242550686：PLAYLIST-TYPE限定EVENT/VOD且唯一，避免灰条承认可拒绝清单。
+
+旧实现回放失败，修改后的对应回归通过；公开待机组合192项、浏览器组合88项及本机融合后端295项通过，无跳过。本机真实Tauri原生及HLS含社交交互验收通过，关闭后资源归零；安装验收仍待完成，上游尚未合并发布。

@@ -42,6 +42,9 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
         # decryptability, even when an encrypted playlist has ENDLIST.
         if any(line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-SESSION-DATA:", "#EXT-X-MEDIA:", "#EXT-X-STREAM-INF:", "#EXT-X-I-FRAME-STREAM-INF:", "#EXT-X-BYTERANGE:")) for line in lines):
             return [0, 0]
+        types = [line for line in lines if line.startswith('#EXT-X-PLAYLIST-TYPE')]
+        if len(types)>1 or types and types[0] not in ('#EXT-X-PLAYLIST-TYPE:EVENT','#EXT-X-PLAYLIST-TYPE:VOD'):
+            return [0, 0]
         parameters = {}
         if any(line.startswith('#EXT-X-DISCONTINUITY') for line in lines):
             return [0, 0]  # The fixed local generator emits one continuous timeline.

@@ -9,6 +9,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from desktop_playable_range import playable_range
 
 class RangeTests(unittest.TestCase):
+    def test_playlist_type_is_unique_and_known(self):
+        self.output();path=self.path/'index.m3u8';original=path.read_text(encoding='utf8')
+        for tag in ('#EXT-X-PLAYLIST-TYPE:OTHER','#EXT-X-PLAYLIST-TYPE',
+                    '#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-PLAYLIST-TYPE:VOD'):
+            path.write_text(original+tag+'\n',encoding='utf8');self.assertEqual(playable_range(self.job),[0,0])
+        for tag in ('EVENT','VOD'):
+            path.write_text(original+'#EXT-X-PLAYLIST-TYPE:'+tag+'\n',encoding='utf8')
+            self.assertEqual(playable_range(self.job),[0,2])
+
     def test_discontinuous_timelines_are_unsupported(self):
         self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
         for tag in ('#EXT-X-DISCONTINUITY','#EXT-X-DISCONTINUITY-SEQUENCE:0',
