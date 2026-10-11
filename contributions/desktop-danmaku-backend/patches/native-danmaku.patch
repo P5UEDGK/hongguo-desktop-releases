@@ -31,7 +31,7 @@
  
  
  class Event(C.Structure):
-@@ -446,6 +453,7 @@
+@@ -450,6 +457,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -39,7 +39,7 @@
          output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
-@@ -530,6 +538,8 @@
+@@ -534,6 +542,8 @@
                          break
                      if event.id == 21:  # MPV_EVENT_PLAYBACK_RESTART: first frame has restarted.
                          frame_ready = True
@@ -48,7 +48,7 @@
                      if event.id == 7 and event.data:
                          fields = C.cast(event.data, C.POINTER(C.c_int))
                          if fields[0] == 4 or fields[1] < 0:
-@@ -550,6 +560,7 @@
+@@ -554,6 +564,7 @@
                          user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
@@ -56,7 +56,7 @@
                      if command.get("paused") is True:
                          desired["paused"] = True
                          player.command("set", "pause", "yes")
-@@ -584,6 +595,7 @@
+@@ -588,6 +599,7 @@
                  # hardware capability string or successful loadfile command.
                  hwdec = player.get("hwdec-current")
                  position = player.number("time-pos", self.job.start_seconds)
@@ -64,7 +64,7 @@
                  paused = player.get("pause") == "yes"
                  seeking = player.get("seeking") == "yes"
                  eof = player.get("eof-reached") == "yes"
-@@ -640,7 +652,8 @@
+@@ -644,7 +656,8 @@
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
@@ -74,7 +74,7 @@
                  self.stop.wait(.04)
          except SourceReadError:
              with self.guard:
-@@ -655,6 +668,7 @@
+@@ -659,6 +672,7 @@
              self.input_hooks.clear()
              reusable = self.engine_resources is not None and self.data.get("state") != "failed"
              try:

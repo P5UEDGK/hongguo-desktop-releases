@@ -77,12 +77,20 @@ class DanmakuTrack:
         self.modified_options = {}
         self.reload_options = False
 
+    def restore_secondary_options(self, player):
+        for name in tuple(self.modified_options):
+            if name.startswith('secondary-'):
+                if str(player.get(name)) == self.modified_options[name]:
+                    player.command('set', name, self.saved_options[name])
+                self.modified_options.pop(name)
+
     def show_captions(self, player):
         if self.saved is None:
             return
         live = player.get('sid') or 'no'
         secondary = player.get('secondary-sid') or 'no'
         if self.promoted and not self.selected(secondary):
+            self.restore_secondary_options(player)
             self.saved = ('no', self.saved[1], self.saved[2])
             self.promoted = False
         if str(live) != str(self.track_id):
@@ -113,6 +121,9 @@ class DanmakuTrack:
             raise RuntimeError('Secondary subtitle slot changed')
         # mpv refuses the same track in both slots. Select the overlay first,
         # then move the saved caption; assigning it before sub-add loses it.
+        if not self.promoted:
+            for name in ('secondary-sub-ass-override','secondary-sub-delay','secondary-sub-visibility','secondary-sub-pos'):
+                if name not in self.modified_options: self.saved_options[name] = player.get(name)
         self.set_option(player, 'secondary-sub-ass-override', self.saved_options['sub-ass-override'])
         self.set_option(player, 'secondary-sub-delay', self.saved_options['sub-delay'])
         self.set_option(player, 'secondary-sub-visibility', self.saved_options['sub-visibility'])
@@ -166,7 +177,7 @@ class DanmakuTrack:
         if self.promoted and self.saved and str(player.get('secondary-sid')) != str(self.saved[0]):
             self.dirty = True
         if self.track_id and self.saved_options is not None and str(player.get('sid')) == str(self.track_id):
-            for name,neutral in (('sub-ass-override','no'),('sub-delay','0'),('sub-visibility','yes')):
+            for name,neutral in (('sub-ass-override','no'),('sub-delay','0'),('sub-visibility','yes'),('sub-pos',self.saved_options['sub-pos'])):
                 live = str(player.get(name))
                 if live != self.modified_options.get(name,neutral):
                     self.saved_options[name] = live

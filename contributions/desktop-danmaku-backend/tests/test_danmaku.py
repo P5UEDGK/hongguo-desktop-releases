@@ -19,6 +19,23 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_live_caption_position_follows_promoted_secondary_without_reload(self):
+        p=Player();p.properties.update({'sid':'7','sub-pos':'90','secondary-sub-pos':'15'})
+        track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p);loads=track.loads
+        p.command('set','sub-pos','75');track.apply(p)
+        self.assertEqual(p.get('secondary-sub-pos'),'75');self.assertEqual(track.loads,loads)
+        track.close(p);self.assertEqual(p.get('sub-pos'),'75');self.assertEqual(p.get('secondary-sub-pos'),'15')
+
+    def test_cleared_promoted_caption_immediately_restores_secondary_options(self):
+        p=Player();p.properties.update({'sid':'7','sub-delay':'2','sub-pos':'90','sub-ass-override':'force','sub-visibility':'yes','secondary-sub-delay':'-.5','secondary-sub-pos':'15','secondary-sub-ass-override':'strip','secondary-sub-visibility':'no'})
+        before={k:v for k,v in p.properties.items() if k.startswith('secondary-sub-')}
+        track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        p.command('set','secondary-sid','no');track.apply(p)
+        self.assertFalse(track.promoted);self.assertEqual({k:p.get(k) for k in before},before)
+        p.command('set','secondary-sid','8');track.apply(p)
+        self.assertEqual(p.get('sid'),track.track_id);self.assertEqual(p.get('secondary-sid'),'8');self.assertEqual({k:p.get(k) for k in before},before)
+        track.close(p);self.assertEqual(p.get('secondary-sid'),'8');self.assertEqual({k:p.get(k) for k in before},before)
+
     def test_live_primary_options_are_neutralized_and_latest_user_values_restore(self):
         p=Player();p.properties['sid']='7';track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
         self.assertFalse(track.dirty)

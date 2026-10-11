@@ -33,7 +33,7 @@ try:
         caption=ass_document([{'text':'fixture caption','offset_ms':0,'lane':0}])
         player.command('sub-add','memory://'+caption,'select','original caption')
         original=player.get('sid');assert original and original.isdigit()
-        original_options={'sub-ass-override':'force','secondary-sub-ass-override':'strip','sub-delay':'1.25','secondary-sub-delay':'-0.75','sub-visibility':'no','secondary-sub-visibility':'yes'}
+        original_options={'sub-ass-override':'force','secondary-sub-ass-override':'strip','sub-delay':'1.25','secondary-sub-delay':'-0.75','sub-visibility':'no','secondary-sub-visibility':'yes','sub-pos':'90','secondary-sub-pos':'15'}
         for name,value in original_options.items():player.command('set',name,value)
         original_options={name:player.get(name) for name in original_options}
         override=player.get('secondary-sub-ass-override')
@@ -42,6 +42,9 @@ try:
         assert player.get('sub-ass-override')=='no' and float(player.get('sub-delay'))==0
         assert player.get('sub-visibility')=='yes' and player.get('secondary-sub-visibility')=='no'
         assert player.get('secondary-sub-ass-override')=='force' and float(player.get('secondary-sub-delay'))==1.25
+        player.command('set','sub-pos','75');track.apply(player)
+        assert float(player.get('secondary-sub-pos'))==75
+        original_options['sub-pos']=player.get('sub-pos')
         track.update({'danmaku':[]});track.apply(player)
         assert not track.failed and player.get('sid')==original and player.get('secondary-sid')=='no'
         assert player.get('secondary-sub-ass-override')==override
@@ -83,6 +86,17 @@ try:
         track.apply(player)  # clean overlay must observe the changed secondary selection
         assert track.track_id is None and player.get('sid')==replacement and player.get('secondary-sid')==secondary
         assert {name:player.get(name) for name in original_options}==original_options
+        player.command('set','secondary-sid','no')
+        clear_track=DanmakuTrack();clear_track.update({'danmaku':[{'text':'clear promoted caption','offset_ms':0,'lane':1}]});clear_track.apply(player)
+        assert clear_track.promoted
+        player.command('set','secondary-sid','no');clear_track.apply(player)
+        assert not clear_track.promoted
+        secondary_options={name:value for name,value in original_options.items() if name.startswith('secondary-')}
+        assert {name:player.get(name) for name in secondary_options}==secondary_options
+        player.command('set','secondary-sid',secondary);clear_track.apply(player)
+        assert {name:player.get(name) for name in secondary_options}==secondary_options
+        clear_track.close(player)
+        assert player.get('secondary-sid')==secondary
         player.command('set','sid','no');player.command('set','secondary-sid','no')
         player.command('set','sub-delay','0');player.command('set','sub-visibility','yes')
         for speed in (2,.5):
@@ -104,7 +118,7 @@ try:
         assert not live.failed and float(player.get('sub-delay'))==0 and player.get('sub-ass-override')=='no' and player.get('sub-visibility')=='yes'
         player.command('seek','2','absolute+exact');deadline=time.monotonic()+3
         while time.monotonic()<deadline and 'live option overlay' not in (player.get('sub-text') or ''):time.sleep(.02)
-        assert 'live option overlay' in (player.get('sub-text') or '')
+        assert 'live option overlay' in (player.get('sub-text') or ''),dict(failed=live.failed,sid=player.get('sid'),secondary=player.get('secondary-sid'),time=player.get('time-pos'),text=player.get('sub-text'),options={name:player.get(name) for name in ('sub-delay','sub-visibility','sub-pos','sub-ass-override','sub-speed')},document=live.document)
         live.close(player)
         assert float(player.get('sub-delay'))==3 and player.get('sub-ass-override')=='strip' and player.get('sub-visibility')=='no'
         print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration and sub-speed timing; no pixel or Win32 claim'}))
