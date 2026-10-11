@@ -8,6 +8,13 @@ import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from desktop_emoji_assets import validate_assets
 
+MAX_MAPPING_BYTES = 1024 * 1024
+
+def load_mapping(path):
+    with path.open('rb') as stream:data=stream.read(MAX_MAPPING_BYTES+1)
+    if len(data)>MAX_MAPPING_BYTES:raise ValueError('Emoji mapping exceeds 1 MiB')
+    return json.loads(data.decode('utf8'))
+
 def compile_assets(mapping):
     from PIL import Image
     result={}
@@ -78,6 +85,6 @@ if __name__=='__main__':
     parser.add_argument('mapping',type=Path,help='JSON object: [tag] -> local image path, relative to this JSON')
     parser.add_argument('output',type=Path)
     args=parser.parse_args()
-    mapping=json.loads(args.mapping.read_text(encoding='utf8'))
+    mapping=load_mapping(args.mapping)
     mapping={name:args.mapping.parent/path for name,path in mapping.items()}
     args.output.write_text(json.dumps(compile_assets(mapping),ensure_ascii=False,separators=(',',':'))+'\n',encoding='utf8')

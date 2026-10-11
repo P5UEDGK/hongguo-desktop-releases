@@ -14,6 +14,15 @@ spec=importlib.util.spec_from_file_location('compile_assets',ROOT/'tools/compile
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 class CompileTests(unittest.TestCase):
+    def test_mapping_read_is_bounded_before_decode(self):
+        stream=MagicMock();stream.__enter__.return_value=stream;stream.read.return_value=b' '*(1024*1024+1);path=MagicMock();path.open.return_value=stream
+        with patch.object(compiler.json,'loads') as decode:
+            with self.assertRaisesRegex(ValueError,'mapping exceeds'):compiler.load_mapping(path)
+            stream.read.assert_called_once_with(1024*1024+1);decode.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'mapping.json';source.write_text('{"[测试]":"owned.png"}',encoding='utf8')
+            self.assertEqual(compiler.load_mapping(source),{'[测试]':'owned.png'})
+
     def test_transparent_rgb_does_not_consume_visible_palette(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as directory:
