@@ -178,8 +178,8 @@
          let context;
          try {context = await desktopNativeWindowContext();}
          catch {delegate(false); return;}
-@@ -411,23 +443,100 @@
-         if (['h264', 'copy'].includes(latest.videoMode)) {delegateCommittedHls(latest); return;}
+@@ -412,23 +444,100 @@
+         if (latest.videoMode == null) {delegate(false); return;}
          if (latest.videoMode !== 'native') throw error;
        }
 +      if (!preparedNative) {
@@ -294,7 +294,7 @@
      } catch {if (!disposed) failPreparation();}
    })();
    return Object.assign(() => {
-@@ -435,7 +544,14 @@
+@@ -436,7 +545,14 @@
      disposed = true; generation++;
      for (const request of pendingRequests) request.abort();
      if (creationToken) release('requests/'+creationToken);

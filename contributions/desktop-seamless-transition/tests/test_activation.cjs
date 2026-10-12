@@ -44,7 +44,7 @@ async function scenario(fault){
         if(selected&&fault==='hung')return new Promise(()=>{});
         body={state:'complete',source:{video:{contentType:'video/mp4; codecs="hvc1.1"'}},
           native:selected?{state:'ready',outputReady:fault!=='frame',visible:fault!=='visible'&&!context.document.hidden,
-            revision:fault==='revision'?0:10+commands.length,width:1920,height:1080,time:standbyPosition,duration:90}:null};
+            paused:[...commands].reverse().find(c=>'paused' in c)?.paused ?? false, revision:fault==='revision'?0:10+commands.length,width:1920,height:1080,time:standbyPosition,duration:90}:null};
         if(fault==='late-seek-during-activate'&&activated&&commands.some(c=>'seek'in c)){lateSeekSamples++;body.native.seeking=lateSeekSamples<3;body.native.time=lateSeekSamples<3?0:20;if(lateSeekSamples>=3)standbyPosition=20;}
         if(fault==='cold-registration'&&modeAck&&++registrationPolls===1)body.native={state:'preparing'};
       }
@@ -64,7 +64,7 @@ async function scenario(fault){
     assert.equal(commands.at(-1).paused,true,'hidden in-flight activation must pause audio');
     context.document.hidden=false;documentListeners.get('visibilitychange')?.();
     for(let n=0;n<10;n++){await tick();await new Promise(r=>setTimeout(r,1));}
-    assert.equal(errors,0);assert(finished>0,'showing the activated surface finishes retention');
+    assert.equal(errors,0);assert(finished>0,'showing the activated surface finishes retention');assert.equal(commands.at(-1).paused,false,'show restores the preserved playing intent after parked status polls');
   }
   else if(fault==='late-seek-during-activate'){for(let n=0;n<15;n++){await tick();await new Promise(r=>setTimeout(r,1));}assert(activated);assert.equal(errors,0);assert(finished>0);assert(lateSeekSamples>=3);}
   else if(fault==='pending-native-seek'){assert(activated);assert.equal(errors,0);assert.equal(standbyPosition,20);}

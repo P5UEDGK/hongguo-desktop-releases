@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const controllers=[],requests=[];let plays=0;
 const media={currentTime:0,playbackRate:1,videoWidth:100,pause(){},play(){plays++;return Promise.resolve()},addEventListener(){},removeEventListener(){}};
-const c={URL,Headers,Number,Math,Date,queueMicrotask,setTimeout:()=>1,clearTimeout(){},
+const c={crypto:require('node:crypto').webcrypto,AbortController,URL,Headers,Number,Math,Date,queueMicrotask,setTimeout:()=>1,clearTimeout(){},
   fetch:async(url,init={})=>{requests.push(init);return {ok:true,clone(){return this},json:async()=>({id:'a'.repeat(32)})}},
   desktopLegacyHls(m,u,t,callbacks,p,w,transport){transport.usedCopy=()=>controllers.length===1;controllers.push({callbacks,transport});return ()=>{};}};
 c.ek=(m,u,t,callbacks,p,transport)=>c.desktopLegacyHls(m,u,t,callbacks,p,true,transport);
