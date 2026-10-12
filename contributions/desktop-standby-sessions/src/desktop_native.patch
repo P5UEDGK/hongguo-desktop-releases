@@ -12,7 +12,7 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,99 @@
+@@ -291,7 +296,101 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -50,6 +50,8 @@
 +                                    raise ValueError("Previous audio not paused")
 +                    elif body.get("paused") is False or body.get("muted") is False:
 +                        raise ValueError("Standby must remain silent and paused")
++                if getattr(session.job,"prewarm_parent",None) and body.get("visible") is False:
++                    body={"paused":True,"muted":True,**body}
 +                revision = session.submit(body)
 +                session.handoff_previous = ownership
 +                if body.get("visible") is False:self._restore_handoff(session)
@@ -113,7 +115,7 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -301,6 +398,8 @@
+@@ -301,6 +400,8 @@
          with self.guard:
              if self.sessions.get(identifier) is session:
                  self.sessions.pop(identifier, None)
@@ -122,7 +124,7 @@
          return True
  
  
-@@ -432,6 +531,8 @@
+@@ -432,6 +533,8 @@
              revision = self.revision + 1
              self.commands.put_nowait((revision, command))
              self.revision = revision
@@ -131,7 +133,7 @@
              self.queued_state.update({key: value for key, value in command.items()
                                        if key in self.queued_state})
              return revision
-@@ -458,7 +559,8 @@
+@@ -458,7 +561,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -141,7 +143,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -646,6 +748,7 @@
+@@ -646,6 +750,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

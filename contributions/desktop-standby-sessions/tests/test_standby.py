@@ -20,6 +20,18 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_partial_hide_silences_child_and_restores_parent(self):
+        host=object.__new__(NativeHost);host.guard=threading.RLock();parent_state={'paused':False,'revision':0};child_state={'outputReady':True,'paused':True,'muted':True,'visible':False,'revision':0}
+        def parent_submit(body):
+            parent_state.update(body,revision=parent_state['revision']+1);parent.pause_revision=parent_state['revision'];return parent_state['revision']
+        def child_submit(body):child_state.update(body,revision=child_state['revision']+1);return child_state['revision']
+        parent=SimpleNamespace(stop=threading.Event(),snapshot=lambda:dict(parent_state),desired_state=lambda:dict(parent_state),submit=parent_submit)
+        child=SimpleNamespace(stop=threading.Event(),job=SimpleNamespace(prewarm_parent='parent'),snapshot=lambda:dict(child_state),desired_state=lambda:dict(child_state),submit=child_submit)
+        host.sessions={'parent':parent,'child':child}
+        host.control('child',{'visible':True,'paused':False,'muted':False});self.assertTrue(parent_state['paused'])
+        host.control('child',{'visible':False})
+        self.assertTrue(child_state['paused']);self.assertTrue(child_state['muted']);self.assertFalse(parent_state['paused']);self.assertFalse(child.handoff_previous)
+
     def test_hiding_provisional_child_restores_the_owned_parent(self):
         host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0}
         def submit(body):
