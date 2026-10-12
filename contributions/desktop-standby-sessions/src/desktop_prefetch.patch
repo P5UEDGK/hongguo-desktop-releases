@@ -95,7 +95,7 @@
                      and self.current == {"seriesId": str(series_id), "episode": episode}):
                  self.latest_episodes = items
                  self.sources[vid] = source
-@@ -147,6 +167,100 @@
+@@ -158,6 +178,113 @@
          self._report()
          return source
  
@@ -110,36 +110,49 @@
 +        vid = next((vid for index, vid in self._episodes(metadata) if index == episode), None)
 +        if vid is None:
 +            raise ValueError("Episode media identity unavailable")
-+        with self.condition:
-+            current_generation()
-+            # Claim queued work before releasing the scheduling lock. An
-+            # in-flight download must publish its source before transfer.
-+            self.pending = [task for task in self.pending if task[2] != vid]
-+            self.download_pending = [task for task in self.download_pending if task[2] != vid]
-+            while (self.download_active is not None and self.download_active[2] == vid
-+                   or self.active is not None and self.active[2] == vid):
-+                if self.active is not None and self.active[2] == vid:
-+                    self.background_cancelled.set()
-+                current_generation()
-+                self.condition.wait(.05)
-+            current_generation()
-+            source = self.sources.get(vid)
-+            if source is self.current_source and callable(getattr(source, "close", None)):
-+                source = None  # The current foreground still owns this source.
-+            elif source is not None:
-+                source = self.sources.pop(vid, None)
-+            self.condition.notify_all()
-+        self._report()
-+        if source is None:
-+            source = self.source_loader(vid)
++        source=None
++        claimed_pending=[];claimed_download=[]
 +        try:
++            with self.condition:
++                current_generation()
++                # Claim queued work before releasing the scheduling lock. An
++                # in-flight download must publish its source before transfer.
++                claimed_pending=[task for task in self.pending if task[2] == vid]
++                self.pending = [task for task in self.pending if task[2] != vid]
++                claimed_download=[task for task in self.download_pending if task[2] == vid]
++                self.download_pending = [task for task in self.download_pending if task[2] != vid]
++                while (self.download_active is not None and self.download_active[2] == vid
++                       or self.active is not None and self.active[2] == vid):
++                    if self.active is not None and self.active[2] == vid:
++                        self.background_cancelled.set()
++                    current_generation()
++                    self.condition.wait(.05)
++                current_generation()
++                source = self.sources.get(vid)
++                if source is self.current_source and callable(getattr(source, "close", None)):
++                    source = None  # The current foreground still owns this source.
++                elif source is not None:
++                    source = self.sources.pop(vid, None)
++                self.condition.notify_all()
++            self._report()
++            if source is None:
++                source = self.source_loader(vid)
 +            current_generation()
-+        except EncodingCancelled:
-+            if callable(getattr(source, "close", None)):
-+                try: source.close()
-+                except Exception: pass
++            return source
++        except Exception:
++            retained=False
++            with self.condition:
++                if not self.closed and job.prefetch_generation == self.generation:
++                    self.pending=claimed_pending+[task for task in self.pending if task not in claimed_pending]
++                    self.download_pending=claimed_download+[task for task in self.download_pending if task not in claimed_download]
++                    if source is not None:
++                        self.sources[vid]=source;retained=True
++                    self.condition.notify_all()
++            if source is not None and not retained and callable(getattr(source,"close",None)):
++                try:source.close()
++                except Exception:pass
++            self._report()
 +            raise
-+        return source
 +
 +    def promote(self, job, series_id, episode):
 +        if job.cancelled.is_set():
@@ -196,7 +209,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -181,6 +295,8 @@
+@@ -192,6 +319,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -205,7 +218,7 @@
              expected = self.foreground.get(job.id)
              cached_result = self.cache_results.pop(job.id, None)
              self.foreground_directories.pop(job.id, None)
-@@ -202,6 +318,9 @@
+@@ -213,6 +342,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -215,7 +228,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -355,6 +474,7 @@
+@@ -366,6 +498,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

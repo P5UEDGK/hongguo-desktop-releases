@@ -12,7 +12,7 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,101 @@
+@@ -291,7 +296,110 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
@@ -54,7 +54,9 @@
 +                    body={"paused":True,"muted":True,**body}
 +                revision = session.submit(body)
 +                session.handoff_previous = ownership
-+                if body.get("visible") is False:self._restore_handoff(session)
++                if body.get("visible") is False:
++                    session.handoff_silence_revision=revision
++                    self._restore_handoff(session)
 +                return revision
 +            except Exception:
 +                session.handoff_previous = [item for item in original_ownership if not any(item[0] is row[0] for row in rollback)]+rollback
@@ -63,11 +65,18 @@
 +
 +    def _restore_handoff(self, session, schedule=True, targets=None):
 +        remaining=[];kept=[]
++        silence_revision=getattr(session,"handoff_silence_revision",None)
++        live_child=any(session is live for live in self.sessions.values())
++        child=session.snapshot() if silence_revision is not None and live_child else None
++        silent=(child is None or child.get("revision",0)>=silence_revision and
++                child.get("paused") is True and child.get("muted") is True and child.get("visible") is False)
 +        for previous, paused, pause_revision in getattr(session, "handoff_previous", ()):
 +            if targets is not None and not any(previous is row[0] for row in targets):
 +                kept.append((previous,paused,pause_revision));continue
 +            if not any(previous is live for live in self.sessions.values()):continue
 +            if getattr(previous, "stop", threading.Event()).is_set():continue
++            if not silent:
++                remaining.append((previous,paused,pause_revision));continue
 +            try:
 +                current=getattr(previous, "pause_revision", previous.snapshot().get("revision", 0))
 +                if current == pause_revision:previous.submit({"paused":paused})
@@ -115,7 +124,7 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -301,6 +400,8 @@
+@@ -301,6 +409,8 @@
          with self.guard:
              if self.sessions.get(identifier) is session:
                  self.sessions.pop(identifier, None)
@@ -124,7 +133,7 @@
          return True
  
  
-@@ -432,6 +533,8 @@
+@@ -432,6 +542,8 @@
              revision = self.revision + 1
              self.commands.put_nowait((revision, command))
              self.revision = revision
@@ -133,7 +142,7 @@
              self.queued_state.update({key: value for key, value in command.items()
                                        if key in self.queued_state})
              return revision
-@@ -458,7 +561,8 @@
+@@ -458,7 +570,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -143,7 +152,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -646,6 +750,7 @@
+@@ -646,6 +759,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

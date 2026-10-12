@@ -20,6 +20,42 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_child_silence_revision_precedes_parent_restore(self):
+        host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0};child_state={'outputReady':True,'visible':False,'muted':True,'paused':True,'revision':0};queued=[]
+        def parent_submit(body):
+            if body.get('paused') is False:self.assertTrue(child_state['paused'] and child_state['muted'] and not child_state['visible'],'parent resumed before child silence')
+            state.update(body,revision=state['revision']+1);parent.pause_revision=state['revision'];return state['revision']
+        def child_submit(body):
+            revision=child_state['revision']+1
+            if body.get('visible') is False:queued.append((body,revision))
+            else:child_state.update(body,revision=revision)
+            return revision
+        parent=SimpleNamespace(stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=parent_submit)
+        child=SimpleNamespace(stop=threading.Event(),job=SimpleNamespace(prewarm_parent='parent'),snapshot=lambda:dict(child_state),submit=child_submit)
+        host.sessions={'parent':parent,'child':child};host.control('child',{'visible':True,'paused':False,'muted':False})
+        revision=host.control('child',{'visible':False,'paused':True,'muted':True});self.assertTrue(state['paused'])
+        command,ack=queued.pop();child_state.update(command,revision=ack-1);time.sleep(.08);self.assertTrue(state['paused'],'stale revision cannot acknowledge silence')
+        child_state['revision']=revision;eventually(lambda:state['paused'] is False);self.assertFalse(child.handoff_previous)
+
+    def test_aborted_standby_restores_claimed_tasks_in_current_generation(self):
+        from desktop_hls import EncodingCancelled
+        for mode in ('fallback-error','cancel-wait','cancel-fallback'):
+            with self.subTest(mode=mode):
+                vid='123456780002';job=SimpleNamespace(prewarm_parent='parent',prefetch_generation=1,cancelled=threading.Event())
+                def loader(_):
+                    if mode=='fallback-error':raise OSError('transient source failure')
+                    job.cancelled.set();return object()
+                p=EpisodePrefetcher(loader,lambda _:({},[{'index':2,'vid':vid}]),self.root/mode,encoder=lambda *_:None,ahead=0)
+                self.addCleanup(p.close);p.generation=1;p.pending=[(1,2,vid,'h264')];p.download_pending=[(1,2,vid)]
+                if mode=='cancel-wait':
+                    p.download_active=(1,2,vid)
+                    def wait(_):job.cancelled.set()
+                    manager=patch.object(p.condition,'wait',side_effect=wait)
+                else:manager=nullcontext()
+                with manager,self.assertRaises(OSError if mode=='fallback-error' else EncodingCancelled):p.load_standby_source(job,'series',2)
+                self.assertEqual(p.pending,[(1,2,vid,'h264')]);self.assertEqual(p.download_pending,[(1,2,vid)])
+                p.download_active=None
+
     def test_partial_hide_silences_child_and_restores_parent(self):
         host=object.__new__(NativeHost);host.guard=threading.RLock();parent_state={'paused':False,'revision':0};child_state={'outputReady':True,'paused':True,'muted':True,'visible':False,'revision':0}
         def parent_submit(body):
@@ -37,7 +73,9 @@ class StandbyTests(unittest.TestCase):
         def submit(body):
             state.update(body,revision=state['revision']+1);parent.pause_revision=state['revision'];return state['revision']
         parent=SimpleNamespace(stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=submit)
-        child=SimpleNamespace(stop=threading.Event(),job=SimpleNamespace(prewarm_parent='parent'),snapshot=lambda:{'outputReady':True},submit=lambda _:1)
+        child_state={'outputReady':True,'revision':0}
+        def child_submit(body):child_state.update(body,revision=child_state['revision']+1);return child_state['revision']
+        child=SimpleNamespace(stop=threading.Event(),job=SimpleNamespace(prewarm_parent='parent'),snapshot=lambda:dict(child_state),submit=child_submit)
         host.sessions={'parent':parent,'child':child}
         host.control('child',{'visible':True,'paused':False});self.assertTrue(state['paused'])
         host.control('child',{'visible':False,'paused':True})
