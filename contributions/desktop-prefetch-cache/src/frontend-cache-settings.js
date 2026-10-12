@@ -119,19 +119,22 @@ function DesktopCacheSettings() {
     ]}),
     b.jsxs("div", {style:row, children:[
       b.jsx("label", {htmlFor:"video-cache-count", style:label, children:"缓存集数"}),
-      b.jsxs("label", {style:{display:"flex", alignItems:"center", gap:"7px"}, children:[
+      b.jsxs("label", {style:{display:"flex", alignItems:"center", gap:"7px", whiteSpace:"nowrap"}, children:[
         b.jsx("input", {id:"video-cache-all", type:"checkbox", checked:all, onChange:event=>setAll(event.target.checked), disabled:busy||!loaded, style:{accentColor:"#ff6b98"}}), "剩余集数"
       ]}),
-      b.jsx("input", {id:"video-cache-count", "aria-label":"缓存集数", type:"number", min:1, max:100000, step:1, value:count, onChange:event=>setCount(event.target.value), disabled:busy||!loaded||all, style:{...field, width:"90px", opacity:all?0.45:1}}),
+      b.jsx("label", {htmlFor:"video-cache-count", style:{marginLeft:"12px", whiteSpace:"nowrap"}, children:"指定集数："}),
+      b.jsx("input", {id:"video-cache-count", "aria-label":"指定集数", type:"number", min:1, max:100000, step:1, value:count, onChange:event=>setCount(event.target.value), disabled:busy||!loaded||all, style:{...field, width:"90px", opacity:all?0.45:1}}),
       b.jsx("small", {style:{color:"#8a8f98"}, children:"推荐 3 集"})
     ]}),
     b.jsxs("div", {style:row, children:[
-      b.jsx("label", {htmlFor:"video-cache-limit", style:label, children:"缓存上限"}),
+      b.jsxs("div", {style:{...label, display:"flex", alignItems:"center", gap:"12px", minWidth:0}, children:[
+        b.jsx("label", {htmlFor:"video-cache-limit", style:{whiteSpace:"nowrap"}, children:"缓存上限"}),
+        b.jsx("span", {role:"status", title:message, style:{fontSize:"13px", height:"18px", lineHeight:"18px", flex:"1 1 0", minWidth:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}, children:message || "\u00a0"})
+      ]}),
       b.jsx("input", {id:"video-cache-limit", "aria-label":"缓存上限", type:"number", min:1, max:100000, step:1, value:limit, onChange:event=>setLimit(event.target.value), disabled:busy||!loaded, style:{...field, width:"90px"}}),
       b.jsx("span", {children:"GB"}),
       b.jsx("small", {style:{color:"#8a8f98"}, children:"满额停止缓存"}),
       b.jsx("button", {type:"button", style:button, onClick:clear, disabled:busy||!loaded, children:"手动清理缓存"})
-    ]}),
-    b.jsx("p", {role:"status", title:message, style:{fontSize:"13px", height:"18px", lineHeight:"18px", margin:"6px 0 0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}, children:message || "\u00a0"})
+    ]})
   ]});
 }
