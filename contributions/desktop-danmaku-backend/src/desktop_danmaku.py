@@ -24,16 +24,13 @@ def validate_danmaku(items):
         raise ValueError("Invalid danmaku list")
     result = []
     for row in items:
-        if not isinstance(row, dict) or set(row) not in ({"text", "offset_ms", "lane"}, {"text", "offset_ms", "lane", "motion_start_ms"}):
+        if not isinstance(row, dict) or set(row) != {"text", "offset_ms", "lane"}:
             raise ValueError("Invalid danmaku item")
         text, offset, lane = row["text"], row["offset_ms"], row["lane"]
         if (not isinstance(text, str) or len(text) > 200 or "\x00" in text
                 or type(offset) is not int or not 0 <= offset <= 86400000
                 or type(lane) is not int or not 0 <= lane < 6):
             raise ValueError("Invalid danmaku value")
-        if "motion_start_ms" in row and (type(row["motion_start_ms"]) is not int
-                or not -24000 <= row["motion_start_ms"] <= 86400000):
-            raise ValueError("Invalid danmaku motion origin")
         result.append(dict(row))
     return result
 
@@ -42,15 +39,14 @@ def active_danmaku(items, seconds, settings):
     if not math.isfinite(seconds):
         return []
     return [row for row in items if row['lane'] < settings['lanes']
-            and 0 <= seconds - row.get('motion_start_ms', row['offset_ms']) / 1000 < settings['duration']]
+            and 0 <= seconds - row['offset_ms'] / 1000 < settings['duration']]
 
 
-def ass_document(items, settings=None, *, assets=None, subtitle_speed=1, on_emitted=lambda row: None):
+def ass_document(items, settings=None, *, assets=None):
     """One timed track lets libass move glyphs on the video's presentation clock."""
     settings = validate_settings(DEFAULT_SETTINGS if settings is None else settings)
     items = validate_danmaku(items)
     assets = {} if assets is None else assets
-    if not isinstance(subtitle_speed,(int,float)) or isinstance(subtitle_speed,bool) or not math.isfinite(subtitle_speed) or not .1<=subtitle_speed<=10:raise ValueError("Invalid subtitle speed")
     duration, size = settings["duration"], settings["fontSize"]
     alpha = f'{round(255 * (1 - settings["opacity"] / 100)):02X}'
     lines = ["[Script Info]", "ScriptType: v4.00+", "PlayResX: 1000", "PlayResY: 562",
@@ -62,38 +58,25 @@ def ass_document(items, settings=None, *, assets=None, subtitle_speed=1, on_emit
              "&HFF000000,0,0,0,0,100,100,0,0,1,1.5,0,7,0,0,0,1", "[Events]",
              "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     def stamp(milliseconds):
-        centiseconds = round(milliseconds / subtitle_speed / 10)
+        centiseconds = round(milliseconds / 10)
         hours, rest = divmod(centiseconds, 360000)
         minutes, rest = divmod(rest, 6000)
         seconds, fraction = divmod(rest, 100)
         return f'{hours}:{minutes:02}:{seconds:02}.{fraction:02}'
-    event_count=0
     for row in items:
         if row["lane"] >= settings["lanes"]:
-            continue
-        origin = row.get('motion_start_ms', row['offset_ms'])
-        start, end = max(0, origin), origin + duration * 1000
-        if round(end / subtitle_speed / 10) <= round(start / subtitle_speed / 10):
             continue
         # ASS syntax cannot be supplied by comment text. Fullwidth equivalents
         # preserve readability, including literal backslashes and braces.
         text = row["text"].replace("\\", "＼").replace("{", "｛").replace("}", "｝")
         text = " ".join(text.split())
-        parts=[]
-        for part in emoji_parts(text):
-            if part not in assets and parts and parts[-1] not in assets:parts[-1]+=part
-            else:parts.append(part)
-        events=sum(len(assets[part]['drawing']) if part in assets else 1 for part in parts)
-        if not events:continue
-        if event_count+events>2048:break
-        event_count+=events
-        on_emitted(row)
-        width = max(60,sum(size+4 if part in assets else len(part)*size for part in parts))
+        parts=emoji_parts(text)
+        width = min(6000, max(60,sum(size+4 if part in assets else len(part)*size for part in parts)))
         y = 25 + row["lane"] * (size + 15)
-        progress = (start - origin) / (duration * 1000)
-        prefix=f'Dialogue: 0,{stamp(start)},{stamp(end)},Default,,0,0,0,,'
+        start = row['offset_ms']
+        prefix=f'Dialogue: 0,{stamp(start)},{stamp(start + duration * 1000)},Default,,0,0,0,,'
         def movement(x,top):
-            return r'{\an7\move(' + f'{1000-(1000+width)*progress+x:g},{top:g},{-width+x:g},{top:g},0,{round((end-start)/subtitle_speed)}' + r')\clip(0,0,1000,562)'
+            return r'{\an7\move(' + f'{1000+x:g},{top:g},{-width+x:g},{top:g},0,{duration*1000}' + r')\clip(0,0,1000,562)'
         x=0
         for part in parts:
             if part not in assets:

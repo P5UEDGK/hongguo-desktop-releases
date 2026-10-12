@@ -8,9 +8,9 @@
 
 ## 接入与行为
 
-唯一补丁基线：#204 `d83728b9378dde1d9897d8ca936198c452550daa`。按下列顺序应用本包与 #210 的四份桥补丁，并执行 `git apply --check`。
-
 将 src 的两个模块加入后端 import 路径，依次应用 patches/native-danmaku.patch、patches/native-events.patch。补丁基于公开 #204 的 desktop_native.py/frontend-native.js；集成到私有源码时按同名契约接线，先检查上下文。
+
+补丁已重定位到 #204 的 `41f1fb6`，保留播放器复用、持续丢帧检测和播放意图追踪。随后可应用 #210 的原生布局补丁；应用前仍应执行 `git apply --check`，不要用旧播放器文件覆盖新修复。
 
 DanmakuTrack 只在日程/设置变化时创建有绝对视频时间的 ASS 轨道。普通 time-pos 轮询不清空或重建；libass 在视频呈现时钟上移动字幕，因此暂停冻结、seek 与倍速跟随原播放器。替换时先 add/select 新轨道，再 remove 本包拥有的旧轨道，不移除其他轨道。MPV_EVENT_FILE_LOADED(8) 后重新加载。
 
@@ -22,7 +22,7 @@ DanmakuTrack 只在日程/设置变化时创建有绝对视频时间的 ASS 轨�
 
 ## 验证
 
-Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。本包 Python 校验只使用标准库。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
+Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。Python API 测试先安装本包 requirements-test.txt。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
 
 ```pwsh
 python -X utf8 -m unittest discover -s contributions/desktop-danmaku-backend/tests -v
@@ -41,53 +41,3 @@ python -X utf8 -m unittest discover -s contributions/desktop-danmaku-backend/tes
 ```pwsh
 pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/verify_mpv.py --native-package contributions/desktop-native-playback --dll <verified-libmpv-dll>"
 ```
-
-## 剩余审查回归（2026-10-11）
-
-移除ASS运动宽度的6000上限；200个中日韩字符、36px字号按7200宽度完整移出画面。输入长度与条数边界继续生效，13项Python回归通过。
-
-原生事件补丁已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee，保留其首帧、源一致性、输出预算及几何监听修复。与布局包两份补丁按依赖顺序精确应用，原生校验和前端桥接回归通过。
-
-无Dialogue事件的ASS作为空日程处理，不选择空字幕轨；已有owned轨会按原清理流程移除并恢复原字幕。14项Python与真实libmpv的原字幕保留/恢复通过，旧空日程回归失败。所用libmpv及[当前手册](https://mpv.io/manual/stable/#options-secondary-sub-ass-override)支持secondary-sub-ass-override的no/yes/scale/force/strip枚举，实际scale设置与恢复成功；不按旧版布尔限制改写当前枚举。
-
-
-## 本轮二次反馈修复
-
-运行中用户选择字幕后，重新选择本包弹幕并保留新字幕；源重载、取消失败的 sub-add 不再沿用旧字幕状态。两个字幕位的 ASS override 与 delay 按实际修改值保存、迁移和恢复，主弹幕使用 no 与零延迟，数字属性按 mpv 回读的规范值比较。旧代码回放失败，当前20项 Python 与实际 libmpv 验证通过。控制行可选 motion_start_ms（整数 -24000..86400000），与 #209 共用在途调速进度；ASS 将负起点裁至零并换算初始位置，offset_ms 仍保留原始评论时间。
-
-
-## 本轮三次反馈修复
-
-本机候选与安装仍待完成。
-
-
-本轮审查回归（2026-10-12，第四批）：4242224037/4041/4242298593/8599：替换前协调用户字幕；迁移并恢复主副字幕位置；clear失败保持options；独立旧轨清理不得阻塞活跃更新。
-
-
-本轮第六批审查（2026-10-12）：4242524673/4677：worker回池前还原字幕并清理拥有track；旧ID清理错误只作为待清理状态不污染活跃渲染。
-
-本轮审查修复：4242705989/5992：secondary用户字幕更换时恢复两用户槽并退出overlay，只有选项待恢复时也节流重试。
-
-2026-10-12 第十轮复核：4242831899/1902/1905/1908：干净状态也检测secondary更换与清空；两用户槽冲突前恢复并撤overlay；无关控制不能重置恢复退避。
-
-2026-10-12 第十二轮复核：4243019510/9513：冲突close原子释放active owner；合并相邻非asset片段以限制ASS事件膨胀。 ASS总事件预算为2048，相邻非资源表情按普通文本合并。
-
-2026-10-12 第十四轮复核：4243139684/9687：区分字幕移动/还原的中间状态与用户清空；过期弹幕先过滤再计ASS事件预算。 ASS总事件预算为2048，相邻非资源表情按普通文本合并。
-
-2026-10-12 第十六轮复核：4243209665/9671：首次添加失败后重读用户字幕；无活动owner时先清理pending removals。 ASS总事件预算为2048，相邻非资源表情按普通文本合并。
-
-2026-10-12 第十八轮复核：4243346915/6920：清除失败后重新获取用户字幕选项；按live sub-speed补偿ASS时间并保留用户字幕设置。 ASS总事件预算为2048，相邻非资源表情按普通文本合并。
-
-2026-10-12 第二十二轮复核：同步原生桥接依赖并保留字幕与弹幕事件接线。 4243648186/8189：运行期sub-pos同步至提升字幕；清空提升字幕时立即归还secondary槽位选项。
-
-2026-10-12 第二十三轮复核：同步native输入目标重定向后的社交桥接补丁基线。
-
-2026-10-12 第二十四轮复核：4243745231/5235/5238：核查当前禁用mpv默认输入条件；字幕切换同时编辑选项不丢失；实际验证sub-scale对no覆盖ASS的影响后决定是否补偿。
-
-2026-10-12 第二十五轮复核：4243799042/9044：promoted secondary选项编辑还原到主字幕；visibility仅统计实际ASS已发出事件。
-
-2026-10-12 第二十七轮复核：4243921456/1462：提升字幕位置编辑跨连续poll保留；仅为实际生成ASS事件的行记录visibility。
-
-2026-10-12 第二十九轮复核：4244058040/8044/8047：非promoted切字幕同步live secondary；ASS按厘秒量化拒绝零时长；README只保留唯一精确native基线。
-
-验证：424项融合后端无跳过、37套播放器前端、267项公开备用组合（1项可选片源跳过）、88项浏览器及真实libmpv字幕位置编辑通过。8项冻结前版反例失败、当前通过；Windows autocrlf实际克隆后的补丁应用通过。评论7组、暂停预加载136项公开组合通过；片源预加载owner未变，复用第28轮16项真实延迟片源检查。候选Tauri原生/HLS播放、裁剪、暂停和退出释放通过。评论及浏览器组件未变，复用第28轮7组评论和88项浏览器证据。本机安装验收随后执行，上游尚未合并发布。

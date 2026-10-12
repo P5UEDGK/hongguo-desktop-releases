@@ -6,10 +6,10 @@
  import uuid
 +from desktop_danmaku import validate_danmaku, validate_settings
 +from desktop_danmaku_track import DanmakuTrack
- 
+
  DLL_SHA256 = "34780746a0273a4fcae42dfe262a28984a426a238939474afd3a1561b450bbef"
- 
- 
+
+
  def validate_control(body):
      if not isinstance(body, dict) or not body or set(body) - {
 -            "paused", "rate", "volume", "muted", "seek", "rect", "visible"}:
@@ -18,7 +18,7 @@
      for name in ("paused", "muted", "visible"):
          if name in body and type(body[name]) is not bool:
 @@ -39,7 +41,12 @@
-                 or any(type(v) is not int or not (-32768 if i < 2 else 1) <= v <= 32768 for i, v in enumerate(rect))
+                 or any(type(v) is not int or not 0 <= v <= 32768 for v in rect)
                  or rect[2] < 1 or rect[3] < 1):
              raise ValueError("Invalid native rectangle")
 -    return dict(body)
@@ -28,18 +28,18 @@
 +    if 'danmakuSettings' in body:
 +        result['danmakuSettings'] = validate_settings(body['danmakuSettings'])
 +    return result
- 
- 
+
+
  class Event(C.Structure):
-@@ -453,6 +460,7 @@
+@@ -358,6 +365,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
 +        danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
-         output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
-@@ -537,6 +545,8 @@
+         # Starting paused allows the frontend to place the surface and apply
+@@ -439,6 +447,8 @@
                          break
                      if event.id == 21:  # MPV_EVENT_PLAYBACK_RESTART: first frame has restarted.
                          frame_ready = True
@@ -48,15 +48,15 @@
                      if event.id == 7 and event.data:
                          fields = C.cast(event.data, C.POINTER(C.c_int))
                          if fields[0] == 4 or fields[1] < 0:
-@@ -558,6 +568,7 @@
+@@ -459,6 +469,7 @@
                          user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
 +                    danmaku_track.update(command)
-                     if command.get("paused") is True:
-                         desired["paused"] = True
-                         player.command("set", "pause", "yes")
-@@ -592,6 +603,7 @@
+                     for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
+                         if key in command:
+                             value = command[key]
+@@ -485,6 +496,7 @@
                  # hardware capability string or successful loadfile command.
                  hwdec = player.get("hwdec-current")
                  position = player.number("time-pos", self.job.start_seconds)
@@ -64,7 +64,7 @@
                  paused = player.get("pause") == "yes"
                  seeking = player.get("seeking") == "yes"
                  eof = player.get("eof-reached") == "yes"
-@@ -648,7 +660,8 @@
+@@ -540,7 +552,8 @@
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
@@ -74,11 +74,3 @@
                  self.stop.wait(.04)
          except SourceReadError:
              with self.guard:
-@@ -663,6 +676,7 @@
-             self.input_hooks.clear()
-             reusable = self.engine_resources is not None and self.data.get("state") != "failed"
-             try:
-+                if player: danmaku_track.close(player)
-                 if reusable and player:
-                     user.ShowWindow(hwnd, 0)
-                     player.command("set", "pause", "yes")
