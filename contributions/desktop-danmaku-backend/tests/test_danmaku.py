@@ -19,6 +19,25 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_promoted_secondary_edits_return_to_the_primary_caption(self):
+        for clear in (False,True):
+            p=Player();p.properties.update({'sid':'7','sub-delay':'2','secondary-sub-delay':'-.5'})
+            track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+            p.command('set','secondary-sub-delay','3')
+            if clear:track.update({'danmaku':[]})
+            track.apply(p)
+            if not clear:self.assertEqual(p.get('secondary-sub-delay'),'3')
+            track.close(p);self.assertEqual(p.get('sub-delay'),'3');self.assertEqual(p.get('secondary-sub-delay'),'-.5')
+
+    def test_visibility_excludes_rows_omitted_by_the_ass_event_budget(self):
+        group={'color':(255,255,255),'alpha':1,'paths':[[(0,0),(1,0),(1,1)]]}
+        p=Player();track=DanmakuTrack(assets={'[x]':{'drawing':[group]*7,'resolution':1}})
+        rows=[{'text':'[x]','offset_ms':0,'lane':0} for _ in range(293)]+[{'text':'omitted late row','offset_ms':10000,'lane':0}]
+        track.update({'danmaku':rows,'danmakuSettings':dict(DEFAULT_SETTINGS,duration=4)});track.apply(p)
+        self.assertFalse(track.failed);self.assertEqual(track.document.count('Dialogue:'),2044);self.assertTrue(track.snapshot(1)['danmakuVisible'])
+        self.assertFalse(track.snapshot(10)['danmakuVisible']);track.close(p)
+
+
     def test_caption_switch_preserves_simultaneous_primary_option_edits(self):
         p=Player();p.properties.update({'sid':'7','sub-delay':'2'})
         track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)

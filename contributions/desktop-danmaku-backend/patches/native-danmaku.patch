@@ -18,7 +18,7 @@
      for name in ("paused", "muted", "visible"):
          if name in body and type(body[name]) is not bool:
 @@ -39,7 +41,12 @@
-                 or any(type(v) is not int or not 0 <= v <= 32768 for v in rect)
+                 or any(type(v) is not int or not (-32768 if i < 2 else 1) <= v <= 32768 for i, v in enumerate(rect))
                  or rect[2] < 1 or rect[3] < 1):
              raise ValueError("Invalid native rectangle")
 -    return dict(body)
@@ -48,7 +48,7 @@
                      if event.id == 7 and event.data:
                          fields = C.cast(event.data, C.POINTER(C.c_int))
                          if fields[0] == 4 or fields[1] < 0:
-@@ -557,6 +567,7 @@
+@@ -558,6 +568,7 @@
                          user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
@@ -56,7 +56,7 @@
                      if command.get("paused") is True:
                          desired["paused"] = True
                          player.command("set", "pause", "yes")
-@@ -591,6 +602,7 @@
+@@ -592,6 +603,7 @@
                  # hardware capability string or successful loadfile command.
                  hwdec = player.get("hwdec-current")
                  position = player.number("time-pos", self.job.start_seconds)
@@ -64,7 +64,7 @@
                  paused = player.get("pause") == "yes"
                  seeking = player.get("seeking") == "yes"
                  eof = player.get("eof-reached") == "yes"
-@@ -647,7 +659,8 @@
+@@ -648,7 +660,8 @@
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
@@ -74,7 +74,7 @@
                  self.stop.wait(.04)
          except SourceReadError:
              with self.guard:
-@@ -662,6 +675,7 @@
+@@ -663,6 +676,7 @@
              self.input_hooks.clear()
              reusable = self.engine_resources is not None and self.data.get("state") != "failed"
              try:

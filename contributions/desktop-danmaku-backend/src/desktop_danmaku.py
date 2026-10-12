@@ -45,7 +45,7 @@ def active_danmaku(items, seconds, settings):
             and 0 <= seconds - row.get('motion_start_ms', row['offset_ms']) / 1000 < settings['duration']]
 
 
-def ass_document(items, settings=None, *, assets=None, subtitle_speed=1):
+def ass_document(items, settings=None, *, assets=None, subtitle_speed=1, on_emitted=lambda row: None):
     """One timed track lets libass move glyphs on the video's presentation clock."""
     settings = validate_settings(DEFAULT_SETTINGS if settings is None else settings)
     items = validate_danmaku(items)
@@ -86,6 +86,7 @@ def ass_document(items, settings=None, *, assets=None, subtitle_speed=1):
         events=sum(len(assets[part]['drawing']) if part in assets else 1 for part in parts)
         if event_count+events>2048:break
         event_count+=events
+        on_emitted(row)
         width = max(60,sum(size+4 if part in assets else len(part)*size for part in parts))
         y = 25 + row["lane"] * (size + 15)
         progress = (start - origin) / (duration * 1000)

@@ -136,6 +136,8 @@ try:
         player.command('sub-add','memory://'+caption,'select','caption after switch');selected=player.get('sid')
         player.command('set','sub-delay','3');switched.apply(player)
         assert not switched.failed and player.get('secondary-sid')==selected and float(player.get('secondary-sub-delay'))==3
-        switched.close(player);assert player.get('sid')==selected and float(player.get('sub-delay'))==3
+        player.command('set','secondary-sub-delay','4');switched.apply(player)
+        assert not switched.failed and float(player.get('secondary-sub-delay'))==4
+        switched.close(player);assert player.get('sid')==selected and float(player.get('sub-delay'))==4
         print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, simultaneous caption/option switch, subtitle restoration and sub-speed timing; no pixel or Win32 claim'}))
 finally:player.close()

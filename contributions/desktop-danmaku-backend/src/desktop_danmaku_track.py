@@ -7,6 +7,7 @@ class DanmakuTrack:
         self.assets = assets or {}
         self.clock = clock
         self.items = []
+        self.emitted_items = []
         self.settings = dict(DEFAULT_SETTINGS)
         self.track_id = None
         self.document = ''
@@ -132,7 +133,24 @@ class DanmakuTrack:
             player.command('set', 'secondary-sid', primary)
         self.promoted = True
 
+    def reconcile_options(self, player):
+        if not self.track_id or self.saved_options is None: return
+        changed = set()
+        for name,neutral in (('sub-ass-override','no'),('sub-delay','0'),('sub-visibility','yes'),('sub-pos',self.saved_options['sub-pos'])):
+            live = str(player.get(name))
+            if live != self.modified_options.get(name,neutral):
+                self.saved_options[name] = live; changed.add(name); self.dirty = True
+        if self.promoted and self.saved and str(player.get('secondary-sid')) == str(self.saved[0]):
+            for primary in ('sub-ass-override','sub-delay','sub-visibility','sub-pos'):
+                secondary = 'secondary-' + primary
+                live = str(player.get(secondary))
+                if primary not in changed and live != self.modified_options.get(secondary,str(self.saved_options[secondary])):
+                    self.saved_options[primary] = live
+                    self.modified_options[secondary] = live
+                    self.dirty = True
+
     def restore_captions(self, player, *, retain=False):
+        self.reconcile_options(player)
         if self.saved is None:
             if self.saved_options is not None: self.restore_options(player)
             return
@@ -176,12 +194,7 @@ class DanmakuTrack:
             self.dirty = True
         if self.promoted and self.saved and str(player.get('secondary-sid')) != str(self.saved[0]):
             self.dirty = True
-        if self.track_id and self.saved_options is not None:
-            for name,neutral in (('sub-ass-override','no'),('sub-delay','0'),('sub-visibility','yes'),('sub-pos',self.saved_options['sub-pos'])):
-                live = str(player.get(name))
-                if live != self.modified_options.get(name,neutral):
-                    self.saved_options[name] = live
-                    self.dirty = True
+        self.reconcile_options(player)
         if not self.dirty or self.clock() < self.retry_at and (self.track_id or self.items or self.pending_removals or self.saved_options or self.reload_options):
             return
         self.dirty = False
@@ -195,10 +208,12 @@ class DanmakuTrack:
                     self.saved = None
                     self.promoted = False
             if self.reload_options: self.restore_options(player)
-            document = ass_document(self.items, self.settings, assets=self.assets, subtitle_speed=speed) if self.items else ''
+            emitted = []
+            document = ass_document(self.items, self.settings, assets=self.assets, subtitle_speed=speed, on_emitted=emitted.append) if self.items else ''
             if not any(line.startswith('Dialogue:') for line in document.splitlines()):
                 document = ''
             if document == self.document:
+                self.emitted_items = emitted
                 if document:
                     self.show_captions(player)
                     self.remove_pending(player)
@@ -220,6 +235,7 @@ class DanmakuTrack:
                 self.track_id = selected
                 self.loads += 1
                 self.document = document
+                self.emitted_items = emitted
                 if previous and previous != self.track_id:
                     self.pending_removals.add(previous)
                 self.show_captions(player)
@@ -242,6 +258,6 @@ class DanmakuTrack:
             self.retry_at = self.clock() + 1
 
     def snapshot(self, seconds):
-        return {'danmakuVisible': bool(self.track_id) and not self.failed and bool(active_danmaku(self.items, seconds, self.settings)),
+        return {'danmakuVisible': bool(self.track_id) and not self.failed and bool(active_danmaku(self.emitted_items, seconds, self.settings)),
                 'danmakuFailed': self.failed, 'danmakuRenderer': 'ass-timeline',
                 'danmakuLoads': self.loads, 'danmakuSettings': dict(self.settings)}
