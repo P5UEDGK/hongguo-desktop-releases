@@ -1,0 +1,40 @@
+# 收藏与历史按系列归组
+
+同一剧的多个季度在收藏、观看历史里合并为文件夹。单季与合集使用同一个系列页：单季显示一季，合集显示该页面实际拥有的各季；进入页面不触发搜索。需要补齐时，用户点击“查找并收藏各季”。
+
+这是发行仓库的独立源码贡献。仓库不含完整应用源码，合并本目录不会改变已发布应用；维护者需按 [接入说明](INTEGRATION.md) 移入私有源码、完成宿主验收后发布。本包不包含安装包、完整应用资源、账号或用户数据库。
+
+## 行为
+
+- 普通收藏立即调用原生保存接口，随后异步读取关系，不搜索其他季。取消再收藏复用已经成功保存的关系。
+- 按详情 `related_album_id` 归组，按 `season_index` 排序，全部 ID 保持十进制字符串。标题相似或搜索返回同名，不能单独作为归组依据。
+- 主动补季复用宿主“其他季”搜索，再核验每个候选的关系。相同合集自动收藏；已有收藏、本轮取消的季跳过；关系未知候选由用户选择，关系冲突候选排除。搜索可能漏季，仍可手动搜索再收藏。
+- 各搜索入口共用一个队列，相同任务复用 Promise。取消后等待在途原生请求结束，再让下一个任务执行；不做定时更新或自动发现新季。
+- 收藏与历史分别只显示自身成员，共用关系缓存。删除收藏不删除历史或关系；历史页不会因补收藏凭空增加观看记录。
+- 根列表和季列表每页12项，待确认候选每页8项。返回保留原页、滚动位置和入口焦点；关系晚到、单季变为合集时系列页不丢失。
+- 封面区分“合集”“单季”，合集标季数。右下角进度为最近观看集序号÷该季总集数，向下取整并限制0–100%；合集注明最近季，未观看和总集数未知分别显示对应文字。标签统一为11px、24px高，背景不透明度40%。
+- 搜索的等待、核验、完成、失败和取消文字只替换按钮右侧的同一个位置，不增加下方状态行或移动季列表。长文字省略，`title` 和 `aria-live` 保留完整内容。
+- 根卡片没有重复“补齐合集”或“进入合集查看各季”入口；播放详情不再放补季面板；界面不提供手动归组。旧指定关系保留读取兼容。
+- 顶部全局搜索横条不渲染，原启动推荐搜索保留。
+
+## 代码与验证
+
+`src/desktop_library.py` 负责持久关系及本机路由；`src/library-core.mjs` 负责队列、归组、进度与收藏编排；`src/frontend-library.mjs` 提供显式宿主工厂及组件。React、封面组件、搜索与原生存储由宿主提供，不另建一套应用。
+
+Python 3.10+、Node 18+。在仓库根以 pwsh 执行：
+
+```pwsh
+python -m pip install -r contributions/desktop-library-collections/requirements-test.txt
+python contributions/desktop-library-collections/tests/test_desktop_library.py
+node contributions/desktop-library-collections/tests/test_library_core.cjs
+node contributions/desktop-library-collections/tests/test_library_adapter.mjs
+node --check contributions/desktop-library-collections/src/frontend-library.mjs
+```
+
+后端8项、前端核心14项及工厂接线4项回归均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，13张原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
+
+## 接入限制
+
+成功关系持久保存；无关系结果冷却1天，失败冷却5分钟；每批详情最多20个 ID。provider 必须沿用宿主有超时的请求实现。队列不会抢占无法取消的原生请求，宿主若永不返回，后续搜索仍会等待。
+
+本包保留旧 `manual_groups` 数据与接口以兼容历史数据，但不渲染手动归组入口。若宿主已经接入封面缓存等扩展，应合并关系接口和 schema 迁移，不能用本包基线覆盖其新增列；封面组件继续由已有封面 owner 提供。

@@ -1,0 +1,164 @@
+import { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibraryPage, desktopLibraryProgress, desktopCreateLibrary } from './library-core.mjs';
+
+// Initialize once before mounting the host. All application APIs stay host-owned.
+export function createLibraryUI({React, jsxRuntime, api, parseSeason, findOtherSeasons, Cover, coverFallback}) {
+  const O=React, b=jsxRuntime, ge=api, Ts=parseSeason, KR=findOtherSeasons, O0=Cover, P0=coverFallback;
+function desktopLibraryNotify() {window.dispatchEvent(new Event('desktoplibrarychange'));}
+const desktopSearchQueue = new DesktopSearchQueue(desktopLibraryNotify);
+const desktopLibrary = desktopCreateLibrary(ge,desktopLibraryNotify);
+function desktopUseLibraryVersion() {
+  const [,update]=O.useState(0);
+  O.useEffect(()=>{const changed=()=>update(value=>value+1);window.addEventListener('desktoplibrarychange',changed);return()=>window.removeEventListener('desktoplibrarychange',changed);},[]);
+}
+
+function desktopSeasonSearch(api, item, check, find, label) {
+  return desktopSearchQueue.run(label+':'+item.seriesId,label,async context=>{
+    const proxy={...api,searchNovelfm:(...args)=>context.request(()=>desktopRawSearch.searchNovelfm(...args))};
+    const result=await find(proxy,item,()=>context.live() && check());
+    if (!context.live() || !check()) return {...result,automatic:false};
+    await desktopLibrary.ensure([item,...result.items]);
+    const album=desktopLibrary.relations.get(item.seriesId)?.albumId;
+    const items=result.items.filter(candidate=>!album||!desktopLibrary.relations.get(candidate.seriesId)?.albumId||desktopLibrary.relations.get(candidate.seriesId).albumId===album);
+    return {...result,items,automatic:result.automatic&&!!album&&items.length===1&&desktopLibrary.relations.get(items[0].seriesId)?.albumId===album};
+  });
+}
+const desktopRawSearch = {};
+for (const name of ['search','searchExplorer','searchNovelfm','validationSearch']) {
+  if (!ge[name]) continue;
+  desktopRawSearch[name]=ge[name].bind(ge);
+  ge[name]=(...args)=>desktopSearchQueue.run(name+':'+JSON.stringify(args),'搜索：'+String(args[0]||''),
+    context=>context.request(()=>desktopRawSearch[name](...args)));
+}
+ge.setFavorite=(item,value)=>desktopLibrary.favorite(item,value);
+for (const name of ['favorites','history']) {
+  ge[name]=async()=>{const items=await desktopLibrary.original[name]();void desktopLibrary.observe(items,name);return items;};
+}
+
+function DesktopCoverLabels({kind,progress}) {
+  return b.jsxs(O.Fragment,{children:[
+    b.jsx('span',{className:'desktop-kind-chip'+(kind==='合集'?' is-collection':''),children:kind}),
+    progress&&b.jsx('span',{className:'desktop-watch-chip',title:progress.title,children:progress.label})
+  ]});
+}
+
+function DesktopLibraryPagination({total,page,size,onChange,label}) {
+  const value=desktopLibraryPage(Array(total),page,size);
+  if(value.pages<=1)return null;
+  return b.jsxs('nav',{className:'desktop-library-pagination','aria-label':label,children:[
+    b.jsx('button',{type:'button',disabled:value.page===1,onClick:()=>onChange(value.page-1),'aria-label':label+'上一页',children:'上一页'}),
+    b.jsxs('label',{children:['第 ',b.jsx('select',{'aria-label':label+'页码',value:value.page,onChange:event=>onChange(Number(event.target.value)),children:Array.from({length:value.pages},(_,i)=>b.jsx('option',{value:i+1,children:i+1},i+1))}),` / ${value.pages} 页`]}),
+    b.jsx('button',{type:'button',disabled:value.page===value.pages,onClick:()=>onChange(value.page+1),'aria-label':label+'下一页',children:'下一页'})
+  ]});
+}
+
+function DesktopSeasonActions({series,disabled=false}) {
+  desktopUseLibraryVersion();
+  const [busy,setBusy]=O.useState(false),[message,setMessage]=O.useState(''),[uncertain,setUncertain]=O.useState([]);
+  const [candidatePage,setCandidatePage]=O.useState(1);
+  const candidates=desktopLibraryPage(uncertain,candidatePage,8);
+  O.useEffect(()=>{if(candidatePage!==candidates.page)setCandidatePage(candidates.page);},[candidates.page,candidatePage]);
+  const mounted=O.useRef(true);
+  O.useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
+  const parsed=Ts(series.title);
+  const search=desktopSearchQueue.state();
+  const status=(busy&&search.cancelled?'正在结束搜索，等待当前请求返回…':message||(parsed?'搜索可能漏季，可自行搜索后收藏':'当前标题暂不支持自动匹配，可自行搜索其他季后收藏'))+(busy&&search.waiting?` · 等待 ${search.waiting} 项`:'');
+  async function collect() {
+    if (busy) return;
+    setBusy(true);setMessage('等待搜索…');setUncertain([]);setCandidatePage(1);
+    try {
+      const result=await desktopSearchQueue.run('collect:'+series.seriesId,'查找并收藏各季：'+series.title,async context=>{
+        const proxy={...ge,searchNovelfm:(...args)=>context.request(()=>desktopRawSearch.searchNovelfm(...args))};
+        return desktopLibrary.collect(series,()=>KR(proxy,series,context.live),context.live,text=>{if(mounted.current)setMessage(text);});
+      });
+      if(mounted.current){setUncertain(result.uncertain);setMessage(`已加入 ${result.added} 季，跳过 ${result.skipped} 季；找到并确认 ${result.verified} 季${result.incomplete?'，搜索可能未完成':''}。可手动搜索补齐。`);}
+    } catch(error) {if(mounted.current)setMessage(error.message);}
+    finally {window.dispatchEvent(new Event('desktoplibrarymembership'));if(mounted.current)setBusy(false);}
+  }
+  async function addCandidate(item) {
+    setBusy(true);
+    try {await ge.setFavorite(item,true);window.dispatchEvent(new Event('desktoplibrarymembership'));setUncertain(rows=>rows.filter(row=>row.seriesId!==item.seriesId));setMessage('已收藏所选季；关系未确认时保持独立');}
+    catch(error){setMessage(error.message);}
+    finally{setBusy(false);}
+  }
+  return b.jsxs('div',{className:'desktop-season-actions','aria-label':'分季收藏',children:[
+    b.jsxs('div',{className:'desktop-season-toolbar',children:[
+      parsed&&b.jsx('button',{type:'button',className:'secondary',disabled:disabled||busy,onClick:()=>void collect(),children:'查找并收藏各季'}),
+      b.jsx('small',{className:'desktop-season-message',role:'status','aria-live':'polite','aria-atomic':true,title:status,children:status}),
+      busy&&search.label&&b.jsx('button',{type:'button',className:'desktop-season-cancel',disabled:search.cancelled,onClick:()=>desktopSearchQueue.cancel(),children:'取消搜索'})
+    ]}),
+    candidates.items.map(item=>b.jsxs('div',{className:'desktop-season-candidate',children:[b.jsx('span',{children:item.title+' · 系列关系待确认'}),b.jsx('button',{type:'button',disabled:busy||disabled,onClick:()=>void addCandidate(item),children:'收藏此季'})]},item.seriesId)),
+    b.jsx(DesktopLibraryPagination,{total:uncertain.length,page:candidates.page,size:8,onChange:setCandidatePage,label:'待确认候选'})
+  ]});
+}
+
+function DesktopLibraryGrid({items,history=[],view,renderCard}) {
+  desktopUseLibraryVersion();
+  const [selected,setSelected]=O.useState(null),[rootPage,setRootPage]=O.useState(1),[seasonPage,setSeasonPage]=O.useState(1);
+  const heading=O.useRef(null),restoreKey=O.useRef(null),rootScroll=O.useRef(0);
+  const signature=items.map(item=>item.seriesId).join(',');
+  O.useEffect(()=>{void desktopLibrary.ensure(items);},[signature]);
+  const groups=desktopLibraryGroups(items,desktopLibrary.relations,desktopLibrary.manual);
+  // The album key may arrive asynchronously. Keep navigation and task state
+  // attached to the selected member while its visible group grows or changes key.
+  const collection=selected?groups.find(group=>group.items.some(item=>item.seriesId===selected)):null;
+  const roots=desktopLibraryPage(groups,rootPage,12),seasons=desktopLibraryPage(collection?.items||[],seasonPage,12);
+  O.useEffect(()=>{if(rootPage!==roots.page)setRootPage(roots.page);},[rootPage,roots.page]);
+  O.useEffect(()=>{if(seasonPage!==seasons.page)setSeasonPage(seasons.page);},[seasonPage,seasons.page]);
+  O.useEffect(()=>{if(selected&&!collection)setSelected(null);},[selected,!!collection]);
+  O.useEffect(()=>{
+    if(selected&&collection){heading.current?.focus({preventScroll:true});heading.current?.closest('.desktop-collection-view')?.scrollIntoView({block:'start'});}
+    else if(restoreKey.current){
+      const restoredGroup=groups.find(group=>group.items.some(item=>item.seriesId===restoreKey.current));
+      [...document.querySelectorAll('[data-collection-key]')].find(node=>node.getAttribute('data-collection-key')===restoredGroup?.key)?.focus({preventScroll:true});
+      window.scrollTo(0,rootScroll.current);restoreKey.current=null;
+    }
+  },[selected,seasons.page]);
+  function enter(group){rootScroll.current=window.scrollY;restoreKey.current=group.items[0].seriesId;setSeasonPage(1);setSelected(group.items[0].seriesId);}
+  const label=view==='history'?'观看历史':'我的收藏';
+  if(collection){
+    const first=collection.items.find(item=>item.seriesId===selected),title=Ts(first.title)?.base||first.title;
+    const kind=collection.items.length>1?'合集':'系列';
+    return b.jsxs('section',{className:'desktop-collection-view','aria-label':title+kind,children:[
+      b.jsxs('nav',{className:'desktop-library-breadcrumb','aria-label':'合集导航',children:[
+        b.jsx('button',{type:'button',onClick:()=>setSelected(null),children:'← 返回'+label}),b.jsx('span',{children:kind})
+      ]}),
+      b.jsxs('header',{className:'desktop-collection-heading',children:[
+        b.jsx('h1',{ref:heading,tabIndex:-1,children:title}),b.jsx('span',{children:`共 ${collection.items.length} 季`})
+      ]}),
+      b.jsx(DesktopSeasonActions,{series:first},selected),
+      b.jsx('div',{className:'series-grid desktop-library-grid desktop-season-grid',children:seasons.items.map(item=>renderCard(item))}),
+      b.jsx(DesktopLibraryPagination,{total:collection.items.length,page:seasons.page,size:12,onChange:setSeasonPage,label:'合集季列表'})
+    ]});
+  }
+  return b.jsxs('div',{className:'desktop-library-root',children:[
+    b.jsx('div',{className:'desktop-library-toolbar',children:b.jsx('span',{children:`${groups.length} 个条目，其中 ${groups.filter(group=>group.items.length>1).length} 个合集`})}),
+    b.jsx('div',{className:'series-grid desktop-library-grid',children:roots.items.map(group=>{
+      if(group.items.length===1)return renderCard(group.items[0],{open:()=>enter(group),entryKey:group.key});
+      const first=group.items[0],title=Ts(first.title)?.base||first.title;
+      const progress=desktopLibraryProgress(group.items,history,desktopLibrary.relations);
+      return b.jsxs('article',{className:'series-card desktop-series-folder','aria-label':title+'合集',children:[
+        b.jsxs('button',{type:'button',className:'cover-button desktop-folder-button desktop-series-entry','data-collection-key':group.key,'aria-label':`进入系列：${title}，${group.items.length} 季`,onClick:()=>enter(group),children:[
+          b.jsx(O0,{item:first,fallback:P0,lazy:true}),b.jsx('span',{className:'cover-shade'}),b.jsx(DesktopCoverLabels,{kind:'合集',progress}),
+          b.jsx('span',{className:'desktop-season-count',children:group.items.length+' 季'})
+        ]}),
+        b.jsx('div',{className:'card-copy',children:b.jsx('button',{className:'card-title',title,onClick:()=>enter(group),children:title})})
+      ]},group.key);
+    })}),
+    b.jsx(DesktopLibraryPagination,{total:groups.length,page:roots.page,size:12,onChange:setRootPage,label:'片单'})
+  ]});
+}
+
+const desktopLibraryStyle = document.createElement('style');
+desktopLibraryStyle.textContent = `
+.desktop-library-grid{--library-accent:var(--coral,#ff6697);--library-muted:#626975;--library-border:var(--border,#e6e7ec);--library-surface:#fff;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:24px 18px}
+.desktop-library-grid .series-card{min-width:0;align-self:start}.desktop-library-grid .cover-button{aspect-ratio:3/4;border-radius:12px;box-shadow:none}.desktop-library-grid .card-copy{padding-top:10px}.desktop-library-grid .card-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;text-align:left;font-size:15px;line-height:1.45;min-height:2.9em;font-weight:600;overflow-wrap:anywhere;text-wrap:balance}.desktop-library-grid .card-copy p{font-size:12px;line-height:1.5;color:var(--library-muted);margin-top:5px}.desktop-library-grid .episode-chip{top:auto;bottom:10px;left:10px;right:auto;font-size:11px;max-width:40%}.desktop-kind-chip,.desktop-watch-chip,.desktop-season-count{position:absolute;z-index:2;max-width:calc(100% - 20px);padding:4px 7px;border-radius:6px;font-size:11px;line-height:1.5;font-weight:600;color:#fff;background:#20242acc;pointer-events:none}.desktop-kind-chip{top:10px;left:10px}.desktop-kind-chip.is-collection{background:#ad2352}.desktop-watch-chip{right:10px;bottom:10px;box-sizing:border-box;height:24px;padding:4px 7px;font-size:11px;line-height:16px;text-align:right;white-space:nowrap;max-width:calc(100% - 20px);overflow:hidden;text-overflow:ellipsis;background:#20242a66;text-shadow:0 1px 2px #0008}.desktop-season-count{top:10px;right:10px;background:#fff;color:#95324f}.desktop-series-folder{border:0;background:transparent;padding:0}.desktop-folder-button{outline:2px solid #ffd4e3;outline-offset:3px}.desktop-series-folder .card-title{padding-right:0}
+.desktop-season-actions button,.desktop-library-pagination button,.desktop-library-pagination select,.desktop-library-breadcrumb button{font:inherit;border:1px solid var(--border,#e6e7ec);border-radius:8px;background:#fff;color:#414754;padding:7px 12px;cursor:pointer}.desktop-season-actions button:hover,.desktop-library-pagination button:not(:disabled):hover,.desktop-library-breadcrumb button:hover{background:#fff1f6;border-color:#efb6ca}.desktop-library-pagination button:disabled,.desktop-season-actions button:disabled{opacity:.45;cursor:default}.desktop-library-root button:focus-visible,.desktop-collection-view button:focus-visible,.desktop-library-pagination select:focus-visible{outline:2px solid #b82d5c;outline-offset:3px}.desktop-collection-heading h1:focus{outline:none}
+.desktop-season-actions{margin:14px 0 22px;font-size:13px}.desktop-season-toolbar{display:flex;align-items:center;gap:12px;min-width:0}.desktop-season-toolbar>button{flex:none}.desktop-season-toolbar>.desktop-season-message{flex:1;min-width:0;margin:0;color:#626975;font-size:12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.desktop-season-candidate{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}.desktop-season-candidate{padding:10px 0;border-bottom:1px solid #e6e7ec}.desktop-season-candidate>span{flex:1;min-width:160px}.desktop-library-pagination{display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;margin:26px 0 12px;font-size:13px;color:#626975}.desktop-library-pagination select{padding:6px;min-width:50px}.desktop-library-toolbar{display:flex;justify-content:space-between;align-items:start;gap:16px;margin:-8px 0 22px;color:#626975;font-size:13px}.desktop-collection-view{scroll-margin-top:96px}.desktop-library-breadcrumb{display:flex;align-items:center;gap:14px;margin-bottom:18px;font-size:13px;color:#626975}.desktop-library-breadcrumb button{border:0;padding:5px 0;color:#a52c54;background:transparent}.desktop-collection-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:12px}.desktop-collection-heading h1{margin:0;font-size:26px;line-height:1.4;overflow-wrap:anywhere;text-wrap:balance}.desktop-collection-heading>span{font-size:13px;color:#626975}.library-page:has(.desktop-collection-view)>.headline-row{display:none}
+@media(min-width:1500px){.desktop-library-grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}}@media(max-width:700px){.desktop-library-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 14px}.desktop-library-grid .card-title{font-size:14px}.desktop-kind-chip,.desktop-season-count{font-size:10px;padding:3px 5px}.desktop-watch-chip{right:6px;bottom:6px}.desktop-library-grid .episode-chip{left:6px;bottom:6px;font-size:10px}.desktop-library-toolbar{align-items:center}.desktop-collection-heading h1{font-size:23px}}
+`;
+document.head.append(desktopLibraryStyle);
+
+  return {LibraryGrid:DesktopLibraryGrid, CoverLabels:DesktopCoverLabels,
+    SeasonActions:DesktopSeasonActions, seasonSearch:desktopSeasonSearch,
+    progress:desktopLibraryProgress, library:desktopLibrary, searchQueue:desktopSearchQueue};
+}

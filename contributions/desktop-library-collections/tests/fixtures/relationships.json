@@ -1,0 +1,67 @@
+{
+  "data": {
+    "7671966197985856536": {
+      "video_data": {
+        "series_id": 7671966197985856536,
+        "series_id_str": "7671966197985856536",
+        "series_title": "持械入宋：第一季",
+        "related_album_id": 7676739369444576281,
+        "season_index": 1
+      }
+    },
+    "7673807696302197784": {
+      "video_data": {
+        "series_id": 7673807696302197784,
+        "series_id_str": "7673807696302197784",
+        "series_title": "聚宝仙盆之杂灵根才是真BOSS第九季",
+        "related_album_id": 7619198149772446782,
+        "season_index": 9
+      }
+    },
+    "7677914379060251673": {
+      "video_data": {
+        "series_id": 7677914379060251673,
+        "series_id_str": "7677914379060251673",
+        "series_title": "聚宝仙盆之杂灵根才是真BOSS第十季",
+        "related_album_id": 7619198149772446782,
+        "season_index": 10
+      }
+    },
+    "7681903520873729048": {
+      "video_data": {
+        "series_id": 7681903520873729048,
+        "series_id_str": "7681903520873729048",
+        "series_title": "聚宝仙盆之杂灵根才是真BOSS第十一季",
+        "related_album_id": 7619198149772446782,
+        "season_index": 11
+      }
+    },
+    "7691228619774905368": {
+      "video_data": {
+        "series_id": 7691228619774905368,
+        "series_id_str": "7691228619774905368",
+        "series_title": "聚宝仙盆之杂灵根才是真BOSS第十三季",
+        "related_album_id": 7619198149772446782,
+        "season_index": 13
+      }
+    },
+    "7691615145977449496": {
+      "video_data": {
+        "series_id": 7691615145977449496,
+        "series_id_str": "7691615145977449496",
+        "series_title": "持械入宋：第八季",
+        "related_album_id": 7676739369444576281,
+        "season_index": 8
+      }
+    },
+    "7693090206953507864": {
+      "video_data": {
+        "series_id": 7693090206953507864,
+        "series_id_str": "7693090206953507864",
+        "series_title": "末世选择，从解析神明开始成神第二季",
+        "related_album_id": 7690218438014274622,
+        "season_index": 2
+      }
+    }
+  }
+}

@@ -1,0 +1,213 @@
+// Library membership is saved through the original Tauri commands only.
+// This module owns relationship views and the shared search scheduler.
+function desktopLibraryCancelled() { return new Error('搜索已取消'); }
+
+class DesktopSearchQueue {
+  constructor(notify = () => {}) {
+    this.notify = notify; this.queue = []; this.active = null; this.tasks = new Map();
+  }
+  state() {
+    return {label:this.active?.label || '', cancelled:!!this.active?.cancelled, waiting:this.queue.length};
+  }
+  run(key, label, work) {
+    if (this.tasks.has(key)) return this.tasks.get(key).promise;
+    if (this.queue.length >= 64) return Promise.reject(Error('等待搜索过多，请稍后重试'));
+    let resolve, reject;
+    const promise = new Promise((a, b) => {resolve=a; reject=b;});
+    const task = {key, label, work, promise, resolve, reject, cancelled:false, pending:new Set()};
+    this.tasks.set(key, task); this.queue.push(task); this.pump(); this.notify();
+    return promise;
+  }
+  async pump() {
+    if (this.active || !this.queue.length) return;
+    const task = this.active = this.queue.shift(); this.notify();
+    const context = {
+      live:() => !task.cancelled,
+      request:fn => {
+        if (task.cancelled) return Promise.reject(desktopLibraryCancelled());
+        const request = Promise.resolve().then(fn);
+        task.pending.add(request);
+        request.then(() => task.pending.delete(request), () => task.pending.delete(request));
+        return request;
+      }
+    };
+    let value, error;
+    try {value = await task.work(context); if (task.cancelled) throw desktopLibraryCancelled();}
+    catch (caught) {error = caught;}
+    // Promise.race in the old season finder cannot abort native IPC. Keep the
+    // slot until that original request settles, even after timeout/cancellation.
+    await Promise.allSettled([...task.pending]);
+    if (task.cancelled && !error) error = desktopLibraryCancelled();
+    this.tasks.delete(task.key); this.active = null;
+    error ? task.reject(error) : task.resolve(value);
+    this.notify(); this.pump();
+  }
+  cancel() {
+    if (this.active) this.active.cancelled = true;
+    for (const task of this.queue.splice(0)) {
+      this.tasks.delete(task.key); task.reject(desktopLibraryCancelled());
+    }
+    this.notify();
+  }
+}
+
+function desktopLibraryGroups(items, relations, manual) {
+  const groups = new Map();
+  for (const item of items) {
+    const relation = relations.get(item.seriesId);
+    const key = manual.get(item.seriesId) || (relation?.albumId ? 'album:' + relation.albumId : 'series:' + item.seriesId);
+    if (!groups.has(key)) groups.set(key, []);
+    const group = groups.get(key);
+    if (!group.some(row => row.seriesId === item.seriesId)) group.push(item);
+  }
+  return [...groups].map(([key, rows]) => ({key, items:rows.sort((a,b) =>
+    (relations.get(a.seriesId)?.season ?? 1000) - (relations.get(b.seriesId)?.season ?? 1000)
+    || a.seriesId.localeCompare(b.seriesId))}));
+}
+
+function desktopLibraryPage(items, page, size) {
+  const pages=Math.max(1,Math.ceil(items.length/size));
+  const current=Math.min(pages,Math.max(1,Number.isFinite(page)?Math.floor(page):1));
+  return {items:items.slice((current-1)*size,current*size),page:current,pages,total:items.length};
+}
+
+function desktopLibraryProgress(items, history, relations = new Map()) {
+  const members=new Map(items.map(item=>[item.seriesId,item]));
+  let latest=null,latestTime=-Infinity;
+  // Native history is newest first; stable input order breaks equal/missing timestamps.
+  for (const row of history) {
+    if (!members.has(row.seriesId) || !Number.isFinite(row.lastEpisode) || row.lastEpisode<1) continue;
+    const time=Number(row.updatedAt)||0;
+    if (!latest || time>latestTime) {latest=row;latestTime=time;}
+  }
+  if (!latest) return {label:'未观看',title:'暂无观看历史',percent:null,seriesId:null};
+  const item=members.get(latest.seriesId),episode=Math.floor(latest.lastEpisode);
+  const total=Number(item.episodeCount)>0?Number(item.episodeCount):Number(latest.episodeCount);
+  const percent=Number.isFinite(total)&&total>0?Math.min(100,Math.max(0,Math.floor(episode/total*100))):null;
+  const season=relations.get(latest.seriesId)?.season;
+  const prefix=items.length>1?(season?`第 ${season} 季 · `:'最近一季 · '):'';
+  return {label:prefix+(percent===null?`看到第 ${episode} 集`:`已看 ${percent}%`),
+    title:`最近观看《${item.title}》第 ${episode} 集${percent===null?'，总集数未知':` / 共 ${total} 集`}`,
+    percent,seriesId:latest.seriesId};
+}
+
+function desktopCreateLibrary(api, notify) {
+  const relations = new Map(), manual = new Map(), known = new Map(), pending = new Map();
+  const removed = new Map(), writes = new Map(); let revision = 0;
+  const members={favorites:new Set(),history:new Set()};
+  let access = null, loading = null, draining = false, error = '';
+  const original = {favorite:api.setFavorite.bind(api), favorites:api.favorites.bind(api), history:api.history.bind(api)};
+  async function request(path = '', body) {
+    const status = await api.validationStatus(), url = new URL(status.baseUrl);
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
+      throw Error('归组服务暂不可用');
+    if (body !== undefined && access?.origin !== url.origin) await load(true);
+    const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 45000);
+    try {
+      const response = await fetch(url.origin + '/desktop/library' + path, {
+        method:body === undefined ? 'GET' : 'POST', body:body === undefined ? undefined : JSON.stringify(body),
+        headers:{'x-desktop-library-client':'1', 'x-desktop-library-token':access?.token || '', 'content-type':'application/json'},
+        credentials:'omit', redirect:'error', cache:'no-store', signal:abort.signal
+      });
+      if (!response.ok) {if (response.status === 401) access = null; throw Error('归组信息加载失败，收藏不受影响');}
+      const result = await response.json();
+      if (result.requestToken) access = {origin:url.origin, token:result.requestToken};
+      return result;
+    } finally {clearTimeout(timer);}
+  }
+  function accept(value) {
+    for (const row of value.relations || []) if (/^\d{8,24}$/.test(row.seriesId) &&
+      (row.albumId === null || typeof row.albumId === 'string' && /^\d{8,24}$/.test(row.albumId))) relations.set(row.seriesId, row);
+    if (value.manual) {manual.clear(); for (const [sid,key] of Object.entries(value.manual)) manual.set(sid,key);}
+    notify();
+  }
+  function load(force = false) {
+    if (loading) return loading;
+    if (access && !force) return Promise.resolve();
+    loading = request().then(value => {accept(value); error='';}).finally(() => {loading=null;});
+    return loading;
+  }
+  async function drain() {
+    if (draining) return;
+    draining = true;
+    try {
+      await load();
+      while ([...pending.values()].some(entry => !entry.running)) {
+        const now = Date.now()/1000;
+        const entries = [...pending].filter(([,entry]) => !entry.running).slice(0,20);
+        for (const [,entry] of entries) entry.running = true;
+        const todo = entries.filter(([sid]) => !relations.has(sid) || relations.get(sid).retryAt && relations.get(sid).retryAt <= now);
+        if (todo.length) {accept(await request('/relations', {seriesIds:todo.map(([sid])=>sid)})); error='';}
+        for (const [sid,entry] of entries) {pending.delete(sid); entry.resolve(relations.get(sid));}
+      }
+    } catch (caught) {
+      error = caught.message || '归组信息暂不可用';
+      for (const [sid,entry] of pending) {pending.delete(sid); entry.resolve(relations.get(sid));}
+    } finally {draining=false; notify();}
+  }
+  function ensure(items) {
+    const promises = [];
+    for (const item of items) {
+      const sid = typeof item === 'string' ? item : item.seriesId;
+      if (typeof sid !== 'string' || !/^\d{8,24}$/.test(sid)) continue;
+      const row=relations.get(sid);
+      if (row && (!row.retryAt || row.retryAt > Date.now()/1000)) {promises.push(Promise.resolve(row)); continue;}
+      if (!pending.has(sid)) {
+        let resolve; const promise = new Promise(done=>{resolve=done;});
+        pending.set(sid,{promise,resolve,running:false});
+      }
+      promises.push(pending.get(sid).promise);
+    }
+    if (pending.size) queueMicrotask(drain);
+    return Promise.all(promises);
+  }
+  function favorite(item, value, guard = () => true) {
+    const sid=item.seriesId;
+    if (!value) removed.set(sid,++revision);
+    const previous=writes.get(sid) || Promise.resolve();
+    const write=previous.catch(()=>{}).then(async()=>{
+      if (!guard()) return false;
+      const result=await original.favorite(item,value);
+      if (value) {members.favorites.add(sid);known.set(sid,item);void ensure([item]);}
+      else {members.favorites.delete(sid);if(!members.history.has(sid))known.delete(sid);}
+      return result;
+    });
+    writes.set(sid,write);
+    write.then(()=>{if(writes.get(sid)===write)writes.delete(sid);},()=>{if(writes.get(sid)===write)writes.delete(sid);});
+    return write;
+  }
+  async function setManual(sid,targetId) {await load(); accept(await request('/manual',{seriesId:sid,targetId}));}
+  function observe(items,kind) {
+    members[kind]=new Set(items.map(item=>item.seriesId));
+    for(const item of items)known.set(item.seriesId,item);
+    for(const sid of known.keys())if(!members.favorites.has(sid)&&!members.history.has(sid))known.delete(sid);
+    return ensure(items);
+  }
+  async function collect(seed, find, live, progress) {
+    const start=revision;
+    progress('正在查找其他季…');
+    const result=await find();
+    if (!live()) throw desktopLibraryCancelled();
+    const candidates=[...new Map([seed,...result.items].map(item=>[item.seriesId,item])).values()];
+    progress(`正在核验 ${candidates.length} 个候选…`);
+    await ensure(candidates);
+    if (!live()) throw desktopLibraryCancelled();
+    const album=relations.get(seed.seriesId)?.albumId;
+    const verified=candidates.filter(item => item.seriesId===seed.seriesId || album && relations.get(item.seriesId)?.albumId===album);
+    const uncertain=candidates.filter(item => item.seriesId!==seed.seriesId && (!album || !relations.get(item.seriesId)?.albumId));
+    const existing=new Set((await original.favorites()).map(item=>item.seriesId)); let added=0, skipped=0;
+    for (const item of verified) {
+      if (!live()) throw desktopLibraryCancelled();
+      if (existing.has(item.seriesId) || (removed.get(item.seriesId)||0)>start) {skipped++; continue;}
+      let saved=false;
+      await favorite(item,true,()=>{saved=live() && (removed.get(item.seriesId)||0)<=start; return saved;});
+      if (saved) {added++;existing.add(item.seriesId);progress(`已收藏 ${added} 季…`);}
+    }
+    return {added,skipped,uncertain,incomplete:result.incomplete,verified:verified.length};
+  }
+  return {relations,manual,known,ensure,observe,favorite,setManual,collect,load,
+    get error(){return error;}, get pendingCount(){return pending.size;}, original};
+}
+
+
+export { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibraryPage, desktopLibraryProgress, desktopCreateLibrary };
