@@ -14,7 +14,7 @@ fetch_image_bytes 复用原图片下载/HEIC 转 JPEG 方法，返回 bytes；�
 本包沿用 [#246](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/pull/246) 的 CacheSettings/视频热切 owner，不复制第二套配置或视频实现。patches/library-covers.patch 与 patches/server-posters.patch 是本机关系/服务 owner 的最小改动，适用于已有 backend/desktop_library.py 的宿主，不是可直接应用到当前发行仓库的补丁。接入相同前置模块后用 git apply --check 核对；不同宿主应实现以下契约，避免复制第二套图片缓存：
 
 1. 同一关系数据库新增 poster_urls(series_id PRIMARY KEY, url NOT NULL)，旧 relations 六列不变。详情补齐时只保存 ID 精确匹配的 series_cover，经 cover_url 验证；已有合法关系不能被补图失败覆盖。WAL 本地读取不持远程查询的全局锁。
-2. POST /desktop/library/covers 接收 {seriesIds:[字符串 ID]}，最多 20 张。先对所有 ID 调用 posters.read，本地命中不进入详情查询；对剩余且 ready_to_fetch 的 ID 复用详情 owner 补查地址，再用最多六个线程调用 posters.get。返回 {covers:{ID:dataURL},missing:[],localHits:n}。
+2. POST /desktop/library/covers 接收 {seriesIds:[字符串 ID],localOnly:布尔值}，最多 20 张，localOnly 默认 false。先对所有 ID 调用 posters.read；localOnly 为 true 时立即返回本地图及缺失 ID，不查详情、不下载。普通请求才对剩余且 ready_to_fetch 的 ID 复用详情 owner 补查地址，再用最多六个线程调用 posters.get。返回 {covers:{ID:dataURL},missing:[],localHits:n}。非法 localOnly 类型返回 400。
 3. 地址下载失败后清除该条已失效地址，保留图片文件与有效关系；冷却过后可重新取得签名地址。没有地址也进入相同失败冷却，防止每张卡片反复查询。
 4. 沿用桌面回环监听、可信 Origin、客户端标志和当前会话 requestToken。GET /desktop/library 取得会话 token；POST 验证 x-desktop-library-token。若普通 API key 中间件免除此路由，只免除精确路径并保留上述检查，不开放整个路径前缀。
 
@@ -33,16 +33,20 @@ server-posters.patch 包含这部分接线。cache-settings-label.patch 与 fron
 加载 src/frontend-posters.js，替换已有公共 seriesCover 方法，使所有卡片经过同一入口。request 为宿主现有受保护 JSON 请求函数，负责可信 origin、会话 token 和有限超时；客户端不可保存过期 token。
 
 ```javascript
-api.seriesCover = desktopCreatePosterLoader(async seriesIds => {
+api.seriesCover = desktopCreatePosterLoader(async (seriesIds, options) => {
   await desktopLibrary.load();
-  return desktopLibrary.request('/covers', {seriesIds});
+  return desktopLibrary.request('/covers', {seriesIds, ...options});
 });
 ```
 
-同一 ID 的在途 promise 合并，一批最多 20 张、最多两批并行。现有可视区域调度和短期内存缓存保留，但内存淘汰后再次显示必须仍读磁盘，不能回退到原生 get_series_cover 的网络恢复链。该适配器不修改卡片外观、归组或播放行为。
+同一 ID 的在途 promise 合并。本地读取和补下载各自最多两批并行，每批最多 20 张。先发 localOnly 请求，本地图立即交给对应卡片，仅缺失 ID 进入补下载队列。即使两个补下载请求都阻塞，后来进入页面的缓存图仍可读取。
+
+保留现有可视区域判断和短期内存缓存；移除挡在此适配器前面的旧六卡片限流，HTTP 并发统一由本适配器负责。否则六张缺图会占住旧队列，后续本地图仍无法进入读取阶段。内存淘汰后仍读磁盘，不能回退到原生 get_series_cover 的网络恢复链。该适配器不修改卡片外观、归组或播放行为。
+
+必须检查最终打包资源中的公共 seriesCover 赋值已经执行；只有 desktopCreatePosterLoader 函数存在不足以证明接线生效。后续修改其他片单模块时也要保留此赋值。
 
 ## 验收与恢复
 
-先通过公开测试，再验证宿主已有图片无详情/图片上游请求、冷缺图补齐一次、切页/进入合集/返回/重启继续命中、坏图仅修复本条、签名地址过期后冷却恢复，以及合法 token、错误 Origin 和缺失 token。核对原收藏/历史表未变，并确认目录映射后仍复用既有原生文件，并验证设置切换、保存失败及在途下载只向已提交的新根发布。
+先通过公开测试，再验证宿主已有图片无详情/图片上游请求、冷缺图补齐一次、切页/进入合集/返回/重启继续命中、坏图仅修复本条、签名地址过期后冷却恢复，以及合法 token、错误 Origin 和缺失 token。补充两种阻塞回归：一批混有本地图和缺图时本地图先显示；六张缺图等待网络时，后来显示的本地图仍能加载。对实际安装包统计 get_series_cover 调用必须为零，避免源码已接线但运行包漏接。核对原收藏/历史表未变，并确认目录映射后仍复用既有原生文件，并验证设置切换、保存失败及在途下载只向已提交的新根发布。
 
 本机补丁应用、上述业务、鉴权及旧 schema 迁移已有对应测试和真实运行证据。公开 fixture 不能替代维护者私有工程的接入/发布验收。撤回补丁和公共入口接线可恢复旧路径，用户图片和新增地址表保留，不通过清缓存回滚。

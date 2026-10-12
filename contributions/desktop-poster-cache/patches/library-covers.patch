@@ -69,7 +69,7 @@
 +                        continue  # A cover backfill failure must not discard a known relationship.
                      album = identity(vd.get("related_album_id")) if valid else None
                      season = vd.get("season_index") if valid else None
-@@ -83,10 +94,40 @@
+@@ -83,10 +94,44 @@
                      row = (sid, album, season, vd["series_title"][:500] if valid else "",
                             "resolved" if valid and album else "ungrouped" if valid else "failed",
 -                           0 if album else now + (86400 if valid else 300))
@@ -87,9 +87,11 @@
                      cached[sid] = self.row(row)
              return {"relations": [cached[sid] for sid in ids]}
 +
-+    def covers(self, ids):
++    def covers(self, ids, local_only=False):
 +        if not isinstance(ids, list) or not 1 <= len(ids) <= 20 or any(type(sid) is not str or not identity(sid) for sid in ids):
 +            raise ValueError("每次最多读取20张有效剧集封面")
++        if type(local_only) is not bool:
++            raise ValueError("localOnly 必须为布尔值")
 +        posters = self.posters
 +        if posters is None:
 +            raise OSError("封面缓存尚未就绪")
@@ -97,7 +99,9 @@
 +        result = {sid: data for sid in ids if (data := posters.read(sid))}
 +        local_hits = len(result)
 +        missing = [sid for sid in ids if sid not in result and posters.ready_to_fetch(sid)]
-+        if missing:
++        # A disk probe must return even when another poster needs slow network
++        # recovery. The shared client queues only these misses for downloading.
++        if missing and not local_only:
 +            rows = self.resolve(missing, require_covers=True)["relations"]
 +            with ThreadPoolExecutor(max_workers=6) as pool:
 +                images = pool.map(lambda row: posters.get(row["seriesId"], row.get("coverUrl")), rows)
@@ -113,13 +117,13 @@
 +        return {"covers": result, "missing": [sid for sid in ids if sid not in result], "localHits": local_hits}
  
      def set_manual(self, sid, target):
-@@ -138,3 +179,12 @@
+@@ -138,3 +183,12 @@
              raise HTTPException(400, str(error)) from None
  
 +    @router.post("/covers", dependencies=[Depends(check)])
 +    def covers(value: dict):
 +        try:
-+            return service.covers(value.get("seriesIds"))
++            return service.covers(value.get("seriesIds"), value.get("localOnly", False))
 +        except ValueError as error:
 +            raise HTTPException(400, str(error)) from None
 +        except (sqlite3.Error, OSError):

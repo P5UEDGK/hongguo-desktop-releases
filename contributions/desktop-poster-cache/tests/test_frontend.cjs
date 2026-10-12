@@ -22,3 +22,37 @@ test('invalid identities and unsupported images rejected',async()=>{
   const load=create(async()=>({covers:{[sid]:'data:text/html;base64,foo'}}));
   await assert.rejects(load(9000000000000001),/无效/);await assert.rejects(load(sid),/封面暂不可用/);
 });
+
+test('mixed batch releases local image before missing image finishes', {timeout:1500},async()=>{
+  const cold='9000000000000002';let release,entered;
+  const gate=new Promise(r=>{release=r;}),started=new Promise(r=>{entered=r;});
+  const calls=[];
+  const load=create(async(ids,{localOnly})=>{
+    calls.push({ids:[...ids],localOnly});
+    if(localOnly)return {covers:{[sid]:data}};
+    entered();await gate;return {covers:Object.fromEntries(ids.map(id=>[id,data]))};
+  });
+  try {
+    const warm=load(sid),remote=load(cold);assert.equal(remote,load(cold));
+    await started;assert.equal(await warm,data);
+    assert.deepEqual(calls[1].ids,[cold]);
+    release();assert.equal(await remote,data);
+  } finally {release();}
+});
+
+test('occupied download slots never block new disk reads', {timeout:1500},async()=>{
+  let release;const gate=new Promise(r=>{release=r;});let remoteStarted=0;
+  const calls=[];const load=create(async(ids,{localOnly})=>{
+    calls.push({ids:[...ids],localOnly});
+    if(localOnly)return {covers:Object.fromEntries(ids.filter(id=>id===sid).map(id=>[id,data]))};
+    remoteStarted++;await gate;return {covers:Object.fromEntries(ids.map(id=>[id,data]))};
+  });
+  const cold=Array.from({length:45},(_,i)=>String(9100000000000000n+BigInt(i)));
+  try {
+    const work=Promise.all(cold.map(load));
+    while(remoteStarted<2)await new Promise(r=>setImmediate(r));
+    assert.equal(await load(sid),data);assert.equal(remoteStarted,2);
+    assert.ok(calls.filter(c=>!c.localOnly).every(c=>!c.ids.includes(sid)&&c.ids.length<=20));
+    release();await work;
+  } finally {release();}
+});
