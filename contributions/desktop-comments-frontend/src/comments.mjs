@@ -40,14 +40,18 @@ function desktopSocialStore(endpoint) {
     for (const [key, entry] of entries) if ((!resource || entry.resource === resource)
       && (!params || key === identity(resource, params))) {entry.cancelled = true; entry.abort.abort(); entries.delete(key);}
   }
-  function read(resource, params = {}, deadline = Date.now()+15000, pageOnly = false) {
+  function read(resource, params = {}, deadline = Date.now()+15000, pageOnly = false, replyCount) {
     if (Date.now() >= deadline) return Promise.reject(new DOMException("Read deadline expired", "TimeoutError"));
     const key = identity(resource, params), cursor = params.cursor || '';
     let entry = entries.get(key);
+    if (entry && resource==='replies' && replyCount !== undefined && entry.replyCount !== undefined && entry.replyCount !== replyCount) {
+      clear(resource,params);entry=null;
+    }
     if (!entry) {
       if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).cancelled = true; entries.get(oldest).abort.abort(); entries.delete(oldest);}
       entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set(), pages:new Map()}; entries.set(key, entry);
     }
+    if (replyCount !== undefined) entry.replyCount=replyCount;
     const requested = () => {
       if (pageOnly === 'replyThread') {
         const firstIds = new Set(entry.pages.get('')?.items.map(row => row.id) || []);
@@ -65,7 +69,7 @@ function desktopSocialStore(endpoint) {
       return Promise.race([
         entry.pending.catch(() => {}).then(() => {
           if (entry.cancelled) throw new DOMException('Aborted', 'AbortError');
-          return read(resource, params, deadline, pageOnly);
+          return read(resource, params, deadline, pageOnly, replyCount);
         }),
         new Promise((_,reject)=>{timer=setTimeout(()=>reject(new DOMException('Read deadline expired','TimeoutError')),Math.max(0,deadline-Date.now()));})
       ]).finally(()=>clearTimeout(timer));
@@ -85,7 +89,7 @@ function desktopSocialStore(endpoint) {
         const later = [...entry.pages].filter(([key]) => key).map(([,value]) => value);
         const last = later.at(-1);
         entry.value = {...entry.value, cursor:last.cursor, has_more:last.has_more,
-          items:[...result.items,...later.flatMap(value => value.items).filter(row => !result.items.some(first => first.id === row.id))]};
+          items:[...new Map([...result.items,...later.flatMap(value => value.items)].map(row=>[row.id,row])).values()]};
       }
       entry.cursors.add(cursor); return entry.value;
     }).catch(error => {
@@ -94,7 +98,7 @@ function desktopSocialStore(endpoint) {
     }).finally(() => {clearTimeout(timer); entry.pending = null;});
     return pendingResult();
   }
-  return {read, readReplyThread:(params,deadline) => read('replies',params,deadline,'replyThread'), readPage:(resource,params,deadline) => read(resource,params,deadline,true), clear, dispose:() => clear()};
+  return {read, readReplyThread:(params,deadline,replyCount) => read('replies',params,deadline,'replyThread',replyCount), readPage:(resource,params,deadline) => read(resource,params,deadline,true), clear, dispose:() => clear()};
 }
 
 function desktopSocialPreference(name, fallback) {
@@ -266,12 +270,17 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
   const detachedCursor = O.useRef(null);
   const laterIds = O.useRef(new Set());
   const failedCursor = O.useRef('');
+  const replyIdentity = O.useRef([item.id,item.replies,replies]);
   O.useEffect(() => {
     own.current = {abort: new AbortController(), busy: false};
     return () => {own.current.abort.abort();};
   }, []);
   O.useEffect(() => {
-    if (!replies || item.replies <= 0) {
+    const previous=replyIdentity.current;
+    const changed=previous[0]!==item.id || previous[1]!==item.replies || previous[2]!==replies;
+    replyIdentity.current=[item.id,item.replies,replies];
+    if (changed) store?.clear('replies',{comment_id:previous[0]});
+    if (changed || !replies || item.replies <= 0) {
       own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false};
       setOpen(false);setPage(null);setBusy(false);setError('');laterIds.current.clear();detachedCursor.current=null;
     }
@@ -282,7 +291,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     request.busy = true; request.cursor = cursor; failedCursor.current = cursor; setBusy(true); setError('');
     try {
       const params = {comment_id:item.id, cursor};
-      const cached = store?.readReplyThread ? await store.readReplyThread(params) : null;
+      const cached = store?.readReplyThread ? await store.readReplyThread(params,undefined,item.replies) : null;
       const result = cached ? cached.value : await (store ? (store.readPage || store.read).call(store,'replies',params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
       if (own.current === request && !request.abort.signal.aborted) setPage(previous => {
         detachedCursor.current = null;
