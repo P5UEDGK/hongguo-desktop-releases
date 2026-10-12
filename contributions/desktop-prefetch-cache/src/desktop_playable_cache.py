@@ -165,9 +165,14 @@ class PlayableEpisodeCache:
         if "#EXT-X-ENDLIST" not in lines:
             raise ValueError("Artifact playlist is incomplete")
         mapped, ended, segments, pending = False, False, [], None
+        supported_tags={'#EXTM3U','#EXTINF','#EXT-X-VERSION','#EXT-X-TARGETDURATION',
+                        '#EXT-X-MEDIA-SEQUENCE','#EXT-X-PLAYLIST-TYPE','#EXT-X-MAP',
+                        '#EXT-X-ENDLIST','#EXT-X-INDEPENDENT-SEGMENTS'}
         for line in lines:
+            if line.startswith('#EXT') and line.split(':',1)[0] not in supported_tags:
+                raise ValueError('Unsupported local artifact HLS tag')
             if line.startswith(('#EXT-X-STREAM-INF', '#EXT-X-I-FRAME-STREAM-INF',
-                                '#EXT-X-MEDIA:', '#EXT-X-SESSION-DATA', '#EXT-X-SESSION-KEY')):
+                                '#EXT-X-MEDIA:', '#EXT-X-SESSION-DATA', '#EXT-X-SESSION-KEY', '#EXT-X-CONTENT-STEERING')):
                 raise ValueError("Master playlist tag in local media artifact")
             if line.startswith(('#EXT-X-DISCONTINUITY', '#EXT-X-START')):
                 raise ValueError("Unsupported local artifact timeline")
@@ -443,7 +448,10 @@ class PlayableEpisodeCache:
                 return target
             finally:
                 if stage.exists():
-                    self._remove_owned(stage)
+                    try:self._remove_owned(stage)
+                    except OSError:
+                        if cancelled():raise EncodingCancelled()
+                        raise
 
     def encode(self, source, directory, on_ready=lambda: None, *, cancelled=lambda: False,
                start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264", on_cache_key=lambda key: None):

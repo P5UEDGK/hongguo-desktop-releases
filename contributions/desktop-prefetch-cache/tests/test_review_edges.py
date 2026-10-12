@@ -12,6 +12,28 @@ from test_prefetch import complete_output,encoder,PROFILE_FILES
 
 
 class ReviewEdges(unittest.TestCase):
+    def test_cancelled_stage_cleanup_error_preserves_cancellation_and_ownership(self):
+        cache=self.cache();cancel=threading.Event()
+        def copying(*args,**kwargs):cancel.set();raise EncodingCancelled()
+        with patch.object(cache,'_copy',side_effect=copying),patch.object(cache,'_remove_owned',side_effect=PermissionError('owned stage locked')):
+            with self.assertRaises(EncodingCancelled):cache.encode(self.source,self.root/'cancel-cleanup',cancelled=cancel.is_set)
+        stages=list(cache.root.glob('stage-*'));self.assertEqual(len(stages),1);self.assertEqual((stages[0]/'owner.marker').read_text(encoding='ascii'),'desktop-playable-cache-v1')
+
+    def test_same_generation_retry_requeues_failed_source_without_wait_marker(self):
+        from types import SimpleNamespace
+        value=EpisodePrefetcher(lambda _:self.source,lambda _:({},[{'index':n,'vid':str(10000000+n)} for n in (1,2)]),self.root/'retry-failed',encoder=encoder,profile_files=PROFILE_FILES,ahead=1)
+        self.addCleanup(value.close);job=Job(uuid.uuid4().hex,self.root/'retry-job');value.begin(job,'series',1);value.downloader=SimpleNamespace(is_alive=lambda:True)
+        job.source_loader('series',1);value.download_pending.clear();value.sources['10000002']=None;value.failed=[2]
+        job.source_loader('series',1)
+        self.assertEqual(value.download_pending,[(value.generation,2,'10000002')]);self.assertNotIn('10000002',value.sources);value.downloader=None
+
+    def test_media_artifact_rejects_steering_and_other_unknown_hls_tags(self):
+        path=self.output/'index.m3u8';original=path.read_text(encoding='utf8')
+        for tag in ('#EXT-X-CONTENT-STEERING:SERVER-URI="https://invalid.example/steering"','#EXT-X-IMAGE-STREAM-INF:URI="https://invalid.example/image"','#EXT-X-FUTURE-RESOURCE:URI="outside"'):
+            with self.subTest(tag=tag):
+                path.write_text(original.replace('#EXTM3U\n','#EXTM3U\n'+tag+'\n',1),encoding='utf8')
+                with self.assertRaises(ValueError):self.cache().store(self.source,self.output)
+
     def test_same_generation_retry_deduplicates_active_and_completed_future(self):
         from types import SimpleNamespace
         for loaded in (False,True):

@@ -135,12 +135,13 @@ class EpisodePrefetcher:
                         window.add(future_vid)
                 self.download_pending = [task for task in self.download_pending
                                          if task[0] == generation and task[2] in window]
-                seen = {vid, *self.sources}
+                seen = {vid, *(key for key, value in self.sources.items() if value is not None)}
                 seen.update(task[2] for task in self.download_pending if task[0] == generation)
                 if self.download_active is not None and self.download_active[0] == generation:
                     seen.add(self.download_active[2])
                 for task in future:
                     if task[2] not in seen:
+                        self.sources.pop(task[2],None)
                         self.download_pending.append(task)
                         seen.add(task[2])
                 if self.download_pending and (self.downloader is None or not self.downloader.is_alive()):
@@ -183,7 +184,8 @@ class EpisodePrefetcher:
                 if task[0] == self.generation and not self.closed:
                     self.sources[task[2]] = source
                     if source is not None:
-                        self.download_completed.append(task[1])
+                        if task[1] not in self.download_completed:self.download_completed.append(task[1])
+                        if task[1] in self.failed:self.failed.remove(task[1])
                     elif task[1] not in self.failed:
                         self.failed.append(task[1])
                 self.download_active = None
