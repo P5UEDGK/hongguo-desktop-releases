@@ -82,10 +82,15 @@ def budget_stable(byte_samples, budget, range_bytes):
             len(set(byte_samples[-6:])) == 1)
 
 
+def validate_audio_source(media):
+    if not media.streams.audio: raise ValueError('Preload audio readiness requires an audio track')
+
+
 def preload_timeout(total_bytes, range_delay, override=None):
     if (type(total_bytes) is not int or total_bytes <= 0 or
             not math.isfinite(range_delay) or range_delay < 0):
         raise ValueError('Invalid fixture size/delay')
+    if range_delay * 3 + .5 >= 3600: raise ValueError('Range delay exceeds the verifier timeout cap')
     if override is not None:
         if not math.isfinite(override) or not 1 <= override <= 3600:
             raise ValueError('Preload timeout must be between 1 and 3600 seconds')
@@ -136,6 +141,8 @@ def main():
         parser.error('--cache-budget must be positive')
     if not math.isfinite(args.range_delay) or args.range_delay < 0:
         parser.error('--range-delay must be finite and non-negative')
+    import av
+    with av.open(str(args.source)) as source: validate_audio_source(source)
     staging = tempfile.TemporaryDirectory()
     stage = Path(staging.name); backend = stage/'backend'; backend.mkdir()
     for source in (args.native_package.resolve()/'src',args.prefetch_package.resolve()/'src'):

@@ -14,6 +14,17 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_delay_cannot_exceed_derived_timeout(self):
+        for delay in (1500,3601):
+            with self.subTest(delay=delay),self.assertRaises(ValueError):probe.preload_timeout(65536,delay)
+
+    def test_video_only_fixture_is_rejected_before_native_start(self):
+        self.assertTrue(callable(getattr(probe,'validate_audio_source',None)),'audio validation must precede native startup')
+        with self.assertRaisesRegex(ValueError,'audio'):
+            probe.validate_audio_source(SimpleNamespace(streams=SimpleNamespace(audio=[])))
+        probe.validate_audio_source(SimpleNamespace(streams=SimpleNamespace(audio=[object()])))
+
+
     def test_failed_snapshot_cannot_satisfy_wait_predicate(self):
         tree=ast.parse(inspect.getsource(probe));node=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='wait')
         scope={'time':SimpleNamespace(monotonic=lambda:0,sleep=lambda _:None),'request':lambda _:dict(native=dict(state='failed',paused=True))}
