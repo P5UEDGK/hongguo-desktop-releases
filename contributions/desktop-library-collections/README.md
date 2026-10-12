@@ -8,7 +8,8 @@
 
 - 普通收藏立即调用原生保存接口，随后异步读取关系，不搜索其他季。取消再收藏复用已经成功保存的关系。
 - 按详情 `related_album_id` 归组，按 `season_index` 排序，全部 ID 保持十进制字符串。标题相似或搜索返回同名，不能单独作为归组依据。
-- 主动补季复用宿主“其他季”搜索，再核验每个候选的关系。相同合集自动收藏；已有收藏、本轮取消的季跳过；关系未知候选由用户选择，关系冲突候选排除。搜索可能漏季，仍可手动搜索再收藏。
+- 主动补季使用统一的分季搜索模块，再核验每个候选的关系。相同合集自动收藏；已有收藏、本轮取消的季跳过；关系未知候选由用户选择，关系冲突候选排除。搜索可能漏季，仍可手动搜索再收藏。
+- 原标题和中文标点完整保存。搜索先用原始标点、去掉末尾季序号的标题；无有效同合集匹配时，再用首个 `？?！!：:` 前的主标题回退。副标题不同可进入合集ID核验，未知关系仍需手动选择。网络失败、超时或分页截断不触发更宽搜索。
 - 各搜索入口共用一个队列，相同任务复用 Promise。取消后等待在途原生请求结束，再让下一个任务执行；不做定时更新或自动发现新季。
 - 收藏与历史的同一合集共用本地已知季度列表、季数、排序、封面和观看进度。根页只显示原记录中出现过的系列，未看过的季度标为“未观看”，不伪造历史。
 - 已有及以后归入可靠合集的本地季度自动加入原生收藏；仅查详情的候选、关系未知条目和孤立单季不触发。按 ID 去重，不增加搜索。手动取消的季跨重启保持取消，主动再收藏才清除排除；删除收藏不删除历史或关系。
@@ -20,7 +21,7 @@
 
 ## 代码与验证
 
-`src/desktop_library.py` 负责持久关系及本机路由；`src/library-core.mjs` 负责队列、归组、进度与收藏编排；`src/frontend-library.mjs` 提供显式宿主工厂及组件。React、封面组件、搜索与原生存储由宿主提供，不另建一套应用。
+`src/desktop_library.py` 负责持久关系及本机路由；`src/library-core.mjs` 负责队列、归组、进度与收藏编排；`src/frontend-library.mjs` 提供显式宿主工厂及组件；`src/season-search.mjs` 统一标题解析、原词/前缀查询与其他季/下一季查找。React、封面组件、搜索接口与原生存储由宿主提供，不另建一套应用。
 
 Python 3.10+、Node 18+。在仓库根以 pwsh 执行：
 
@@ -29,10 +30,12 @@ python -m pip install -r contributions/desktop-library-collections/requirements-
 python contributions/desktop-library-collections/tests/test_desktop_library.py
 node contributions/desktop-library-collections/tests/test_library_core.cjs
 node contributions/desktop-library-collections/tests/test_library_adapter.mjs
+node contributions/desktop-library-collections/tests/test_season_search.mjs
+node contributions/desktop-library-collections/tests/test_season_integration.mjs
 node --check contributions/desktop-library-collections/src/frontend-library.mjs
 ```
 
-后端8项、前端核心20项及工厂接线4项回归均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，20张原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
+后端8项、前端核心20项及工厂接线4项、分季搜索13项及搜索/收藏集成2项回归均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，24张原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
 
 ## 接入限制
 

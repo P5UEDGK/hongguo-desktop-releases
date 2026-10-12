@@ -32,7 +32,6 @@ app.include_router(make_router(relations))
 import {createLibraryUI} from './frontend-library.mjs';
 const libraryUI = createLibraryUI({
   React, jsxRuntime, api,
-  parseSeason, findOtherSeasons,
   Cover: ExistingCover, coverFallback: existingFallback
 });
 ```
@@ -43,8 +42,8 @@ const libraryUI = createLibraryUI({
 | api.favorites()/history() | 返回原生条目列表；工厂包装后异步补关系，并补齐可靠合集的收藏 |
 | api.validationStatus() | 返回受信本机服务 `{baseUrl: 'http://127.0.0.1:端口'}` |
 | api.search/searchExplorer/searchNovelfm/validationSearch | 存在的入口全部包装进同一个调度队列 |
-| parseSeason(title) | 宿主已有标题解析，成功返回含 base 的对象，否则空值 |
-| findOtherSeasons(proxyApi, seed, live) | 宿主已有“查找其他季”，返回 `{items, incomplete}`；经 proxyApi.searchNovelfm 请求，每步检查 live |
+| parseSeason(title) | 可选覆盖，默认使用本包 parseSeasonTitle；base须保留原始标点，不能整体NFKC转写 |
+| findOtherSeasons(proxyApi, seed, live) | 可选覆盖，默认使用本包 findOtherSeasons；旧宿主查找器若未迁移，将不能获得本次回退行为 |
 | Cover | 既有 React 封面组件，接收 `{item, fallback, lazy}`；封面缓存继续由此组件负责 |
 | jsxRuntime | React 的 jsx/jsxs runtime |
 
@@ -88,7 +87,11 @@ const libraryUI = createLibraryUI({
 
 ## 原有下一季/其他季入口
 
-已有查找器通过同一个 `seasonSearch(api, item, check, finder, label)` 包装。finder 使用传入 proxyApi 请求，不能闭包调用未包装的原生搜索。下一季也核验相同 albumId，关系不可靠时不自动跳转。
+从 `season-search.mjs` 导入 `findOtherSeasons` 和 `findNextSeason`，替换旧标题/查找函数，避免两套规则继续并存。已有查找器通过同一个 `seasonSearch(api, item, check, finder, label)` 包装。finder 使用传入 proxyApi 请求，不能闭包调用未包装的原生搜索。下一季也核验相同 albumId，关系不可靠时不自动跳转。
+
+工厂代理额外提供 `resolveSeasonCandidates(seed, candidates, live)`，用共享关系缓存核验并返回 `{items, verified}`：items保留同合集和未知关系，冲突项排除；verified表示至少一个候选已确认与seed同合集。查找器依据该结果决定是否回退，而不是仅检查原搜索是否返回非空。副标题差异候选仍需主标题匹配和媒体类型一致；未知关系不会自动收藏。直接单独调用本包查找器时也应提供此代理；缺少核验只能返回待确认候选，不能自动播放。
+
+原标题不改，比较键单独规范化。首轮保留原始中英文符号，仅剥离末尾季序号；完整首轮无有效匹配后，按 `？?！!：:` 前至少两字符的主标题回退一次。每个词最多两模式×三页，每页最多20条，共享30秒总预算；同词/模式/页去重。错误、重复页或超预算标未完成，不启动更宽回退。下一季先保留原有明确季序号搜索；不足时复用上述查找器和剩余预算，副标题回退候选只供选择，不扩大自动连播条件。
 
 下一季查找由明确按钮触发，打开详情本身不搜索新季；连续播放本季下一集沿用原实现。原启动推荐搜索仍使用包装后的 API。不要把队列任务内的请求再次送回队列，否则产生自等待。
 

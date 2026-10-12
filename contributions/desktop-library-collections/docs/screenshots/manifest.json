@@ -100,6 +100,26 @@
       "file": "unified-restart.png",
       "sha256": "c6507fc1487ffcace82641d409042f734a11bcf740d787ad5e0a526498733e45",
       "caption": "取消第14季收藏后重启：合集仍14季，收藏13条、真实历史8条，不自动恢复取消。"
+    },
+    {
+      "file": "punctuation-before.png",
+      "sha256": "96bd8d1b7754c40b5737a77c052bf274a58a3b56c74e0d61ab691e2e20741569",
+      "caption": "补齐前：中文问号与副标题完整显示，系列只有一季。"
+    },
+    {
+      "file": "punctuation-searching.png",
+      "sha256": "6171787026bd68ea190347e75e87dff105f23f392ef6991a884a834d07f505a5",
+      "caption": "补季等待：继续使用按钮右侧状态和取消入口，无顶部搜索横条。"
+    },
+    {
+      "file": "punctuation-completed.png",
+      "sha256": "7e8c9656f117eb47a5ea187cd546e8127576532c4d79c1ee855c82c51ce14b3d",
+      "caption": "补齐完成：同合集的不同副标题加入，关系未知仅显示人工收藏候选。"
+    },
+    {
+      "file": "punctuation-restart.png",
+      "sha256": "00b88a7b6b06ab7559c7b7fbc712b00e5cb9133a4a8cd3c0c007c5e46dac483e",
+      "caption": "重启后：中文问号与两季原标题完整保存，合集仍为两季。"
     }
   ]
 }

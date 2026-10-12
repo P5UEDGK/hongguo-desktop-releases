@@ -1,7 +1,8 @@
+import {parseSeasonTitle, findOtherSeasons as defaultFindOtherSeasons} from './season-search.mjs';
 import { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibraryPage, desktopLibraryProgress, desktopCreateLibrary } from './library-core.mjs';
 
 // Initialize once before mounting the host. All application APIs stay host-owned.
-export function createLibraryUI({React, jsxRuntime, api, parseSeason, findOtherSeasons, Cover, coverFallback}) {
+export function createLibraryUI({React, jsxRuntime, api, parseSeason=parseSeasonTitle, findOtherSeasons=defaultFindOtherSeasons, Cover, coverFallback}) {
   const O=React, b=jsxRuntime, ge=api, Ts=parseSeason, KR=findOtherSeasons, O0=Cover, P0=coverFallback;
 function desktopLibraryNotify(kind) {window.dispatchEvent(new Event(kind==='membership'?'desktoplibrarymembership':'desktoplibrarychange'));}
 const desktopSearchQueue = new DesktopSearchQueue(desktopLibraryNotify);
@@ -11,9 +12,23 @@ function desktopUseLibraryVersion() {
   O.useEffect(()=>{const changed=()=>update(value=>value+1);window.addEventListener('desktoplibrarychange',changed);return()=>window.removeEventListener('desktoplibrarychange',changed);},[]);
 }
 
+function desktopSeasonProxy(api,context,check=()=>true) {
+  return {...api,
+    searchNovelfm:(...args)=>context.request(()=>desktopRawSearch.searchNovelfm(...args)),
+    resolveSeasonCandidates:async(seed,candidates,live=()=>true)=>{
+      if(!context.live()||!check()||!live())return {items:[],verified:false};
+      await desktopLibrary.ensure([seed,...candidates]);
+      if(!context.live()||!check()||!live())return {items:[],verified:false};
+      const album=desktopLibrary.relations.get(seed.seriesId)?.albumId;
+      const items=candidates.filter(item=>!album||!desktopLibrary.relations.get(item.seriesId)?.albumId||desktopLibrary.relations.get(item.seriesId).albumId===album);
+      return {items,verified:!!album&&items.some(item=>desktopLibrary.relations.get(item.seriesId)?.albumId===album)};
+    }
+  };
+}
+
 function desktopSeasonSearch(api, item, check, find, label) {
   return desktopSearchQueue.run(label+':'+item.seriesId,label,async context=>{
-    const proxy={...api,searchNovelfm:(...args)=>context.request(()=>desktopRawSearch.searchNovelfm(...args))};
+    const proxy=desktopSeasonProxy(api,context,check);
     const result=await find(proxy,item,()=>context.live() && check());
     if (!context.live() || !check()) return {...result,automatic:false};
     await desktopLibrary.ensure([item,...result.items]);
@@ -67,7 +82,7 @@ function DesktopSeasonActions({series,disabled=false}) {
     setBusy(true);setMessage('等待搜索…');setUncertain([]);setCandidatePage(1);
     try {
       const result=await desktopSearchQueue.run('collect:'+series.seriesId,'查找并收藏各季：'+series.title,async context=>{
-        const proxy={...ge,searchNovelfm:(...args)=>context.request(()=>desktopRawSearch.searchNovelfm(...args))};
+        const proxy=desktopSeasonProxy(ge,context);
         return desktopLibrary.collect(series,()=>KR(proxy,series,context.live),context.live,text=>{if(mounted.current)setMessage(text);});
       });
       if(mounted.current){setUncertain(result.uncertain);setMessage(`已加入 ${result.added} 季，跳过 ${result.skipped} 季；找到并确认 ${result.verified} 季${result.incomplete?'，搜索可能未完成':''}。可手动搜索补齐。`);}
