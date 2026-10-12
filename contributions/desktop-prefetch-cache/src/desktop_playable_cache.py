@@ -447,6 +447,7 @@ class PlayableEpisodeCache:
 
     def encode(self, source, directory, on_ready=lambda: None, *, cancelled=lambda: False,
                start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264", on_cache_key=lambda key: None):
+        if video_mode not in ("h264", "copy"):raise ValueError("Invalid cache video mode")
         restored, identity_result = False, None
         try:
             if self.available:

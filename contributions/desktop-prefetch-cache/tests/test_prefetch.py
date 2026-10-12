@@ -361,6 +361,16 @@ class PrefetchTests(unittest.TestCase):
 
 
 class PlayableCacheTests(unittest.TestCase):
+    def test_invalid_mode_is_rejected_even_when_cache_is_unavailable(self):
+        from unittest.mock import Mock
+        for available in (False,True):
+            self.cache.available=available
+            for mode in ('native','typo',None):
+                self.cache.encoder=Mock()
+                with self.subTest(available=available,mode=mode),self.assertRaises(ValueError):
+                    self.cache.encode(self.source,self.root/'invalid-mode-output',video_mode=mode)
+                self.cache.encoder.assert_not_called()
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
