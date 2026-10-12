@@ -14,15 +14,15 @@ class Video extends EventTarget {
 }
 async function scenario(native,fail=false,fault=null){
   const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0,retired=0;
-  let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget,acceptanceCallback,terminalCallback;
+  let playWaitSerial=5000;const playWaits=new Map();let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget,acceptanceCallback,terminalCallback;
   const activated=new Promise(resolve=>confirmActivation=resolve);
   const current=new Video();current.volume=.3;current.playbackRate=3;current.paused=false;
   current.desktopSessionId=()=> 'a'.repeat(32);current.stage={append:v=>{v.stage=current.stage;children.push(v);}};
   const endpoint={origin:'http://127.0.0.1:23456',url:'http://127.0.0.1:23456/desktop/hls?series_id=1234567890123456&ep=2',key:'b'.repeat(64)};
   const context={URL,Event,Number,Math,Date:{now:()=>now},WeakMap,Proxy,Map,AbortController,window:{devicePixelRatio:1},
     w0:()=>endpoint,ik(){},desktopSupportsSource:async()=>true,
-    setTimeout(fn,ms){if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;if(ms<=2000&&ms>100){activationBudget=ms;if(fault!=='activation-timeout')return 998;}const id=setTimeout(()=>{if(fault?.startsWith('eof-during-')&&ms===20)now+=20;if(fault==='activation-timeout'&&ms>100)now+=ms;if(fault==='no-frame'&&ms===100)now=90001;fn();},1);timers.add(id);return id;},
-    clearTimeout:id=>{timers.delete(id);clearTimeout(id);},requestAnimationFrame:fn=>queueMicrotask(fn),
+    setTimeout(fn,ms){if(fault?.startsWith('pending-play')&&ms>100&&ms<=2000){const id=++playWaitSerial;playWaits.set(id,fn);return id;}if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;if(ms<=2000&&ms>100){activationBudget=ms;if(fault!=='activation-timeout')return 998;}const id=setTimeout(()=>{if(fault?.startsWith('eof-during-')&&ms===20)now+=20;if(fault==='activation-timeout'&&ms>100)now+=ms;if(fault==='no-frame'&&ms===100)now=90001;fn();},1);timers.add(id);return id;},
+    clearTimeout:id=>{playWaits.delete(id);timers.delete(id);clearTimeout(id);},requestAnimationFrame:fn=>queueMicrotask(fn),
     document:{createElement:()=>new Video()},
     desktopCodecHls(video,url,start,callbacks,prep,windowed,state){
       callbacks={...callbacks}; // Production codec copies/enumerates callback keys.
@@ -74,6 +74,7 @@ async function scenario(native,fail=false,fault=null){
   }else{
     const media=new Video();media.stage=current.stage;Object.assign(media,{playbackRate:record.settings.rate,volume:record.settings.volume,muted:record.settings.muted});let ended=0,errors=0,fallbacks=0;
     if(fault==='play')children[0].play=()=>Promise.reject(Error('play rejected'));
+    if(fault?.startsWith('pending-play'))children[0].play=()=>new Promise(()=>{});
     let rejectOldPlay,playCount=0;if(fault==='superseded-play'){children[0].play=()=>{children[0].paused=false;playCount++;return playCount===1?new Promise((resolve,reject)=>rejectOldPlay=reject):Promise.resolve();};}
     media.addEventListener('ended',()=>ended++);
     prep.retain(()=>started++);
@@ -120,6 +121,13 @@ async function scenario(native,fail=false,fault=null){
       confirmActivation();await tick();assert.equal(playCount,1);media.pause();await media.play();rejectOldPlay(Object.assign(Error('old play interrupted'),{name:'AbortError'}));await tick();
       assert.equal(fallbacks,0,'superseded HLS play rejection does not abandon newer successful intent');assert(!children[0].removed);assert.equal(media.paused,false);dispose();await tick();for(const timer of timers)clearTimeout(timer);return;
     }
+    if(fault?.startsWith('pending-play')){
+      confirmActivation();await tick();assert.equal(fallbacks,0);assert.equal(started,1);
+      assert.equal(playWaits.size,1,'pending adopted play has one bounded wait');
+      if(fault==='pending-play-cancel'){dispose();await tick();assert.equal(playWaits.size,0,'adoption cleanup cancels its pending play deadline');assert.equal(fallbacks,0);}
+      else{const [id,timeout]=[...playWaits][0];playWaits.delete(id);timeout();await tick();assert.equal(fallbacks,1,'pending adopted play reaches cold fallback');assert(children[0].removed);dispose();}
+      for(const timer of timers)clearTimeout(timer);return;
+    }
     if(fault==='terminal-error'){
       children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();
       assert.equal(started,1,'old picture stays until the first actual HLS frame');
@@ -145,7 +153,7 @@ async function scenario(native,fail=false,fault=null){
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{if(process.argv[3]){await scenario(false,false,process.argv[3]);return;}await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['superseded-play','replacement-gap','eof-during-capabilities','eof-during-stage','activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
+  for(const fault of ['pending-play','pending-play-cancel','superseded-play','replacement-gap','eof-during-capabilities','eof-during-stage','activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory() as temp:
     subprocess.run(['node',str(package/'tests/test_unclaimed_hold.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_claim_deadline.cjs')],check=True)
     subprocess.run(['node',str(a.native_package/'tests/test_creation_timeout.cjs'),str(root/'src/frontend-native.js')],check=True)
-    for name,leaf in [('test_codec_creation.cjs','frontend-codec.js'),('test_codec_mode_reconciliation.cjs','frontend-codec.js'),('test_codec_recovery.cjs','frontend-codec.js'),('test_mode_reconciliation.cjs','frontend-native.js'),('test_surface_clipping.cjs','frontend-native.js'),('test_surface_visibility.cjs','frontend-native.js'),('test_control_delivery.cjs','frontend-native.js')]:
+    for name,leaf in [('test_codec_creation.cjs','frontend-codec.js'),('test_codec_mode_reconciliation.cjs','frontend-codec.js'),('test_codec_recovery.cjs','frontend-codec.js'),('test_mode_reconciliation.cjs','frontend-native.js'),('test_surface_clipping.cjs','frontend-native.js'),('test_surface_visibility.cjs','frontend-native.js'),('test_control_delivery.cjs','frontend-native.js'),('test_status_recovery.cjs','frontend-native.js')]:
         subprocess.run(['node',str(root/'tests'/name),str(root/'src'/leaf)],check=True)
 subprocess.run([__import__('sys').executable,str(package/'tests/test_patch_eol.py'),'--native-package',str(a.native_package)],check=True)
 print('PASS: exact public bridge patches, syntax and frontend regressions')

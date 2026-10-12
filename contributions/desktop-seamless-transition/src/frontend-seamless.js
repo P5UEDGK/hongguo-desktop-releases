@@ -311,7 +311,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       return {id, mode, dispose:cleanup, adopt(media, handlers, onFailure) {
         if (disposed) return null;
         const saved = new Map(), listeners = [];
-        let closed = false, activationComplete = false, wantsPlayback = true, playGeneration = 0;
+        let closed = false, activationComplete = false, wantsPlayback = true, playGeneration = 0, cancelPlayWait = null;
         const settings = {rate:media.playbackRate || 1,volume:media.volume,muted:media.muted};
         const property = (name, descriptor) => {
           saved.set(name,Object.getOwnPropertyDescriptor(media,name));
@@ -338,7 +338,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         const restoreAdoption = () => {
           if (closed) return false;
           const live = {playbackRate:video.playbackRate,volume:video.volume,muted:video.muted};
-          closed=true;consumer=null;
+          closed=true;consumer=null;cancelPlayWait?.();
           for(const [name,fn] of listeners)video.removeEventListener(name,fn);
           for(const [name,descriptor] of saved){if(descriptor)Object.defineProperty(media,name,descriptor);else delete media[name];}
           Object.assign(media,live);
@@ -366,7 +366,15 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         })().then(async () => {
           if (disposed || closed || !wantsPlayback) return;
           const generation=playGeneration;
-          try {await video.play();} catch (error) {if (wantsPlayback && generation===playGeneration) throw error;}
+          let timer;
+          try {
+            await new Promise((resolve,reject)=>{
+              cancelPlayWait=()=>reject(Error('Standby play cancelled'));
+              timer=setTimeout(()=>reject(Error('Standby play timed out')),Math.max(1,Math.min(deadline-Date.now(),2000)));
+              Promise.resolve(video.play()).then(resolve,reject);
+            });
+          } catch (error) {if (wantsPlayback && generation===playGeneration) throw error;}
+          finally {clearTimeout(timer);cancelPlayWait=null;}
         }).then(() => {
           if (disposed) return;
           if (!wantsPlayback) finishRetained();
