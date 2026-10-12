@@ -127,11 +127,22 @@ class EpisodePrefetcher:
                 self.latest_episodes = items
                 self.sources[vid] = source
                 self.current_source = source
-                seen = {vid}
+                future = []
+                window = {vid}
                 for index, future_vid in items:
-                    if index > episode and future_vid not in seen and len(self.download_pending) < self.ahead:
-                        self.download_pending.append((generation, index, future_vid))
-                        seen.add(future_vid)
+                    if index > episode and future_vid not in window and len(future) < self.ahead:
+                        future.append((generation, index, future_vid))
+                        window.add(future_vid)
+                self.download_pending = [task for task in self.download_pending
+                                         if task[0] == generation and task[2] in window]
+                seen = {vid, *self.sources}
+                seen.update(task[2] for task in self.download_pending if task[0] == generation)
+                if self.download_active is not None and self.download_active[0] == generation:
+                    seen.add(self.download_active[2])
+                for task in future:
+                    if task[2] not in seen:
+                        self.download_pending.append(task)
+                        seen.add(task[2])
                 if self.download_pending and (self.downloader is None or not self.downloader.is_alive()):
                     self.downloader = threading.Thread(target=self._download, name="desktop-source-prefetch", daemon=True)
                     try:

@@ -10,7 +10,36 @@ from desktop_playable_cache import PlayableEpisodeCache
 from job_fixture import Job
 from test_prefetch import complete_output,encoder,PROFILE_FILES
 
+
 class ReviewEdges(unittest.TestCase):
+    def test_same_generation_retry_deduplicates_active_and_completed_future(self):
+        from types import SimpleNamespace
+        for loaded in (False,True):
+            rows=[{'index':n,'vid':str(10000000+n)} for n in (1,2,3)]
+            value=EpisodePrefetcher(lambda _:self.source,lambda _:({},rows),self.root/('retry-'+str(loaded)),encoder=encoder,profile_files=PROFILE_FILES,ahead=2)
+            self.addCleanup(value.close);job=Job(uuid.uuid4().hex,self.root/('job-'+str(loaded)));value.begin(job,'series',1)
+            value.downloader=SimpleNamespace(is_alive=lambda:True)
+            job.source_loader('series',1)
+            value.download_pending.pop(0)
+            if loaded:value.sources['10000002']=self.source
+            else:value.download_active=(value.generation,2,'10000002')
+            rows[:]=[{'index':n,'vid':str(10000000+n)} for n in (1,2,4)]
+            job.source_loader('series',1)
+            self.assertEqual([task[2] for task in value.download_pending],['10000004'])
+            self.assertEqual([vid for ep,vid in value.latest_episodes if ep>1],['10000002','10000004'])
+            value.downloader=None
+
+    def test_foreground_commit_preserves_artifact_but_propagates_cancellation(self):
+        cache=self.cache();cancel=threading.Event();published=[]
+        reserve=cache._reserve
+        def commit(*args,**kwargs):
+            reserve(*args,**kwargs);cancel.set();return True
+        target=self.root/'cancelled-foreground'
+        with patch.object(cache,'_reserve',side_effect=commit):
+            with self.assertRaises(EncodingCancelled):cache.encode(self.source,target,cancelled=cancel.is_set,on_cache_key=published.append)
+        self.assertEqual(published,[])
+        self.assertTrue(cache.contains(self.source),'committed cache survives caller cancellation')
+
     def test_integration_worker_invokes_the_documented_job_bound_loader(self):
         import re,ast
         document=(Path(__file__).resolve().parents[1]/'INTEGRATION.md').read_text(encoding='utf8')

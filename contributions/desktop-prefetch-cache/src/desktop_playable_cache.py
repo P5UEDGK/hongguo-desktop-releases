@@ -475,6 +475,7 @@ class PlayableEpisodeCache:
         try:
             cached = identity_result is not None and self.store(source, directory, cancelled, video_mode=video_mode,
                                                                _identity_result=identity_result) is not None
+            if cancelled():raise EncodingCancelled()
             if cached: on_cache_key(identity_result[0])
             return cached
         except EncodingCancelled:
