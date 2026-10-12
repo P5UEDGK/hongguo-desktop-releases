@@ -12,14 +12,6 @@
 
 设置API仅在托管本地桌面挂载`/desktop/cache-settings`、`/choose`、`/clear`；只对这三个精确路径豁免宿主媒体key中间件，router仍校验固定Tauri来源、非简单请求头和POST随机写令牌。CORS仅追加相应头，媒体及账号继续原鉴权。不得把令牌持久化或上报。
 
-## 按剧名组织完整原片
-
-每个stream-cache根复用一个`VideoLibrary`。episode_loader获得整剧meta与episodes后调用`register(series_id, meta, episodes)`，保留同一份命名上下文供热切后的下载根使用；source_loader按vid先`lookup`，命中后不请求媒体网络。旧平铺原片作为兼容回退，禁止移动当前路径。
-
-新下载使用`target(vid)`取得安全目录，并将`prepare_publish(vid, staged, output)`作为cache_complete_episode的before_publish回调。索引先原子提交，完整MP4后原子发布；索引存在但媒体缺失或摘要不符均不算命中。索引与文件不匹配时保留内容，不覆盖未知重名文件；同名剧以ID隔离，未知季度用未分季。索引不存URL、密钥或账号，完整MP4可由本地播放器断网打开，应用内离线页面未在此材料中实现。
-
-清理传入同一library实例，同时将正在下载的实际命名目标加入protected。仅清理索引身份与完整摘要一致的文件；保留活动、被修改、未知和链接内容，更新索引并只移除两个已空的命名目录。容量统计递归覆盖新目录。
-
 ## 当前优先的预缓存
 
 `EpisodePrefetcher(source_loader, episode_loader, cache_root, encoder=..., ahead=3, download_loader=..., source_status=..., background_guard=...)`：

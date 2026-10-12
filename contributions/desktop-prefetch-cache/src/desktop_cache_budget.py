@@ -55,19 +55,15 @@ class CacheBudget:
             yield self.check
 
 
-def cache_complete_episode(budget, output, expected_bytes, fetch, convert, *, before_publish=None):
+def cache_complete_episode(budget, output, expected_bytes, fetch, convert):
     """Fetch and convert privately; publish an original only after complete validation.
 
     fetch(path, maximum, check) must honor the byte bound and cancellation check.
     convert(input, output) must validate/remux the complete media into output.
     The three source-sized copies reserve download/decrypt/remux peak usage.
-    Optional before_publish(staged, output) persists the named-file identity;
-    readers must verify that the final file exists and matches its digest.
     """
     output = Path(output)
-    stream_root = budget.root / 'stream-cache'
-    parent = output.parent.resolve(strict=True)
-    if parent != stream_root and stream_root not in parent.parents:
+    if output.parent.resolve() != budget.root / 'stream-cache':
         raise ValueError('Original output is outside the selected video cache')
     if type(expected_bytes) is not int or expected_bytes <= 0:
         raise CacheLimitReached('Complete episode size is unavailable')
@@ -84,10 +80,7 @@ def cache_complete_episode(budget, output, expected_bytes, fetch, convert, *, be
                 raise OSError('Incomplete episode conversion')
             check()
             # A concurrent foreground writer must own the same per-media lock.
-            if output.exists() or output.is_symlink():
+            if output.exists():
                 raise FileExistsError('Original output already exists')
-            if before_publish:
-                before_publish(complete, output)
-                check()
             os.replace(complete, output)
         return output
