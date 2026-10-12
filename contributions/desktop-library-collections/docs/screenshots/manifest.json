@@ -1,5 +1,5 @@
 {
-  "capture": "实际 Windows EXE / WebView2 原始截图。本轮7张中5张为真实目标合集，只做排序、导航及重启核验；2张根页使用隔离原生profile与人工记录。既有24张为历次隔离验收。旧合集分页截图仅保留为历史证据，当前合集已改为全部列出。",
+  "capture": "实际 Windows EXE / WebView2 原始截图。最新3张为37根条目/38原生记录的隔离fixture，共用一张已有公开缓存封面；不代表个人片单或上游结果。此前31张范围沿用原说明。旧根列表与合集分页截图仅为历史证据，当前两处根列表连续追加、合集全量列出。",
   "images": [
     {
       "file": "before-inline-layout.png",
@@ -162,6 +162,21 @@
       "sha256": "f3f504ecff82ad0d6e155723650590ae7f2c7b28220b20acef97c50d863e093f",
       "caption": "重启后41季仍保存，最新季在前，排序偏好持久化。",
       "scope": "本机真实目标合集，重启只读核验"
+    },
+    {
+      "file": "root-scroll-favorites.png",
+      "sha256": "ecd87a40b6118a1214a2f70a7d6bb68901098b0c862889ba5dfb3f42a2cc2e8c",
+      "caption": "收藏连续列表：首批显示与名称排序，卡片及观看进度保留。"
+    },
+    {
+      "file": "root-scroll-bottom.png",
+      "sha256": "b9e2a06b8d4c2e3c453b647513b3535daf4c6845f04ffcc59b0d84838056ff94",
+      "caption": "自动追加到第37个根条目，最后一批无页码或继续加载控件。"
+    },
+    {
+      "file": "root-scroll-history-narrow.png",
+      "sha256": "784e84c64194dce22a62c571f722e19221be3e8e96da56d76dbf3c134e324f44",
+      "caption": "620 CSS像素历史列表：两列卡片、原生移除历史入口与排序。顶部原有搜索区域拥挤仍不在本批范围。"
     }
   ]
 }

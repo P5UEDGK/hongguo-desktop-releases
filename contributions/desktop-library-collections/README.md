@@ -16,7 +16,7 @@
 - 各搜索入口共用一个队列，相同任务复用 Promise。取消后等待在途原生请求结束，再让下一个任务执行；不做定时更新或自动发现新季。
 - 收藏与历史的同一合集共用本地已知季度列表、季数、排序、封面和观看进度。根页只显示原记录中出现过的系列，未看过的季度标为“未观看”，不伪造历史。
 - 已有及以后归入可靠合集的本地季度自动加入原生收藏；仅查详情的候选、关系未知条目和孤立单季不触发。按 ID 去重，不增加搜索。手动取消的季跨重启保持取消，主动再收藏才清除排除；删除收藏不删除历史或关系。
-- 合集内一次显示所有已知季度，向下滚动查看；根列表每页12项，待确认候选每页8项。返回保留原页、滚动位置和入口焦点；关系晚到、单季变为合集时系列页不丢失。
+- 历史和收藏根列表连续滚动，不显示页码；首次显示12项，接近底部时再追加12项，已有卡片保留。提供键盘可用的“加载更多”入口，全部显示后停止追加。排序回到顶部并重置首批，返回合集前的列表时恢复已显示范围、滚动位置和入口焦点。合集内全部季度一次列出，待确认候选仍每页8项；关系晚到、单季变为合集时系列页不丢失。
 - 封面区分“合集”“单季”，合集标季数。右下角进度为最近观看集序号÷该季总集数，向下取整并限制0–100%；合集注明最近季，未观看和总集数未知分别显示对应文字。标签统一为11px、24px高，背景不透明度40%。
 - 搜索的等待、核验、完成、失败和取消文字只替换按钮右侧的同一个位置，不增加下方状态行或移动季列表。长文字省略，`title` 和 `aria-live` 保留完整内容。
 - 根卡片没有重复“补齐合集”或“进入合集查看各季”入口；播放详情不再放补季面板；界面不提供手动归组。旧指定关系保留读取兼容。
@@ -36,10 +36,11 @@ node contributions/desktop-library-collections/tests/test_library_adapter.mjs
 node contributions/desktop-library-collections/tests/test_season_search.mjs
 node contributions/desktop-library-collections/tests/test_season_integration.mjs
 node contributions/desktop-library-collections/tests/test_library_sort.mjs
+node contributions/desktop-library-collections/tests/test_library_scroll.mjs
 node --check contributions/desktop-library-collections/src/frontend-library.mjs
 ```
 
-后端8项、前端核心20项及工厂接线4项、分季搜索17项、排序6项及搜索/收藏集成2项回归均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，31张原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
+后端8项、前端核心20项及工厂接线4项、分季搜索17项、排序6项、连续列表1项及搜索/收藏集成2项回归均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
 
 ## 接入限制
 

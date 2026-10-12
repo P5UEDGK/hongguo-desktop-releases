@@ -40,7 +40,7 @@ test('factory renders every season, exposes separate persistent controls, sortin
   const storage=new Map(),events=new EventTarget();let cursor=0,refCursor=0,searches=0;
   const state=[],refs=[];
   globalThis.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)};
-  globalThis.window=events;
+  globalThis.window=events;window.scrollTo=()=>{};window.scrollTo=()=>{};
   globalThis.document={createElement:()=>({}),head:{append:()=>{}}};
   const React={Fragment:Symbol('Fragment'),useEffect:()=>{},
     useState:value=>{const i=cursor++;if(!(i in state))state[i]=typeof value==='function'?value():value;return [state[i],value=>{state[i]=typeof value==='function'?value(state[i]):value;}];},

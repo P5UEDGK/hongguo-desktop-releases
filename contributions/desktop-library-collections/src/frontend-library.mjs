@@ -135,11 +135,11 @@ function DesktopLibrarySort({value,onChange,seasons=false,view}) {
 
 function DesktopLibraryGrid({items,history=[],view,renderCard}) {
   desktopUseLibraryVersion();
-  const [selected,setSelected]=O.useState(null),[rootPage,setRootPage]=O.useState(1);
+  const [selected,setSelected]=O.useState(null),[visibleCounts,setVisibleCounts]=O.useState({});
   const [rootOrder,setRootOrder]=O.useState(()=>desktopLibrarySortPreference(view));
   const [seasonOrder,setSeasonOrder]=O.useState(()=>desktopLibrarySortPreference('seasons'));
-  O.useEffect(()=>{setRootOrder(desktopLibrarySortPreference(view));setSeasonOrder(desktopLibrarySortPreference('seasons'));setRootPage(1);},[view]);
-  const heading=O.useRef(null),restoreKey=O.useRef(null),rootScroll=O.useRef(0);
+  O.useEffect(()=>{setRootOrder(desktopLibrarySortPreference(view));setSeasonOrder(desktopLibrarySortPreference('seasons'));setSelected(null);restoreKey.current=null;rootScroll.current=0;},[view]);
+  const heading=O.useRef(null),restoreKey=O.useRef(null),rootScroll=O.useRef(0),loadMore=O.useRef(null);
   const signature=items.map(item=>item.seriesId).join(',');
   O.useEffect(()=>{void desktopLibrary.ensure(items);},[signature]);
   const groups=desktopLibraryGroups(items,desktopLibrary.relations,desktopLibrary.manual,[...desktopLibrary.known.values()]);
@@ -147,8 +147,18 @@ function DesktopLibraryGrid({items,history=[],view,renderCard}) {
   // attached to the selected member while its visible group grows or changes key.
   const collection=selected?groups.find(group=>group.items.some(item=>item.seriesId===selected)):null;
   const sortedGroups=desktopLibrarySortGroups(groups,items,rootOrder,group=>group.items.length>1?desktopLibraryDisplayTitle(group.items[0].title):group.items[0].title);
-  const roots=desktopLibraryPage(sortedGroups,rootPage,12),seasons=desktopLibrarySortSeasons(collection?.items||[],desktopLibrary.relations,seasonOrder);
-  O.useEffect(()=>{if(rootPage!==roots.page)setRootPage(roots.page);},[rootPage,roots.page]);
+  const visibleCount=visibleCounts[view]||12,roots=sortedGroups.slice(0,visibleCount);
+  const hasMore=roots.length<sortedGroups.length,seasons=desktopLibrarySortSeasons(collection?.items||[],desktopLibrary.relations,seasonOrder);
+  function appendRoots(){setVisibleCounts(counts=>({...counts,[view]:Math.min(sortedGroups.length,(counts[view]||12)+12)}));}
+  O.useEffect(()=>{
+    if(collection||!hasMore||!loadMore.current||typeof IntersectionObserver==='undefined')return;
+    let appended=false;
+    const observer=new IntersectionObserver(entries=>{
+      if(!appended&&entries.some(entry=>entry.isIntersecting)){appended=true;appendRoots();}
+    },{rootMargin:'0px 0px 480px 0px'});
+    observer.observe(loadMore.current);
+    return()=>observer.disconnect();
+  },[!!collection,hasMore,visibleCount,sortedGroups.length,rootOrder,view]);
   O.useEffect(()=>{if(selected&&!collection)setSelected(null);},[selected,!!collection]);
   O.useEffect(()=>{
     if(selected&&collection){heading.current?.focus({preventScroll:true});heading.current?.closest('.desktop-collection-view')?.scrollIntoView({block:'start'});}
@@ -182,9 +192,9 @@ function DesktopLibraryGrid({items,history=[],view,renderCard}) {
   }
   return b.jsxs('div',{className:'desktop-library-root',children:[
     b.jsxs('div',{className:'desktop-library-toolbar',children:[b.jsx('span',{children:`${groups.length} 个条目，其中 ${groups.filter(group=>group.items.length>1).length} 个合集`}),
-      b.jsx(DesktopLibrarySort,{view,value:rootOrder,onChange:value=>{setRootOrder(value);desktopLibrarySortPreference(view,value);setRootPage(1);}})
+      b.jsx(DesktopLibrarySort,{view,value:rootOrder,onChange:value=>{setRootOrder(value);desktopLibrarySortPreference(view,value);setVisibleCounts(counts=>({...counts,[view]:12}));window.scrollTo(0,0);}})
     ]}),
-    b.jsx('div',{className:'series-grid desktop-library-grid',children:roots.items.map(group=>{
+    b.jsx('div',{className:'series-grid desktop-library-grid',children:roots.map(group=>{
       if(group.items.length===1)return renderCard(group.items[0],{open:()=>enter(group),entryKey:group.key});
       const first=group.items[0],title=desktopLibraryDisplayTitle(first.title);
       const progress=desktopLibraryProgress(group.items,history,desktopLibrary.relations);
@@ -196,7 +206,8 @@ function DesktopLibraryGrid({items,history=[],view,renderCard}) {
         b.jsx('div',{className:'card-copy',children:b.jsx('button',{className:'card-title',title,onClick:()=>enter(group),children:title})})
       ]},group.key);
     })}),
-    b.jsx(DesktopLibraryPagination,{total:groups.length,page:roots.page,size:12,onChange:setRootPage,label:'片单'})
+    hasMore&&b.jsx('div',{className:'desktop-library-more',ref:loadMore,children:
+      b.jsx('button',{type:'button',onClick:appendRoots,children:'加载更多'})})
   ]});
 }
 
@@ -204,6 +215,7 @@ const desktopLibraryStyle = document.createElement('style');
 desktopLibraryStyle.textContent = `
 .desktop-library-grid{--library-accent:var(--coral,#ff6697);--library-muted:#626975;--library-border:var(--border,#e6e7ec);--library-surface:#fff;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:24px 18px}
 .desktop-library-sort{position:relative;display:inline-flex;flex:none;font-size:13px;white-space:nowrap;color:var(--muted,#626975)}.desktop-library-sort::after{content:"";position:absolute;right:13px;top:50%;width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-70%) rotate(45deg);pointer-events:none}.desktop-library-sort select{appearance:none;font:inherit;line-height:1.4;min-width:112px;min-height:36px;box-sizing:border-box;padding:8px 34px 8px 12px;border:1px solid var(--line,#e6e7ec);border-radius:10px;background:var(--paper,#fff);color:var(--ink,#414754);cursor:pointer;box-shadow:none}.desktop-library-sort select:hover{border-color:var(--coral,#b82d5c)}.desktop-library-sort select:focus-visible{outline:2px solid var(--coral,#b82d5c);outline-offset:3px}.desktop-library-sort select option{background:var(--paper,#fff);color:var(--ink,#414754)}.desktop-collection-heading .desktop-library-sort{margin-left:auto}.desktop-library-toolbar{flex-wrap:wrap;align-items:center}
+.desktop-library-more{display:flex;justify-content:center;margin:26px 0 12px}.desktop-library-more button{font:inherit;font-size:13px;min-height:36px;padding:8px 18px;border:1px solid var(--line,#e6e7ec);border-radius:10px;background:var(--paper,#fff);color:var(--ink,#414754);cursor:pointer}.desktop-library-more button:hover{border-color:var(--coral,#b82d5c)}
 .desktop-library-grid .series-card{min-width:0;align-self:start}.desktop-library-grid .cover-button{aspect-ratio:3/4;border-radius:12px;box-shadow:none}.desktop-library-grid .card-copy{padding-top:10px}.desktop-library-grid .card-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;text-align:left;font-size:15px;line-height:1.45;min-height:2.9em;font-weight:600;overflow-wrap:anywhere;text-wrap:balance}.desktop-library-grid .card-copy p{font-size:12px;line-height:1.5;color:var(--library-muted);margin-top:5px}.desktop-library-grid .episode-chip{top:auto;bottom:10px;left:10px;right:auto;font-size:11px;max-width:40%}.desktop-kind-chip,.desktop-watch-chip,.desktop-season-count{position:absolute;z-index:2;max-width:calc(100% - 20px);padding:4px 7px;border-radius:6px;font-size:11px;line-height:1.5;font-weight:600;color:#fff;background:#20242acc;pointer-events:none}.desktop-kind-chip{top:10px;left:10px}.desktop-kind-chip.is-collection{background:#ad2352}.desktop-watch-chip{right:10px;bottom:10px;box-sizing:border-box;height:24px;padding:4px 7px;font-size:11px;line-height:16px;text-align:right;white-space:nowrap;max-width:calc(100% - 20px);overflow:hidden;text-overflow:ellipsis;background:#20242a66;text-shadow:0 1px 2px #0008}.desktop-season-count{top:10px;right:10px;background:#fff;color:#95324f}.desktop-series-folder{border:0;background:transparent;padding:0}.desktop-folder-button{outline:2px solid #ffd4e3;outline-offset:3px}.desktop-series-folder .card-title{padding-right:0}
 .desktop-season-actions button,.desktop-library-pagination button,.desktop-library-pagination select,.desktop-library-breadcrumb button{font:inherit;border:1px solid var(--border,#e6e7ec);border-radius:8px;background:#fff;color:#414754;padding:7px 12px;cursor:pointer}.desktop-season-actions button:hover,.desktop-library-pagination button:not(:disabled):hover,.desktop-library-breadcrumb button:hover{background:#fff1f6;border-color:#efb6ca}.desktop-library-pagination button:disabled,.desktop-season-actions button:disabled{opacity:.45;cursor:default}.desktop-library-root button:focus-visible,.desktop-collection-view button:focus-visible,.desktop-library-pagination select:focus-visible{outline:2px solid #b82d5c;outline-offset:3px}.desktop-collection-heading h1:focus{outline:none}
 .desktop-season-actions{margin:14px 0 22px;font-size:13px}.desktop-season-toolbar{display:flex;align-items:center;gap:12px;min-width:0}.desktop-season-toolbar>button{flex:none}.desktop-season-toolbar>.desktop-season-message{flex:1;min-width:0;margin:0;color:#626975;font-size:12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.desktop-season-candidate{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}.desktop-season-candidate{padding:10px 0;border-bottom:1px solid #e6e7ec}.desktop-season-candidate>span{flex:1;min-width:160px}.desktop-library-pagination{display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;margin:26px 0 12px;font-size:13px;color:#626975}.desktop-library-pagination select{padding:6px;min-width:50px}.desktop-library-toolbar{display:flex;justify-content:space-between;align-items:start;gap:16px;margin:-8px 0 22px;color:#626975;font-size:13px}.desktop-collection-view{scroll-margin-top:96px}.desktop-library-breadcrumb{display:flex;align-items:center;gap:14px;margin-bottom:18px;font-size:13px;color:#626975}.desktop-library-breadcrumb button{border:0;padding:5px 0;color:#a52c54;background:transparent}.desktop-collection-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:12px}.desktop-collection-heading h1{margin:0;font-size:26px;line-height:1.4;overflow-wrap:anywhere;text-wrap:balance}.desktop-collection-heading>span{font-size:13px;color:#626975}.library-page:has(.desktop-collection-view)>.headline-row{display:none}
