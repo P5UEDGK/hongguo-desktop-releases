@@ -12,13 +12,14 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,110 @@
+@@ -291,7 +296,113 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
 -            return session.submit(body)
 +            ownership = list(getattr(session, "handoff_previous", ()))
 +            original_ownership=list(ownership);rollback=[]
++            if body.get("visible") is True:session.handoff_activation_invalid=True
 +            if body.get("visible") is True and getattr(session,"handoff_restore_pending",False):raise queue.Full()
 +            try:
 +                if getattr(session.job, "prewarm_parent", None):
@@ -54,6 +55,7 @@
 +                    body={"paused":True,"muted":True,**body}
 +                revision = session.submit(body)
 +                session.handoff_previous = ownership
++                if body.get("visible") is True:session.handoff_activation_invalid=False
 +                if body.get("visible") is False:
 +                    session.handoff_silence_revision=revision
 +                    self._restore_handoff(session)
@@ -106,6 +108,7 @@
 +        with self.guard:
 +            session = self.sessions.get(identifier)
 +            if session is None: raise ValueError("Standby session unavailable")
++            if getattr(session,"handoff_activation_invalid",False):raise ValueError("Standby handoff invalidated")
 +            if getattr(session,"handoff_restore_pending",False):raise ValueError("Parent rollback pending")
 +            for previous, _, pause_revision in getattr(session, "handoff_previous", ()):
 +                if not any(previous is live for live in self.sessions.values()): continue
@@ -124,7 +127,7 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -301,6 +409,8 @@
+@@ -301,6 +412,8 @@
          with self.guard:
              if self.sessions.get(identifier) is session:
                  self.sessions.pop(identifier, None)
@@ -133,7 +136,7 @@
          return True
  
  
-@@ -432,6 +542,8 @@
+@@ -432,6 +545,8 @@
              revision = self.revision + 1
              self.commands.put_nowait((revision, command))
              self.revision = revision
@@ -142,7 +145,7 @@
              self.queued_state.update({key: value for key, value in command.items()
                                        if key in self.queued_state})
              return revision
-@@ -458,7 +570,8 @@
+@@ -458,7 +573,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -152,7 +155,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -646,6 +759,7 @@
+@@ -646,6 +762,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

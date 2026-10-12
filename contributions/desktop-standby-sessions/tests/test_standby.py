@@ -20,6 +20,21 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_failed_repeated_visible_invalidates_old_activation_after_successful_rollback(self):
+        host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0};child_state={'outputReady':True,'visible':False,'paused':True,'muted':True,'revision':0};blocked=[False]
+        def submit_parent(body):state.update(body,revision=state['revision']+1);parent.pause_revision=state['revision'];return state['revision']
+        def submit_child(body):
+            if blocked[0]:raise queue.Full()
+            child_state.update(body,revision=child_state['revision']+1);return child_state['revision']
+        parent=SimpleNamespace(stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=submit_parent)
+        child=SimpleNamespace(stop=threading.Event(),job=SimpleNamespace(prewarm_parent='parent'),snapshot=lambda:dict(child_state),submit=submit_child)
+        host.sessions={'parent':parent,'child':child};host.control('child',{'visible':True,'paused':False,'muted':False});host.validate_handoff('child')
+        submit_parent({'paused':False});blocked[0]=True
+        with self.assertRaises(queue.Full):host.control('child',{'visible':True,'paused':False,'muted':False})
+        self.assertFalse(state['paused']);self.assertFalse(child.handoff_previous)
+        with self.assertRaisesRegex(ValueError,'invalidated'):host.validate_handoff('child')
+        blocked[0]=False;host.control('child',{'visible':True,'paused':False,'muted':False});host.validate_handoff('child');self.assertTrue(state['paused'])
+
     def test_child_silence_revision_precedes_parent_restore(self):
         host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0};child_state={'outputReady':True,'visible':False,'muted':True,'paused':True,'revision':0};queued=[]
         def parent_submit(body):
