@@ -6,13 +6,13 @@
 
 ## 接线与生命周期
 
-应用src下三个backend补丁和原生测试适配补丁。原HlsJobs增加on_activate=prefetch.promote、standby_source_loader=prefetch.load_standby_source，保留on_start=prefetch.begin、before_work=prefetch.before_work、on_finish=prefetch.finish和source_loader=prefetch.load_source。CORS允许请求头加入x-desktop-prewarm-parent，保持回环鉴权与来源白名单。
+应用src下三个backend补丁和原生测试适配补丁。原HlsJobs增加on_activate=prefetch.promote，保留on_start=prefetch.begin、before_work=prefetch.before_work、on_finish=prefetch.finish和source_loader=prefetch.load_source。CORS允许请求头加入x-desktop-prewarm-parent，保持回环鉴权与来源白名单。
 
 创建请求带x-desktop-codec-negotiation:1及x-desktop-prewarm-parent:<当前UUID>。服务器验证同剧、紧邻下一集、零偏移、有效父会话与单备用，能力接口standbyPlayback:1。备用继承创建时的预缓存代际，before_work和activate均拒绝已过期代际。
 
 原生outputReady后提交可见控制，后端先等旧音频暂停ACK再提交新控制；失败恢复已接受的父暂停意图。control只表示排队成功，前端还须确认visible/outputReady/revision，再POST /{id}/activate。HLS首帧就绪后POST activate。激活在会话锁内原子比较代际并迁移，过期返回409且保留父关系，不会把新前台任务取消。重复成功激活幂等；失败/取消不会返回虚假成功。
 
-提升复用prepared source，同步迁移代际后返回延迟启动函数；HlsJobs清除父关系并退出会话锁后才调用它，随后异步刷新元数据及未来下载。不可在promote内提前启动元数据线程。过时元数据不覆盖新代际，已经结束的任务释放foreground；未结束HLS继续保留原编码槽直到实际完成。释放父会话级联取消未提升子会话，提升后子会话独立。沿用总会话上限、编码信号量、到期回收和shutdown close。
+提升复用prepared source，仅异步刷新元数据及未来下载。过时元数据不覆盖新代际，已经结束的任务释放foreground；未结束HLS继续保留原编码槽直到实际完成。释放父会话级联取消未提升子会话，提升后子会话独立。沿用总会话上限、编码信号量、到期回收和shutdown close。
 
 ## 验证与回滚
 
@@ -20,69 +20,6 @@
 pwsh -NoProfile -Command "python -I contributions/desktop-standby-sessions/tests/run.py --native-package <native-contribution-dir> --prefetch-package <prefetch-contribution-dir>"
 ```
 
-公开组合158项全部通过，已提供自有HEVC夹具完成可选项。包含原生资源池、缓存/下载、单处理槽、代际/取消、控制失败恢复和迟到激活。私有融合候选另通过138项及真实Tauri原生/HLS 1x/2x/3x状态检查，不能代替上游实际接入与连续画面验收。
+公开组合144项：143通过、1项可选HEVC样本测试跳过。包含原生资源池、缓存/下载、单处理槽、代际/取消、控制失败恢复和迟到激活。私有融合候选另通过138项及真实Tauri原生/HLS 1x/2x/3x状态检查，不能代替上游实际接入与连续画面验收。
 
 用户已确认上一批本机黑屏消失，本轮继续处理短暂停顿；上游发行版是否解决需接入发布后验证。回滚撤销补丁及on_activate接线，保留用户原片和观看记录。[Issue关闭条件](ISSUES.md)，不自动关闭。
-
-前序批次补丁基线曾同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee及#187的8f28b71bd9c59a6a47e31413f7be3f486d81ab0b，保留异步诊断writer和原生源一致性修复。新增立即完成元数据的确定性回归，证明先解除父关系再完成foreground清理；旧实现失败，当前组合通过。
-
-备用会话补丁同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516 与prefetch 6b78af10c856f1327ef7f16f9242e6754057b8f4。保留元数据返回后的代际重查；预热在可取消准备锁内保留父会话，使用job绑定的请求窗口。组合167项全部通过，含自有HEVC夹具、新窗口归属及全部prefetch回归。本机安装待完成。
-
-
-## 本轮二次反馈修复
-
-原生 control 在读取请求体后，将会话有效性检查、提交及 activation revision 更新置于同一 jobs.guard 临界区，避免 DELETE 在父会话已暂停后抢先取消。预缓存依赖同步本轮前台状态与后台 stage 清理修复；保留 promote 的解除父关系后启动行为。确定性双线程回归在旧实现失败。
-
-
-## 本轮三次反馈修复
-
-HlsJobs新增可选standby_source_loader=prefetch.load_standby_source。该入口按job的父代际和取消状态检查冷源，不要求current为子集，也不提前提升；旧README接线的冷备用回放失败。推进新前台代际时取消正在编码的warm owner，让编码器按既有cancelled回调退出，实际退出后再释放busy。两个旧回放失败，当前174项全部通过（含自有HEVC）。当前原生及prefetch依赖均读取BASELINES.json对应HEAD，不再使用固定旧提交。
-
-本机候选与安装仍待完成。
-
-
-本轮审查回归（2026-10-12，第四批）：4242307145：过期冷待机下载在返回前释放本次新建source，借用缓存source不关闭。
-
-
-依赖元数据同步到完整缓存时间线校验提交；四个补丁的目标文件摘要保持不变。
-
-
-本轮第六批审查（2026-10-12）：4242520609/0615/0618：显示前验证当前generation；HLS父到native子跨模式拒绝未经确认音频交接；README依赖同步。
-
-本轮审查修复：4242698571/8574：代际推进撤销已完成待确认备用控制并恢复父意图；拒绝native父到HLS子跨模式提升。
-
-2026-10-12 第十轮复核：4242836457：重复visible交接不重复推进已持有的父暂停修订号，仍保留后来用户意图。
-
-2026-10-12 第十二轮复核：4243007403/7409：提升回调异常不能返回激活成功；阻塞native控制放入工作线程。
-
-2026-10-12 第十三轮复核：依赖204新native实现重新生成patch与digest，不改变备用业务行为。
-
-2026-10-12 第十五轮复核：4243146772/6776/6779：成功activate提交后释放父session引用；淘汰metadata同步移除对应foreground directory；control请求body必须是对象。
-
-2026-10-12 第十六轮复核：4243192122：预下载源原子转移所有权并取消后台使用，子session释放不关闭仍被持有的缓存源。
-
-2026-10-12 第十七轮复核：依赖#187/#204：源job绑定与新增callback重基，保留备用源原子所有权转移。
-
-2026-10-12 第十八轮复核：4243346080/6083：隐藏revision使激活失效；确认guard内get已拒绝取消parent，增加pending释放回归。
-
-2026-10-12 第十九轮复核：4243418884/8887：guard内拒绝stale parent代际；promoted metadata加载传入job阻止取消后提交。
-
-2026-10-12 第二十一轮复核：4243496834/6837：通过请求接受校验后才撤销旧备用；检查释放后真实成员关系；同步native删除pending修复。
-
-2026-10-12 第二十二轮复核：同步native/prefetch依赖基线并保留备用会话归属及pending删除行为。 4243654408/4410：备用源转交先认领排队或在途预取；激活时原子验证父会话暂停归属。
-
-2026-10-12 第二十三轮复核：同步native输入目标重定向补丁基线，保留暂停归属原子验证和源转交。
-
-2026-10-12 第二十四轮复核：4243749528：有效预加载owner不因15秒上限失败，保持取消与代际检查。
-
-2026-10-12 第二十五轮复核：4243802590：元数据载入期间使用独立promotion代际token，不被先结束的编码worker剥夺提交资格。
-
-2026-10-12 第二十六轮复核：4243875044/5065：隐藏provisional child还原parent；ACK失败和队列满时保留并重试父状态还原所有权。
-
-2026-10-12 第二十七轮复核：4243929031：provisional child的partial hide强制补齐暂停静音并还原parent。
-
-2026-10-12 第二十八轮复核：4243995102/5105：child隐藏静音revision确认后再恢复parent；备用加载失败恢复已领取后台任务。
-
-2026-10-12 第二十九轮复核：4244061694：失败的重复visible交接保留激活失效标记直到新visible成功。
-
-验证：424项融合后端无跳过、37套播放器前端、267项公开备用组合（1项可选片源跳过）、88项浏览器及真实libmpv字幕位置编辑通过。8项冻结前版反例失败、当前通过；Windows autocrlf实际克隆后的补丁应用通过。评论7组、暂停预加载136项公开组合通过；片源预加载owner未变，复用第28轮16项真实延迟片源检查。候选Tauri原生/HLS播放、裁剪、暂停和退出释放通过。评论及浏览器组件未变，复用第28轮7组评论和88项浏览器证据。本机安装验收随后执行，上游尚未合并发布。

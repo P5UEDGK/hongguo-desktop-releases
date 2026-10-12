@@ -1,22 +1,6 @@
 --- a/backend/desktop_prefetch.py
 +++ b/backend/desktop_prefetch.py
-@@ -4,6 +4,7 @@
- from pathlib import Path
- import re
- import threading
-+import time
- import uuid
- 
- from desktop_hls import EncodingCancelled
-@@ -26,6 +27,7 @@
-         self.reporter = None
-         self.generation = 0
-         self.foreground = {}
-+        self.warm_jobs = {}
-         self.foreground_directories = {}
-         self.cache_results = {}
-         self.busy = None
-@@ -59,11 +61,18 @@
+@@ -56,10 +56,13 @@
                  by_index.setdefault(index, vid)
          return sorted(by_index.items())
  
@@ -26,24 +10,21 @@
 +        with self.condition:
 +            if expected_generation is not None and (self.closed or expected_generation != self.generation):
 +                return None
-+            for identifier, warm in self.warm_jobs.items():
-+                if identifier != job.id:
-+                    warm.cancelled.set()
-+            self.warm_jobs.clear()
              self.generation += 1
              self.foreground[job.id] = self.generation
-             job.source_loader = lambda sid, ep: self.load_source(sid, ep, job=job)
 +            job.prefetch_generation = self.generation
-             if getattr(job, "directory", None) is not None:
-                 self.foreground_directories[job.id] = Path(job.directory)
              self.pending = []
-@@ -80,15 +89,26 @@
+             self.download_pending = []
+             self.sources = {}
+@@ -74,15 +77,25 @@
              self.latest_episodes = []
              self.background_cancelled.set()
              self.condition.notify_all()
+-        self._report()
+-
 +            generation = self.generation
-         self._report()
- 
++        self._report()
++
 +        return generation
      def before_work(self, job):
          with self.condition:
@@ -53,7 +34,6 @@
 +                if generation != self.generation:
 +                    raise EncodingCancelled()
 +                self.foreground.setdefault(job.id, generation)
-+                self.warm_jobs[job.id] = job
              while True:
                  if (job.cancelled.is_set() or self.closed
                          or self.foreground.get(job.id) != self.generation):
@@ -63,97 +43,30 @@
 +                        key != job.id and generation == self.generation
 +                        for key, generation in self.foreground.items())):
                      self.busy = job.id
-                     if getattr(job, "directory", None) is not None:
-                         self.foreground_directories[job.id] = Path(job.directory)
-@@ -103,10 +123,10 @@
+                     return
+                 self.condition.wait(0.1)
+@@ -95,7 +108,7 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
--    def load_source(self, series_id, episode, *, job=None):
-+    def load_source(self, series_id, episode, *, job=None, prepared_source=None):
+-    def load_source(self, series_id, episode):
++    def load_source(self, series_id, episode, *, prepared_source=None):
          with self.condition:
-             if (self.closed or self.current != {"seriesId": str(series_id), "episode": episode}
--                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation)):
-+                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation and getattr(job,"_prefetch_metadata_generation",None) != self.generation)):
-                 raise EncodingCancelled()
              generation = self.generation
          _, metadata = self.episode_loader(series_id)
-@@ -116,13 +136,13 @@
+@@ -103,7 +116,7 @@
+         vid = next((vid for index, vid in items if index == episode), None)
+         if vid is None:
              raise ValueError("Episode media identity unavailable")
-         with self.condition:
-             if (generation != self.generation or self.closed
--                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation)
-+                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation and getattr(job,"_prefetch_metadata_generation",None) != generation)
-                     or self.current != {"seriesId": str(series_id), "episode": episode}):
-                 raise EncodingCancelled()
 -        source = self.source_loader(vid)
 +        source = prepared_source if prepared_source is not None else self.source_loader(vid)
+         source_complete = self._source_complete(source)
          with self.condition:
              if (generation == self.generation and not self.closed
--                    and (job is None or not job.cancelled.is_set() and self.foreground.get(job.id) == generation)
-+                    and (job is None or not job.cancelled.is_set() and (self.foreground.get(job.id) == generation or getattr(job,"_prefetch_metadata_generation",None) == generation))
-                     and self.current == {"seriesId": str(series_id), "episode": episode}):
-                 self.latest_episodes = items
-                 self.sources[vid] = source
-@@ -158,6 +178,113 @@
+@@ -130,6 +143,53 @@
          self._report()
          return source
  
-+    def load_standby_source(self, job, series_id, episode):
-+        def current_generation():
-+            with self.condition:
-+                if (self.closed or job.cancelled.is_set() or not job.prewarm_parent
-+                        or job.prefetch_generation != self.generation):
-+                    raise EncodingCancelled()
-+        current_generation()
-+        _, metadata = self.episode_loader(series_id)
-+        vid = next((vid for index, vid in self._episodes(metadata) if index == episode), None)
-+        if vid is None:
-+            raise ValueError("Episode media identity unavailable")
-+        source=None
-+        claimed_pending=[];claimed_download=[]
-+        try:
-+            with self.condition:
-+                current_generation()
-+                # Claim queued work before releasing the scheduling lock. An
-+                # in-flight download must publish its source before transfer.
-+                claimed_pending=[task for task in self.pending if task[2] == vid]
-+                self.pending = [task for task in self.pending if task[2] != vid]
-+                claimed_download=[task for task in self.download_pending if task[2] == vid]
-+                self.download_pending = [task for task in self.download_pending if task[2] != vid]
-+                while (self.download_active is not None and self.download_active[2] == vid
-+                       or self.active is not None and self.active[2] == vid):
-+                    if self.active is not None and self.active[2] == vid:
-+                        self.background_cancelled.set()
-+                    current_generation()
-+                    self.condition.wait(.05)
-+                current_generation()
-+                source = self.sources.get(vid)
-+                if source is self.current_source and callable(getattr(source, "close", None)):
-+                    source = None  # The current foreground still owns this source.
-+                elif source is not None:
-+                    source = self.sources.pop(vid, None)
-+                self.condition.notify_all()
-+            self._report()
-+            if source is None:
-+                source = self.source_loader(vid)
-+            current_generation()
-+            return source
-+        except Exception:
-+            retained=False
-+            with self.condition:
-+                if not self.closed and job.prefetch_generation == self.generation:
-+                    self.pending=claimed_pending+[task for task in self.pending if task not in claimed_pending]
-+                    self.download_pending=claimed_download+[task for task in self.download_pending if task not in claimed_download]
-+                    if source is not None:
-+                        self.sources[vid]=source;retained=True
-+                    self.condition.notify_all()
-+            if source is not None and not retained and callable(getattr(source,"close",None)):
-+                try:source.close()
-+                except Exception:pass
-+            self._report()
-+            raise
-+
 +    def promote(self, job, series_id, episode):
 +        if job.cancelled.is_set():
 +            return False
@@ -163,24 +76,20 @@
 +            expected_generation=getattr(job, "prefetch_generation", self.generation))
 +        if generation is None:
 +            return False
-+        def load_after_detach():
-+            try:
-+                threading.Thread(target=self._load_promoted,
-+                    args=(job, series_id, episode, generation),
-+                    name="desktop-standby-metadata", daemon=True).start()
-+            except RuntimeError:
-+                if getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native":
-+                    self.finish(job, series_id, episode, job.source)
-+        return load_after_detach
++        try:
++            threading.Thread(target=self._load_promoted,
++                args=(job, series_id, episode, generation),
++                name="desktop-standby-metadata", daemon=True).start()
++        except RuntimeError:
++            if getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native":
++                self.finish(job, series_id, episode, job.source)
 +
 +    def _load_promoted(self, job, series_id, episode, generation):
 +        with self.condition:
 +            invalid = self.closed or job.cancelled.is_set() or generation != self.generation
-+            if not invalid: job._prefetch_metadata_generation = generation
 +            finish_cancelled = invalid and (getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native")
 +            if invalid and finish_cancelled and self.foreground.get(job.id) == generation:
 +                self.foreground.pop(job.id, None)
-+                self.foreground_directories.pop(job.id, None)
 +                if self.busy == job.id:
 +                    self.busy = None
 +                self.condition.notify_all()
@@ -189,7 +98,7 @@
 +                self.finish(job, series_id, episode, job.source)
 +            return
 +        try:
-+            source = self.load_source(series_id, episode, job=job, prepared_source=job.source)
++            source = self.load_source(series_id, episode, prepared_source=job.source)
 +        except Exception:
 +            source = None  # Optional future-download metadata must not affect playback.
 +        with self.condition:
@@ -197,7 +106,6 @@
 +            # Activation must retain its existing encoding slot until the
 +            # actual worker finishes. If it finished during metadata loading,
 +            # refresh bookkeeping now that the episode list is available.
-+            job._prefetch_metadata_generation = None
 +            finish_now = getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native"
 +            if finish_now and generation == self.generation:
 +                self.foreground[job.id] = generation
@@ -209,16 +117,15 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -192,6 +319,8 @@
+@@ -154,6 +214,7 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
-+            self.warm_jobs.pop(job.id, None)
 +            job._prefetch_work_finished = True
              expected = self.foreground.get(job.id)
-             cached_result = self.cache_results.pop(job.id, None)
-             self.foreground_directories.pop(job.id, None)
-@@ -213,6 +342,9 @@
+         mode = getattr(job, "video_mode", "h264")
+         # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
+@@ -168,6 +229,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -228,7 +135,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -366,6 +498,7 @@
+@@ -297,6 +361,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result
