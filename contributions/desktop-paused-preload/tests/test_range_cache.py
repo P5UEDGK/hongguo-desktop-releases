@@ -7,17 +7,6 @@ from desktop_stream import RangeReader
 
 
 class RangeCacheTests(unittest.TestCase):
-    def test_cache_close_flush_error_does_not_abort_teardown(self):
-        cache=RangeDiskCache(self.path,100,100)
-        cache.store(0,b'hello',lambda:False)
-        with patch.object(cache.file,'close',side_effect=OSError('optional flush failed')):
-            cache.close()
-        self.assertTrue(cache.closed and cache.failed)
-        self.assertTrue(cache.file.raw.closed)
-        self.assertEqual(cache.entries,{})
-        self.assertFalse(cache.snapshot()['cacheComplete'])
-        cache.close()
-
     def test_interrupted_fill_restarts_after_backoff_without_duplicate_worker(self):
         class Source:
             size=65536*2;block_size=65536

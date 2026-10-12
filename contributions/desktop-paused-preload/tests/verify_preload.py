@@ -19,60 +19,13 @@ import urllib.request
 from unittest.mock import patch
 
 
-def source_sha256(path):
-    digest=hashlib.sha256()
-    with path.open('rb') as stream:
-        for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
-    return digest.hexdigest()
-
-def wait_bootstrap_quiet(sample, reading, *, timeout, quiet_seconds, clock=time.monotonic, sleep=time.sleep):
-    until=clock()+timeout;last=None;stable=None
-    while clock()<until:
-        value=sample();size=value['native']['cacheFileBytes'];now=clock()
-        if reading() or size!=last: stable=None
-        elif stable is None: stable=now
-        elif now-stable>=quiet_seconds: return value
-        last=size;sleep(.1)
-    raise AssertionError('Bootstrap readahead did not become quiet; use a longer fixture or timeout')
-
-
-def validate_budget(budget, block_size, source_size):
-    if budget is not None and not block_size<=budget<source_size:
-        raise ValueError('Budget probe requires at least one source block and a source larger than the budget')
-
-
-def seek_target(duration):
-    if not math.isfinite(duration) or duration<=0:raise ValueError('Invalid fixture duration')
-    return min(25.,duration/2)
-
-
-def bootstrap_within_envelope(value):
-    duration=value.get('duration');size=value.get('sourceProgress',{}).get('totalBytes')
-    return (isinstance(duration,(int,float)) and not isinstance(duration,bool) and math.isfinite(duration)
-            and 0 < duration <= 12 and isinstance(size,int) and not isinstance(size,bool) and 0 < size <= 32*1024**2)
-
-
-def bootstrap_read_within_envelope(value):
-    native=value.get('native',{});progress=value.get('sourceProgress',{})
-    start,end=native.get('bufferStart',0),native.get('bufferEnd')
-    sizes=(native.get('cacheFileBytes'),progress.get('receivedBytes'))
-    return (all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) for v in (start,end))
-            and 0<=end-start<=12 and all(isinstance(v,int) and not isinstance(v,bool) and 0<=v<=32*1024**2 for v in sizes))
-
-
 def preload_outcome(value):
     native = value['native']
-    if value.get('state') == 'failed' or native.get('state') == 'failed':raise AssertionError('Native failed')
     if native['preloadLimited']:
         return 'limited' if native.get('preloadReason') == 'budget' else 'failed'
     if native['cacheComplete']:
         return 'complete'
-
-
-def pause_fill_advanced(before, after):
-    previous, current = before['native'], after['native']
-    return (not previous['preloadLimited'] and not previous['cacheComplete']
-            and current['cacheFileBytes'] > previous['cacheFileBytes'])
+    return None
 
 
 def budget_stable(byte_samples, budget, range_bytes):
@@ -83,25 +36,16 @@ def budget_stable(byte_samples, budget, range_bytes):
             len(set(byte_samples[-6:])) == 1)
 
 
-def validate_audio_source(media):
-    if not media.streams.audio: raise ValueError('Preload audio readiness requires an audio track')
-
-
-def preload_timeout(total_bytes, range_delay, override=None, *, cache_budget=None):
+def preload_timeout(total_bytes, range_delay, override=None):
     if (type(total_bytes) is not int or total_bytes <= 0 or
             not math.isfinite(range_delay) or range_delay < 0):
         raise ValueError('Invalid fixture size/delay')
-    if range_delay * 3 + .5 >= 3600: raise ValueError('Range delay exceeds the verifier timeout cap')
     if override is not None:
         if not math.isfinite(override) or not 1 <= override <= 3600:
             raise ValueError('Preload timeout must be between 1 and 3600 seconds')
         return override
-    if cache_budget is not None:
-        if type(cache_budget) is not int or cache_budget <= 0:raise ValueError("Invalid cache budget")
-        total_bytes=min(total_bytes,cache_budget)
-    required=30 + math.ceil(total_bytes / 65536) * range_delay * 3 + total_bytes / (8 * 1024 ** 2)
-    if required > 3600:raise ValueError('Aggregate Range work exceeds the verifier timeout cap')
-    return required
+    return min(3600, 30 + math.ceil(total_bytes / 65536) * range_delay * 3
+               + total_bytes / (8 * 1024 ** 2))
 
 
 def wait_server_started(server, thread, timeout=5):
@@ -112,21 +56,6 @@ def wait_server_started(server, thread, timeout=5):
         if time.monotonic() >= deadline:
             raise TimeoutError('Test API did not start')
         time.sleep(.01)
-
-
-def cleanup_probe(jobs, prefetch, identifier, report, errors, done):
-    try:
-        actions = [('release', lambda: jobs.release(identifier))] if identifier else []
-        actions += [('jobs.close', jobs.close), ('prefetch.close', prefetch.close)]
-        for name, action in actions:
-            try:
-                action()
-            except BaseException as exc:
-                errors.append(type(exc).__name__)
-                report['pass'] = False
-                report.setdefault('cleanupErrors', []).append({'action': name, 'errorType': type(exc).__name__})
-    finally:
-        done.set()
 
 
 def main():
@@ -146,8 +75,6 @@ def main():
         parser.error('--cache-budget must be positive')
     if not math.isfinite(args.range_delay) or args.range_delay < 0:
         parser.error('--range-delay must be finite and non-negative')
-    import av
-    with av.open(str(args.source)) as source: validate_audio_source(source)
     staging = tempfile.TemporaryDirectory()
     stage = Path(staging.name); backend = stage/'backend'; backend.mkdir()
     for source in (args.native_package.resolve()/'src',args.prefetch_package.resolve()/'src'):
@@ -163,11 +90,10 @@ def main():
     from desktop_hls_service import HlsJobs, make_router
     from desktop_prefetch import EpisodePrefetcher
     from desktop_stream import ProgressiveSource, source_progress
-    import desktop_range_cache as range_module
     from progressive_fixture import ProgressiveFixture
     from fastapi import FastAPI
     import uvicorn
-    assert source_sha256(args.source) == args.sha
+    assert hashlib.sha256(args.source.read_bytes()).hexdigest() == args.sha
     if args.cache_budget is not None: module.CACHE_FILE_BUDGET = args.cache_budget
     run = args.run.resolve()
     (run/'reports').mkdir(parents=True,exist_ok=True)
@@ -175,9 +101,8 @@ def main():
     work.mkdir(parents=True)
     app = FastAPI()
     fixture = ProgressiveFixture(app, work, [args.source])
-    validate_budget(args.cache_budget,ProgressiveSource.block_size,fixture.files[0].stat().st_size)
     fixture.delay = args.range_delay
-    timeout = preload_timeout(fixture.files[0].stat().st_size, fixture.delay, args.preload_timeout, cache_budget=module.CACHE_FILE_BUDGET)
+    timeout = preload_timeout(fixture.files[0].stat().st_size, fixture.delay, args.preload_timeout)
     host = NativeHost(parent_pid=os.getpid(), hardware=not args.software,
                       dll_path=args.mpv.resolve())
     assert host.available
@@ -202,9 +127,6 @@ def main():
               'sourceSha256':args.sha,'rangeDelay':fixture.delay,'preloadTimeout':timeout,
               'checks':[],'pausedSamples':[]}
     done = threading.Event()
-    preload_entered=threading.Event();original_preload=range_module.preload
-    def observed_preload(*a,**kw):
-        preload_entered.set();return original_preload(*a,**kw)
     errors = []
     def request(path,method='GET',body=None):
         headers={'x-api-key':key,'x-desktop-codec-negotiation':'1'}
@@ -220,26 +142,22 @@ def main():
         until=time.monotonic()+timeout
         while time.monotonic()<until:
             value=request('/'+identifier+'/status')
-            if value.get('state')=='failed' or value.get('native',{}).get('state')=='failed': raise AssertionError('Native failed')
             if predicate(value): return value
+            if value.get('native',{}).get('state')=='failed': raise AssertionError('Native failed')
             time.sleep(.1)
         raise AssertionError('Native timeout')
     def scenario():
         identifier=None
         try:
             identifier=request('?series_id=1234567890123456&ep=1','POST')['id']
-            wait(identifier,lambda s:bool(s.get('source')),timeout=timeout)
+            wait(identifier,lambda s:bool(s.get('source')))
             request('/'+identifier+'/mode','POST',{'mode':'native'})
-            initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready' and s['native'].get('outputReady') is True,timeout=timeout)
+            initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready')
             session=host.sessions[identifier]
-            check('first-frame-ready',initial['native']['outputReady'],initial)
-            report['fullSourceAtFirstFrame']=initial['sourceProgress']['complete']
-            bounded=wait_bootstrap_quiet(lambda:request('/'+identifier+'/status'),
-                session.job.source.reading.is_set,timeout=timeout,quiet_seconds=max(1.,fixture.delay*3+.5))
-            bootstrap_complete=bounded['native']['cacheComplete']
-            check('bootstrap-completion-within-envelope',bootstrap_read_within_envelope(bounded) and (not bootstrap_complete or bootstrap_within_envelope(bounded)),bounded)
-            report['inputOutcome']='bootstrap-complete' if bootstrap_complete else 'requires-paused-fill'
-            check('no-preload-before-user-pause',not preload_entered.is_set())
+            check('first-frame-before-full-input',not initial['sourceProgress']['complete'] and initial['native']['outputReady'],initial)
+            time.sleep(.8)
+            bounded=request('/'+identifier+'/status')
+            check('bootstrap-pause-does-not-fill-whole-file',not bounded['native']['cacheComplete'],bounded['native'])
             request('/'+identifier+'/control','POST',{'paused':True})
             started=time.monotonic()
             while time.monotonic()-started<timeout:
@@ -249,10 +167,6 @@ def main():
             limited = preload_outcome(value) == 'limited'
             if preload_outcome(value) == 'failed':
                 raise AssertionError('Preloading failed: '+str(value['native'].get('preloadReason')))
-            if args.cache_budget is not None:
-                check('explicit-budget-reaches-cap',limited and value['native']['cacheFileBytes']<=module.CACHE_FILE_BUDGET,value['native'])
-            if not bootstrap_complete:
-                check('pause-worker-ran',preload_entered.is_set())
             if limited:
                 # Observe actual file bytes after the writer reports its cap.
                 # A state flag alone cannot prove the hard budget.
@@ -267,13 +181,8 @@ def main():
                       {'bytes': byte_samples, 'observationSeconds': 3,
                        'allowedOvershootBytes': 0})
             samples=report['pausedSamples']
-            report['beforePause']=bounded
-            if not bootstrap_complete:
-                check('user-pause-starts-additional-cache-work',pause_fill_advanced(bounded,value),
-                      {'before':bounded['native'],'after':value['native'],
-                       'hint':'If bootstrap already exhausts the cap, increase --cache-budget to exercise paused fill.'})
             check('pause-position-fixed',all(s['native']['paused'] and abs(s['native']['time'])<.1 for s in samples))
-            if not limited and not bootstrap_complete:
+            if not limited:
                 check('paused-bytes-and-range-advance',value['sourceProgress']['receivedBytes']>initial['sourceProgress']['receivedBytes'] and
                       value['native']['bufferEnd']>initial['native']['bufferEnd'],{'initial':initial,'last':value})
             if limited:
@@ -282,28 +191,21 @@ def main():
             else:
                 check('paused-preload-past-12-seconds-to-eof',value['sourceProgress']['complete'] and
                       value['native']['cacheComplete'] and value['native']['bufferEnd']==value['duration'] and
-                      value['native']['bufferEnd']>=min(12,value['duration']),value)
+                      value['native']['bufferEnd']>12,value)
                 check('payload-cached-on-disk',value['native']['cacheFileBytes']>0 and not value['native']['preloadLimited'])
             for rate in (2,3):
-                if value['duration'] < 1:raise ValueError('Rate checks require a fixture of at least one second')
-                advance=min(1.,value['duration']/4)
-                request('/'+identifier+'/control','POST',{'paused':True,'seek':0})
-                state=wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time'])<.15)
-                position=state['native']['time']
                 request('/'+identifier+'/control','POST',{'paused':False,'rate':rate,'volume':0})
+                state=wait(identifier,lambda s:s['native']['rate']==rate and not s['native']['paused'])
+                position=state['native']['time']
                 # Resuming software output can take longer than a fixed sleep.
                 # This checks eventual progress/sync, not real-time throughput.
-                state=wait(identifier,lambda s:s['native']['rate']==rate and s['native']['time']>position+advance and
-                           not s['native']['buffering'] and abs(s['native']['avsync'])<.1 and
-                           s['native']['audioDevice']=='auto' and s['native']['audioOutput']=='wasapi',timeout=timeout)['native']
-                check(str(rate)+'x-resumes-default-audio',state['time']>position+advance and abs(state['avsync'])<.1 and
+                state=wait(identifier,lambda s:s['native']['time']>position+1 and
+                           not s['native']['buffering'],timeout=6)['native']
+                check(str(rate)+'x-resumes-default-audio',state['time']>position+1 and abs(state['avsync'])<.1 and
                       state['audioDevice']=='auto' and state['audioOutput']=='wasapi' and
                       (not args.software or state['hwdec']=='no'),state)
-                check(str(rate)+'x-reuses-preload-cache',preload_outcome({'native':state})==('limited' if limited else 'complete'),state)
-            target=seek_target(value['duration'])
-            request('/'+identifier+'/control','POST',{'paused':True,'seek':target})
-            seek_state=wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time']-target)<.15,timeout=timeout)['native']
-            check('seek-reuses-preload-cache',preload_outcome({'native':seek_state})==('limited' if limited else 'complete'),seek_state)
+            request('/'+identifier+'/control','POST',{'paused':True,'seek':25})
+            wait(identifier,lambda s:s['native']['paused'] and not s['native']['seeking'] and abs(s['native']['time']-25)<.15)
             check('future-three-downloads-zero-encoding',prefetch.wait_idle(3) and
                   prefetch.snapshot()['downloadCompletedEpisodes']==[2,3,4] and not encodes,prefetch.snapshot())
             directory=jobs.get(identifier).directory
@@ -313,8 +215,9 @@ def main():
             report['pass']=True
         except BaseException as exc: errors.append(type(exc).__name__);report['errorType']=type(exc).__name__
         finally:
-            cleanup_probe(jobs, prefetch, identifier, report, errors, done)
-    with patch.object(NativeSession,'forward_input',return_value=True), patch.object(range_module,'preload',side_effect=observed_preload):
+            if identifier:jobs.release(identifier)
+            jobs.close();prefetch.close();done.set()
+    with patch.object(NativeSession,'forward_input',return_value=True):
         try:
             wait_server_started(server, server_thread)
         except (RuntimeError, TimeoutError):

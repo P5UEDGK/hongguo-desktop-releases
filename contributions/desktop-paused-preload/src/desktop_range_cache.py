@@ -87,20 +87,8 @@ class RangeDiskCache:
         with self.guard:
             if not self.closed:
                 self.closed = True
-                try:
-                    self.file.close()
-                except OSError:
-                    self.failed = True
-                    # Buffered close can fail while flushing optional cache
-                    # data. Release its raw handle and let native teardown run.
-                    try:
-                        raw = getattr(self.file, 'raw', None)
-                        if raw is not None:
-                            raw.close()
-                    except OSError:
-                        pass
-                finally:
-                    self.entries.clear()
+                self.file.close()
+                self.entries.clear()
 
 
 def preload(source, cache, stopped):
