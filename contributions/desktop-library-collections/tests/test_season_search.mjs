@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {parseSeasonTitle, seasonSearchQueries, findOtherSeasons,findNextSeason} from '../src/season-search.mjs';
 import test from 'node:test';
@@ -85,4 +86,43 @@ test('verified exact next season retains strict automatic continuation',async()=
 test('next season relation failure reports incomplete and never auto-plays',async()=>{
   const f=fixture(()=>({items:[]}));f.api.resolveSeasonCandidates=async()=>{throw Error('relations unavailable');};
   const result=await findNextSeason(f.api,{...seed,title:title+'第一季'});assert.equal(result.incomplete,true);assert.equal(result.automatic,false);
+});
+test('incomplete next-season pages do not start broader title queries',async()=>{
+  const f=fixture(()=>({items:[],hasMore:true}));
+  const result=await findNextSeason(f.api,{...seed,title:title+'第一季'});
+  assert.equal(result.incomplete,true);assert.equal(result.automatic,false);
+  assert.ok(f.seen.every(row=>row[0].endsWith('第二季')||row[0].endsWith('第2季')));
+});
+
+const realPages=JSON.parse(readFileSync(new URL('./fixtures/wuling-season-pages.json',import.meta.url),'utf8'));
+const realRows=realPages.flatMap(page=>page.items||[]);
+const realSeed=realRows.find(row=>row.title.endsWith('第33季'));
+test('real 40-row response keeps all other seasons after page three fails',async()=>{
+  const f=fixture((query,page)=>{
+    const response=realPages[page-1];
+    if(response.error)throw Error(response.error);
+    return response;
+  });
+  const result=await findOtherSeasons(f.api,realSeed);
+  assert.equal(result.items.length,39);
+  assert.equal(new Set([realSeed,...result.items].map(row=>row.seriesId)).size,40);
+  assert.equal(result.incomplete,true);
+  assert.deepEqual(f.seen.map(row=>row[1]),[1,2,3]);
+  assert.equal(parseSeasonTitle(result.items.at(-1).title).season,41);
+  assert.equal(parseSeasonTitle(title+'４０季').base,title);
+  assert.equal(parseSeasonTitle(title+'４０季').season,40);
+});
+test('spent search budget retains the fetched page without starting relation or more searches',async t=>{
+  let now=1000,verified=0;
+  t.mock.method(Date,'now',()=>now);
+  const f=fixture(()=>{now=2001;return realPages[0];},items=>{verified++;return {items,verified:true};});
+  const result=await findOtherSeasons(f.api,realSeed,()=>true,{deadline:2000});
+  assert.equal(result.items.length,realPages[0].items.filter(row=>row.seriesId!==realSeed.seriesId).length);assert.equal(result.incomplete,true);assert.equal(result.automatic,false);
+  assert.equal(f.seen.length,1);assert.equal(verified,0);
+});
+test('relation failure retains fetched candidates for final collect verification',async()=>{
+  const f=fixture((query,page)=>{const response=realPages[page-1];if(response.error)throw Error(response.error);return response;});
+  f.api.resolveSeasonCandidates=async()=>{throw Error('relation lookup timed out');};
+  const result=await findOtherSeasons(f.api,realSeed);
+  assert.equal(result.items.length,39);assert.equal(result.incomplete,true);assert.equal(result.automatic,false);
 });

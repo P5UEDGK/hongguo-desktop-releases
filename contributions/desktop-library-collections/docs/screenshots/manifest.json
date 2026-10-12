@@ -1,5 +1,5 @@
 {
-  "capture": "实际 Windows EXE / WebView2 窗口，隔离 native profile。搜索结果与多页数据使用固定 fixture。 本轮共享列表截图使用人工季度身份和默认封面，13/7与14/8为隔离原生记录数量；不代表线上搜索结果。",
+  "capture": "实际 Windows EXE / WebView2 原始截图。本轮7张中5张为真实目标合集，只做排序、导航及重启核验；2张根页使用隔离原生profile与人工记录。既有24张为历次隔离验收。旧合集分页截图仅保留为历史证据，当前合集已改为全部列出。",
   "images": [
     {
       "file": "before-inline-layout.png",
@@ -120,6 +120,48 @@
       "file": "punctuation-restart.png",
       "sha256": "00b88a7b6b06ab7559c7b7fbc712b00e5cb9133a4a8cd3c0c007c5e46dac483e",
       "caption": "重启后：中文问号与两季原标题完整保存，合集仍为两季。"
+    },
+    {
+      "file": "sorting-collection-name.png",
+      "sha256": "fae30288dd44047c1f19064d3fda3df2cb92abbe65282cc81595eaac95257867",
+      "caption": "合集显示“持械入宋”，各季原标题仍保留冒号。",
+      "scope": "本机真实目标合集，仅导航与读取"
+    },
+    {
+      "file": "sorting-seasons-desc.png",
+      "sha256": "a82b0c71d02b98c812801074670ae1971e4a9deb2f5c3d2dceec44a566f73d96",
+      "caption": "真实41季一次列出，默认季号倒序，主题选择框带粉色键盘焦点。",
+      "scope": "本机真实目标合集，仅偏好与导航"
+    },
+    {
+      "file": "sorting-all-seasons-bottom.png",
+      "sha256": "58aef652060b0c403fc7541f9bd352810d272129c9b8a2a7f7b4e6248df8d483",
+      "caption": "向下滚动到第1季，无合集内分页。",
+      "scope": "本机真实目标合集，仅偏好与导航"
+    },
+    {
+      "file": "sorting-seasons-narrow.png",
+      "sha256": "cf3076ee06f500727ec5076db6d58cdbb5f7acf866036d141c4d949856d88382",
+      "caption": "640 CSS像素：选择框和两列季卡片保持在窗口内。",
+      "scope": "本机真实目标合集，仅偏好与导航"
+    },
+    {
+      "file": "sorting-isolated-favorites-root.png",
+      "sha256": "cafaeaac7b430b669be31dab70a8c3568af7783715dad781e907e7005e3e7228",
+      "caption": "收藏根页：最近添加、名称正序/倒序共用主题选择框，无额外排序标签。",
+      "scope": "隔离原生profile，人工记录与默认封面"
+    },
+    {
+      "file": "sorting-isolated-history-root.png",
+      "sha256": "c959db61282ec18d5cc4d39c3252bdbcf4e6f54bd91cd6928c9b60cbe7c01a4a",
+      "caption": "历史根页：最近观看排序，仍只保存实际输入的一条历史。",
+      "scope": "隔离原生profile，人工记录与默认封面"
+    },
+    {
+      "file": "sorting-seasons-restart.png",
+      "sha256": "f3f504ecff82ad0d6e155723650590ae7f2c7b28220b20acef97c50d863e093f",
+      "caption": "重启后41季仍保存，最新季在前，排序偏好持久化。",
+      "scope": "本机真实目标合集，重启只读核验"
     }
   ]
 }

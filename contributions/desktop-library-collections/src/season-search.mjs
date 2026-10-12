@@ -18,7 +18,7 @@ function VR(e) {
 function Ts(title) {
     if (typeof title !== "string") return null;
     const text = title.trim();
-    const explicit = text.match(/^(.*?)第([一二两三四五六七八九十\d０-９]{1,3})季[\s！!。]*$/u);
+    const explicit = text.match(/^(.*?)第?([一二两三四五六七八九十\d０-９]{1,3})季[\s！!。]*$/u);
     const numbered = explicit ? null : text.match(/^(.*?[^\d０-９])([\d０-９]{1,2})$/u);
     const base = (explicit?.[1] || numbered?.[1] || text).trim();
     const season = explicit ? zR(explicit[2].normalize("NFKC")) : numbered ? Number(numbered[2].normalize("NFKC")) : 1;
@@ -60,9 +60,9 @@ async function KR(api, seed, live = () => true, options = {}) {
     const result = () => {
         const rows = [ ...accepted.values() ].sort((a, b) => Ts(a.title).season - Ts(b.title).season || a.seriesId.localeCompare(b.seriesId));
         return {
-            items: rows.slice(0, 20),
+            items: rows,
             automatic: false,
-            incomplete: incomplete || rows.length > 20
+            incomplete
         };
     };
     async function bounded(work) {
@@ -77,6 +77,9 @@ async function KR(api, seed, live = () => true, options = {}) {
     }
     for (const query of seasonSearchQueries(seed.title)) {
         const candidates = new Map;
+        const preserveCandidates = () => {
+            for (const [id, row] of candidates) accepted.set(id, row);
+        };
         let failed = false, truncated = false;
         for (const mode of modes) {
             const pages = new Set;
@@ -88,6 +91,7 @@ async function KR(api, seed, live = () => true, options = {}) {
                 };
                 if (Date.now() >= deadline) {
                     incomplete = true;
+                    preserveCandidates();
                     return result();
                 }
                 const identity = JSON.stringify([ query, page, mode ]);
@@ -129,6 +133,11 @@ async function KR(api, seed, live = () => true, options = {}) {
             incomplete: true
         };
         let resolved;
+        if (Date.now() >= deadline) {
+            incomplete = true;
+            preserveCandidates();
+            return result();
+        }
         try {
             resolved = api.resolveSeasonCandidates ? await bounded(() => api.resolveSeasonCandidates(seed, [ ...candidates.values() ], live)) : {
                 items: [ ...candidates.values() ],
@@ -136,6 +145,9 @@ async function KR(api, seed, live = () => true, options = {}) {
             };
         } catch {
             incomplete = true;
+            // Keep already fetched rows for the collection owner's final
+            // relationship check. Unverified rows never become auto-favorites.
+            preserveCandidates();
             return result();
         }
         if (!live()) return {
@@ -145,7 +157,7 @@ async function KR(api, seed, live = () => true, options = {}) {
         };
         for (const row of resolved.items) if (candidates.has(row.seriesId)) accepted.set(row.seriesId, row);
         // An error or truncated page is not proof that the original query has no match.
-                if (resolved.verified || failed || truncated || Date.now() >= deadline) break;
+        if (resolved.verified || failed || truncated || Date.now() >= deadline) break;
     }
     return result();
 }
@@ -197,7 +209,7 @@ async function qR(e, t, r = () => !0) {
         for (const e of s.items) l.set(e.seriesId, e);
         related = s.verified;
     } } catch { return {items:[],automatic:false,incomplete:true}; }
-    if (!related && !d && r()) {
+    if (!related && !d && !u && r()) {
         const s = await KR(e, t, r, {
             deadline: h,
             targetSeason: i
