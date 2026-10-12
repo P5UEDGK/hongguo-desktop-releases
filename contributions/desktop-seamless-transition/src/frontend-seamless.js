@@ -245,7 +245,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       while (!disposed && Date.now()<parentUntil) {
         const refreshed = currentMedia.desktopSessionId?.();
         if (/^[a-f0-9]{32}$/.test(refreshed || '')) parent = refreshed;
-        if (/^[a-f0-9]{32}$/.test(parent || '')) break;
+        if (/^[a-f0-9]{32}$/.test(refreshed || '') || typeof currentMedia.desktopSessionId !== 'function' && /^[a-f0-9]{32}$/.test(parent || '')) break;
+        if (typeof currentMedia.desktopSessionId === 'function') parent = null;
         await new Promise(resolve=>setTimeout(resolve,20));
       }
       if (disposed || !/^[a-f0-9]{32}$/.test(parent || '')) throw Error('Standby parent unavailable');
