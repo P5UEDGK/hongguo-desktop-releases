@@ -7,10 +7,9 @@ export function desktopControlsCanHide(stage, dragging) {
 export function desktopNativeControlsOverlay(media, stage, send, onReady) {
   const paintProperties = ('display position left right top bottom width height min-width max-width min-height max-height box-sizing flex flex-direction flex-wrap align-items align-self justify-content gap margin padding border border-radius font-family font-size font-weight font-style line-height letter-spacing text-align text-decoration white-space vertical-align color background outline box-shadow opacity transform transform-origin filter overflow appearance accent-color color-scheme fill stroke stroke-width').split(' ');
   let disposed = false, busy = false, ready = false, previous = '', css = null;
-  const invalidate = () => { previous = ''; };
-  const observer = new MutationObserver(invalidate);
-  observer.observe(stage, {subtree:true, attributes:true, childList:true, characterData:true});
-  const headObserver = new MutationObserver(() => {css = null; invalidate();});
+  // paint() compares the resolved control image, including time and layout.
+  // Status-driven DOM mutations alone must not reset that comparison.
+  const headObserver = new MutationObserver(() => {css = null;});
   headObserver.observe(document.head, {subtree:true, childList:true, characterData:true});
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', {willReadFrequently:true});
@@ -86,5 +85,5 @@ export function desktopNativeControlsOverlay(media, stage, send, onReady) {
   }
   const timer = setInterval(paint,120);
   paint();
-  return {get ready(){return ready;}, dispose(){disposed=true;clearInterval(timer);observer.disconnect();headObserver.disconnect();}};
+  return {get ready(){return ready;}, dispose(){disposed=true;clearInterval(timer);headObserver.disconnect();}};
 }

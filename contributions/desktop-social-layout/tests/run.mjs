@@ -313,6 +313,16 @@ try{
  const marker=await page.evaluate(()=>{const icon=document.querySelector('button[aria-label="全屏"] svg').getBoundingClientRect(),bar=document.querySelector('.player-chrome').getBoundingClientRect(),stage=document.querySelector('.player-stage').getBoundingClientRect();return {x:Math.floor((icon.left+icon.width/2-stage.left)*devicePixelRatio),y:Math.floor((icon.top+icon.height/2-bar.top)*devicePixelRatio)};});
  const markerOffset=(marker.y*raster.width+marker.x)*4;
  check(pixels[markerOffset]===52&&pixels[markerOffset+1]===171&&pixels[markerOffset+2]===18,'viewport-dependent control layout paints at its real DOM input position');
+ await page.waitForTimeout(300);
+ const unchanged=await page.evaluate(()=>rasterRows.length);
+ for(let i=0;i<5;i++){
+  await page.evaluate(i=>document.querySelector('.player-stage').setAttribute('data-poll-revision',String(i)),i);
+  await page.waitForTimeout(160);
+ }
+ check(await page.evaluate(()=>rasterRows.length)===unchanged,'unchanged controls do not resend bitmaps on status DOM mutations');
+ await page.locator('.player-clock').evaluate(n=>n.textContent='00:17 / 01:10');
+ await page.waitForFunction(n=>rasterRows.length>n,unchanged);
+ check(await page.evaluate(()=>rasterRows.length)>unchanged,'a real clock change still repaints controls');
  check(await page.evaluate(()=>!canHide(document.querySelector('.player-stage'),true)),'dragging protects the hide timer');
  await page.keyboard.press('Tab');
  await page.getByRole('button',{name:'播放或暂停',exact:true}).focus();

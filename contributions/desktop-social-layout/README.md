@@ -30,6 +30,8 @@ const {Drawer,Controls,Selection,toggleSidebar}=createSocialUI({React,jsxRuntime
 
 位图协议只接受有界尺寸和压缩后的预乘 BGRA 像素，解压上限4MiB；不接受路径、指针或 mpv 命令。原生后端自行创建内存缓冲并同步调用 overlay-add，复用引擎前移除旧位图。前端最多每120ms检查一次，只提交变化的画面，销毁时取消绘制和观察器。需要支持 SVG foreignObject、Canvas 和 CompressionStream 的 WebView2；绘制失败会保留原 DOM 避让入口以便操作，并在 `media.desktopControlsOverlayError` 留下诊断。该降级路径仍可能出现原黑底，不能当作透明验收通过。
 
+宿主还需应用 `patches/native-session-rate-limit.patch`。状态轮询、位图更新和释放会话不能共用普通数据接口的每分钟额度，否则持续播放会收到429，释放也可能失败，留下遮挡界面的原生视频窗口。补丁仍先验证密钥，对当前托管进程的会话密钥与回环客户端跳过所有接口的通用计数，片库浏览、切剧、切集和持续播放不再累计本机额度；其他密钥与远程请求沿用原限流。媒体路由的来源检查、会话数、控制队列和像素上限继续生效。控制栏通过最终序列化画面比较去重，普通状态 DOM 变化不会清空上次画面，时钟、进度与布局的真实变化仍会刷新。
+
 接入 #213 连续切集时，再应用 patches/standby-layout.patch，使备用帧与当前画面使用相同完整区域。该补丁只删除原先扣除控制栏高度的逻辑，不改预热、切集和播放状态。
 
 原生接线需要 #204 的控制栏自动显隐修复。本包的事件补丁已兼容移除永久可见样式后的版本；不要重新添加强制 `.player-chrome` 的 opacity 或 pointer-events 覆盖。显隐由宿主现有控制器处理，弹幕设置面板打开时的临时保持显示仍有效。将原控制器的隐藏等待改为1000ms，计时回调在 `desktopControlsCanHide(stage.current, dragRef.current)` 为真且媒体仍在播放时隐藏；存在拖动、悬停控制栏、键盘焦点或设置面板时重新计时。继续使用原鼠标、焦点与拖动事件，不另建显隐控制器。暂停沿用原策略。
@@ -52,6 +54,8 @@ node contributions/desktop-social-layout/tests/run.mjs --channel chrome
 # 按依赖顺序应用原生补丁后：
 node contributions/desktop-social-layout/tests/test_native_layout.cjs contributions/desktop-native-playback/src/frontend-native.js
 python contributions/desktop-social-layout/tests/test_overlay_control.py contributions/desktop-native-playback/src/desktop_native.py
+# 接入会话限流补丁后，指向宿主实际后端：
+python contributions/desktop-social-layout/tests/test_session_rate_limit.py backend/server.py
 # 同时接入 #213 并应用 standby-layout.patch 时：
 node contributions/desktop-social-layout/tests/test_native_layout.cjs contributions/desktop-native-playback/src/frontend-native.js contributions/desktop-seamless-transition/src/frontend-seamless.js
 ```
@@ -72,3 +76,5 @@ node contributions/desktop-social-layout/tests/test_native_layout.cjs contributi
 本机用匿名竖屏 HEVC 夹具完成真实 Tauri/WebView2 和 libmpv 验收：首次布局即完整，展开时底部仍显示视频与烧录字幕，隐藏前后画面尺寸一致；设置面板、播放/暂停、拖动、键盘焦点及抽屉继续可用。评论与弹幕按钮保留原位置和尺寸，加深关闭与开启状态的底色。原生视频与控件以 libmpv 合成输出截图及像素比较核验，不能用不包含原生 HWND 的浏览器截图代替。HLS 回退使用透明背景和同一隐藏计时。维护者接入宿主计时回调后仍需在目标安装包完成同样验收。
 
 2026-10-12 已在本机最新片库修改基础上完成组合安装验收：原生播放25项、HLS回退16项及8项播放回归通过，4037个安装包文件校验通过。前端逆变换逐字还原片库资源，片库、封面缓存和导航后端哈希保持不变。正常应用已重启。上游正式版是否包含该功能，以维护者合并并发布的版本为准。
+
+同日补测本机请求额度修复：9项鉴权与限流边界测试、114项浏览器组合检查通过。真实安装记录约197秒，媒体就绪后观察180秒，覆盖6个播放会话、自动连播、手动切集、暂停/继续及进度条拖动；6次释放返回204，另发800次本机请求未出现429。测试中的404来自故意不存在的路径和已释放会话，用于确认失败请求也不会耗尽本机额度；无效密钥仍返回401。本次不改布局与原生引擎，上述结果只代表本机验收范围。
