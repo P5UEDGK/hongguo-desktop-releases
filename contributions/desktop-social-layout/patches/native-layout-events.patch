@@ -22,7 +22,7 @@
      const bounds = desktopNativeSurfaceRect(media);
      const visible = desktopNativeSurfaceVisible(media);
 -    const signature = JSON.stringify([bounds, visible]);
--    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible, paused:visible ? state.paused : true});}
+-    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible, paused:visible ? state.paused : true, rate:state.rate, volume:state.volume, muted:state.muted});}
 +    const panel = stage.querySelector?.('.desktop-danmaku-panel')?.getBoundingClientRect();
 +    const left = Math.max(bounds[0], Math.floor((panel?.left ?? 0) * scale));
 +    const top = Math.max(bounds[1], Math.floor((panel?.top ?? 0) * scale));
@@ -32,7 +32,7 @@
 +      [left - bounds[0], top - bounds[1], right - left, bottom - top] : [];
 +    const signature = JSON.stringify([bounds, visible, occlusion]);
 +    if (signature !== lastRect) {
-+      lastRect = signature; queue({rect: bounds, visible, occlusion, paused:visible ? state.paused : true});
++      lastRect = signature; queue({rect: bounds, visible, occlusion, paused:visible ? state.paused : true, rate:state.rate, volume:state.volume, muted:state.muted});
 +      if (!controlBusy) {clearTimeout(controlTimer); controlTimer = null; flush();}
 +    }
 +  }

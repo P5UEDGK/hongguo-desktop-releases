@@ -51,7 +51,7 @@
          danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
          output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
-@@ -564,9 +578,33 @@
+@@ -564,9 +578,34 @@
                          if not user.GetClientRect(self.parent, C.byref(client)):
                              raise RuntimeError("Desktop parent unavailable")
                          width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
@@ -64,7 +64,8 @@
 +                        occlusion = command["occlusion"]
 +                    if "rect" in command or "occlusion" in command:
 +                        if not occlusion:
-+                            user.SetWindowRgn(hwnd, None, True)
++                            if not user.SetWindowRgn(hwnd, None, True):
++                                raise RuntimeError("Native panel region clear failed")
 +                        else:
 +                            # Reveal the WebView settings panel without resizing
 +                            # or hiding the native video surface behind it.
@@ -86,7 +87,7 @@
                      danmaku_track.update(command)
                      if command.get("paused") is True:
                          desired["paused"] = True
-@@ -648,6 +686,10 @@
+@@ -648,6 +687,10 @@
                          raise SourceReadError("Native media input timed out")
                      retry_software(no_frame=not frame_ready)
                      continue
@@ -97,7 +98,7 @@
                  with self.guard:
                      self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                       time=position, duration=player.number("duration", self.job.duration),
-@@ -660,6 +702,7 @@
+@@ -660,6 +703,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops,
