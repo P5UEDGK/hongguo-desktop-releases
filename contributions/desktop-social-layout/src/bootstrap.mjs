@@ -12,3 +12,4 @@ export function createSocialUI({React,jsxRuntime,resolveEndpoint}) {
   social=createComments({React,jsxRuntime,resolveEndpoint,emojis,danmaku,installStyles:installSocialStyles});
   return {...social,Selection:createSelection({React,jsxRuntime,set:social.set}),toggleSidebar:media=>toggleSidebar(media,social.set),emojis,danmaku};
 }
+export {desktopNativeControlsOverlay,desktopControlsCanHide} from './native-controls.mjs';

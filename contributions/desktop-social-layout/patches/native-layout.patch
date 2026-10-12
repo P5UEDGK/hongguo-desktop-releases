@@ -1,15 +1,55 @@
 --- a/contributions/desktop-native-playback/src/desktop_native.py
 +++ b/contributions/desktop-native-playback/src/desktop_native.py
-@@ -25,7 +25,7 @@
+@@ -3,6 +3,8 @@
+ Only the authenticated HLS adapter supplies source paths. The client cannot
+ choose a process, HWND, device, file, mpv option or command string.
+ """
++import base64
++import zlib
+ import ctypes as C
+ from ctypes import wintypes as W
+ import hashlib
+@@ -23,9 +25,32 @@
+ DLL_SHA256 = "34780746a0273a4fcae42dfe262a28984a426a238939474afd3a1561b450bbef"
 
+
++def decode_controls_overlay(value):
++    # Neither filesystem paths, memory pointers nor mpv commands cross this API.
++    if not isinstance(value, dict) or set(value) != {"x", "y", "width", "height", "data"}:
++        raise ValueError("Invalid controls overlay")
++    x, y, width, height = (value[key] for key in ("x", "y", "width", "height"))
++    if (any(type(v) is not int for v in (x, y, width, height))
++            or not 0 <= x <= 32768 or not 0 <= y <= 32768
++            or not 1 <= width <= 8192 or not 1 <= height <= 512
++            or width * height > 1048576 or x + width > 32768 or y + height > 32768
++            or not isinstance(value["data"], str) or len(value["data"]) > 524288):
++        raise ValueError("Invalid controls overlay")
++    try:
++        compressed = base64.b64decode(value["data"], validate=True)
++        decoder = zlib.decompressobj()
++        pixels = decoder.decompress(compressed, width * height * 4 + 1)
++        if (len(pixels) != width * height * 4 or not decoder.eof
++                or decoder.unused_data or decoder.unconsumed_tail):
++            raise ValueError("Invalid controls pixels")
++    except (ValueError, zlib.error) as error:
++        raise ValueError("Invalid controls overlay") from error
++    return {"x": x, "y": y, "width": width, "height": height, "pixels": pixels}
++
++
  def validate_control(body):
      if not isinstance(body, dict) or not body or set(body) - {
 -            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings"}:
-+            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings", "occlusion"}:
++            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings", "occlusion", "controlsOverlay"}:
          raise ValueError("Invalid native control")
      for name in ("paused", "muted", "visible"):
          if name in body and type(body[name]) is not bool:
-@@ -46,6 +46,11 @@
+@@ -42,10 +67,17 @@
+                 or rect[2] < 1 or rect[3] < 1):
+             raise ValueError("Invalid native rectangle")
+     result = dict(body)
++    if "controlsOverlay" in body:
++        result["controlsOverlay"] = decode_controls_overlay(body["controlsOverlay"])
+     if 'danmaku' in body:
          result['danmaku'] = validate_danmaku(body['danmaku'])
      if 'danmakuSettings' in body:
          result['danmakuSettings'] = validate_settings(body['danmakuSettings'])
@@ -21,7 +61,7 @@
      return result
 
 
-@@ -129,6 +134,13 @@
+@@ -129,6 +161,13 @@
                  function = getattr(self.dll, name)
                  function.argtypes, function.restype = args, result
              self.user = C.WinDLL("user32", use_last_error=True)
@@ -35,7 +75,7 @@
              self.enum_callback = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
              self.window_callback = C.WINFUNCTYPE(C.c_ssize_t, W.HWND, W.UINT, W.WPARAM, W.LPARAM)
              definitions = {
-@@ -149,6 +161,7 @@
+@@ -149,6 +188,7 @@
                  "CreateWindowExW": ([W.DWORD, W.LPCWSTR, W.LPCWSTR, W.DWORD, C.c_int,
                      C.c_int, C.c_int, C.c_int, W.HWND, W.HMENU, W.HINSTANCE, C.c_void_p], W.HWND),
                  "SetWindowPos": ([W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT], W.BOOL),
@@ -43,15 +83,19 @@
                  "ShowWindow": ([W.HWND, C.c_int], W.BOOL),
                  "DestroyWindow": ([W.HWND], W.BOOL),
                  "PeekMessageW": ([C.POINTER(W.MSG), W.HWND, W.UINT, W.UINT, W.UINT], W.BOOL),
-@@ -371,6 +384,7 @@
+@@ -371,6 +411,11 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
 +        occlusion = []
++        controls_buffer = None
++        controls_updates = 0
++        controls_rect = None
++        controls_nonzero = 0
          danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
-@@ -472,9 +486,39 @@
+@@ -472,9 +517,49 @@
                          if not user.GetClientRect(self.parent, C.byref(client)):
                              raise RuntimeError("Desktop parent unavailable")
                          width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
@@ -60,6 +104,16 @@
 +                            raise RuntimeError("Native bounds update failed")
                      if "visible" in command:
                          user.ShowWindow(hwnd, 4 if command["visible"] else 0)
++                    if "controlsOverlay" in command:
++                        overlay = command["controlsOverlay"]
++                        controls_buffer = C.create_string_buffer(overlay["pixels"])
++                        player.command("overlay-add", 62, overlay["x"], overlay["y"],
++                                       "&" + str(C.addressof(controls_buffer)), 0, "bgra",
++                                       overlay["width"], overlay["height"], overlay["width"] * 4)
++                        controls_updates += 1
++                        alpha = overlay["pixels"][3::4]
++                        controls_nonzero = len(alpha) - alpha.count(0)
++                        controls_rect = [overlay[key] for key in ("x", "y", "width", "height")]
 +                    if "occlusion" in command:
 +                        occlusion = command["occlusion"]
 +                    if "rect" in command or "occlusion" in command:
@@ -92,7 +146,7 @@
                      danmaku_track.update(command)
                      for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
                          if key in command:
-@@ -547,6 +591,10 @@
+@@ -547,6 +632,10 @@
                          raise SourceReadError("Native media input timed out")
                      retry_software()
                      continue
@@ -103,11 +157,20 @@
                  with self.guard:
                      self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                       time=position, duration=player.number("duration", self.job.duration),
-@@ -559,6 +607,7 @@
+@@ -559,6 +648,8 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops,
-+                                     occlusion=list(occlusion), surfaceRect=[surface_origin.x, surface_origin.y, surface.right, surface.bottom],
++                                     occlusion=list(occlusion),
++                                     controlsOverlayUpdates=controls_updates, controlsOverlayRect=controls_rect, controlsOverlayNonzero=controls_nonzero, surfaceRect=[surface_origin.x, surface_origin.y, surface.right, surface.bottom],
                                       **danmaku_track.snapshot(position))
                  self.stop.wait(.04)
          except SourceReadError:
+@@ -575,6 +666,7 @@
+             reusable = self.engine_resources is not None and self.data.get("state") != "failed"
+             try:
+                 if reusable and player:
++                    player.command("overlay-remove", 62)
+                     user.ShowWindow(hwnd, 0)
+                     player.command("set", "pause", "yes")
+                     player.command("set", "mute", "yes")

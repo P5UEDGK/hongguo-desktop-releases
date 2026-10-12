@@ -5,6 +5,7 @@ import {resolve,dirname,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import assert from 'node:assert/strict';
+import {inflateSync} from 'node:zlib';
 const here=dirname(fileURLToPath(import.meta.url));
 const args=process.argv.slice(2), option=(name,fallback)=>args.includes(name)?args[args.indexOf(name)+1]:fallback;
 const root=resolve(option('--contributions-root',resolve(here,'../..')));
@@ -13,7 +14,7 @@ const {chromium}=require('playwright');
 const react=await readFile(resolve(dirname(require.resolve('react')),'umd/react.production.min.js'));
 const reactdom=await readFile(resolve(dirname(require.resolve('react-dom')),'umd/react-dom.production.min.js'));
 const html=`<!doctype html><meta charset="utf-8"><style>
-*{box-sizing:border-box}body{margin:0;background:#151619;color:#eee;font:14px sans-serif}
+:root{background:white}*{box-sizing:border-box}body{margin:0;background:#151619;color:#eee;font:14px sans-serif}
 .desktop-player{height:600px;display:flex;flex-direction:column}.desktop-player header{position:relative;height:60px;flex-shrink:0;padding:8px}
 .desktop-player-layout{display:grid;flex:1;min-height:0;grid-template-columns:minmax(0,1fr) 360px}
 .player-stage{position:relative;min-width:0;min-height:0;background:black}video{width:100%;height:100%;display:block}
@@ -291,6 +292,39 @@ try{
  await page.evaluate(()=>{window.keySeen=0;window.addEventListener('keydown',()=>keySeen++);});
  await page.keyboard.press('Escape');
  check(await page.evaluate(()=>keySeen===1),'original keyboard handler still receives Escape');
+ await page.mouse.move(0,0);
+ await page.evaluate(async()=>{
+  const marker=document.createElement('style');
+  marker.textContent='.player-toolbar{gap:1vw!important}.player-toolbar button[aria-label="全屏"] svg{background:rgb(18,171,52)}';
+  document.head.append(marker);
+  const {desktopNativeControlsOverlay,desktopControlsCanHide}=await import('/desktop-social-layout/src/native-controls.mjs');
+  const media=document.querySelector('video'),stage=media.closest('.player-stage');
+  window.rasterRows=[];window.rasterReady=0;window.canHide=desktopControlsCanHide;
+  window.rasterStop=desktopNativeControlsOverlay(media,stage,body=>rasterRows.push(body.controlsOverlay),()=>rasterReady++);
+ });
+ await page.waitForFunction(()=>rasterReady===1&&rasterRows.length>0);
+ const raster=await page.evaluate(()=>rasterRows.at(-1));
+ const pixels=inflateSync(Buffer.from(raster.data,'base64'));
+ check(pixels.length===raster.width*raster.height*4,'alpha bitmap has exact bounded BGRA dimensions');
+ let transparent=0,opaque=0,premultiplied=true;
+ for(let i=0;i<pixels.length;i+=4){transparent+=pixels[i+3]===0;opaque+=pixels[i+3]===255;premultiplied&&=Math.max(pixels[i],pixels[i+1],pixels[i+2])<=pixels[i+3];}
+ check(transparent>raster.width*raster.height*.5&&opaque>0,'existing controls are painted over a transparent background');
+ check(premultiplied,'bitmap uses premultiplied alpha required by libmpv');
+ const marker=await page.evaluate(()=>{const icon=document.querySelector('button[aria-label="全屏"] svg').getBoundingClientRect(),bar=document.querySelector('.player-chrome').getBoundingClientRect(),stage=document.querySelector('.player-stage').getBoundingClientRect();return {x:Math.floor((icon.left+icon.width/2-stage.left)*devicePixelRatio),y:Math.floor((icon.top+icon.height/2-bar.top)*devicePixelRatio)};});
+ const markerOffset=(marker.y*raster.width+marker.x)*4;
+ check(pixels[markerOffset]===52&&pixels[markerOffset+1]===171&&pixels[markerOffset+2]===18,'viewport-dependent control layout paints at its real DOM input position');
+ check(await page.evaluate(()=>!canHide(document.querySelector('.player-stage'),true)),'dragging protects the hide timer');
+ await page.keyboard.press('Tab');
+ await page.getByRole('button',{name:'播放或暂停',exact:true}).focus();
+ check(await page.evaluate(()=>!canHide(document.querySelector('.player-stage'),false)),'keyboard focus protects the hide timer');
+ const stopped=await page.evaluate(()=>{rasterStop.dispose();return rasterRows.length});
+ await page.waitForTimeout(350);
+ check(await page.evaluate(()=>rasterRows.length)===stopped,'disposing native controls cancels in-flight paint and listeners');
+ const deepButtons=()=>page.locator('.desktop-social-controls > button,.desktop-danmaku-control > button').evaluateAll(nodes=>nodes.length===2&&nodes.every(n=>Number(getComputedStyle(n).backgroundColor.match(/[\d.]+/g)?.[3]??1)>=.8));
+ check(await deepButtons(),'comment and danmaku buttons keep a readable dark background');
+ await page.getByRole('button',{name:'弹幕',exact:true}).click();
+ await page.getByRole('button',{name:'评论与互动',exact:true}).click();
+ check(await deepButtons(),'toggled comment and danmaku buttons retain their darker background');
  check(errors.length===0,'no browser exceptions: '+errors.join(';'));
  console.log(`PASS ${count} composition checks`);
 }finally{await browser?.close();await new Promise(r=>server.close(r));}

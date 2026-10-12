@@ -3,6 +3,8 @@ export function installSocialStyles() {
     const style = document.createElement('style'); style.id = 'desktop-social-style';
     style.textContent = `.desktop-social{border-top:1px solid #ffffff20;padding:12px 0;color:inherit;font-size:13px;min-height:0}.desktop-social-toolbar,.desktop-social-tabs{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.desktop-social-toolbar small{color:#aeb5bf}.desktop-social button{padding:5px 9px;border:1px solid #ffffff25;border-radius:6px;background:#ffffff09;color:inherit;cursor:pointer}.desktop-social button:disabled{opacity:.5;cursor:default}.desktop-social-tabs{margin:10px 0}.desktop-social-tabs button[aria-selected=true]{background:#f45a4440;color:#ffab9d}.desktop-social-list{max-height:250px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.desktop-social-item{padding:10px 2px;border-bottom:1px solid #ffffff12;overflow-wrap:anywhere}.desktop-social-item p{margin:5px 0;white-space:pre-wrap;line-height:1.6}.desktop-social-item small,.desktop-social-status{color:#aeb5bf}.desktop-social-replies{margin:8px 0 0 12px;padding-left:10px;border-left:2px solid #ffffff20}.desktop-social-error{color:#ffb4a7}.desktop-danmaku{position:absolute;inset:0 0 84px;overflow:hidden;pointer-events:none;z-index:4}.desktop-danmaku span{position:absolute;left:0;top:0;white-space:nowrap;font:600 22px sans-serif;color:#fff;text-shadow:1px 1px 2px #000,-1px -1px 2px #000;will-change:transform}.desktop-player.mini .desktop-social{display:none}`;
     style.textContent += `
+      .desktop-player .player-chrome{background:transparent;text-shadow:0 1px 2px #000,0 0 2px #000}
+      .desktop-player .player-toolbar > button > svg{filter:drop-shadow(0 1px 1px #000)}
       .desktop-emoji{display:inline-block;width:1.3em;height:1.3em;vertical-align:-.25em;object-fit:contain;border:0;pointer-events:none}
       .desktop-danmaku span{font-weight:400}
       .desktop-social-controls{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
@@ -27,6 +29,8 @@ export function installSocialStyles() {
       .desktop-danmaku-list small{color:#a9a9b5}.desktop-danmaku-list p{display:flex;gap:12px;overflow-wrap:anywhere;line-height:1.5;margin:10px 0}.desktop-danmaku-list time{color:#a9a9b5;flex-shrink:0}
       .player-toolbar .desktop-social-controls button{font-size:12px;min-width:44px;padding:5px 8px;height:30px;border:1px solid #ffffff28;border-radius:7px;color:#bbb}
       .player-toolbar .desktop-social-controls button[aria-pressed=true],.player-toolbar .desktop-social-controls button[aria-expanded=true]{color:#ffacc4;background:#fb72991e;border-color:#fb729970}
+      .desktop-player .player-toolbar .desktop-social-controls > button,.desktop-player .player-toolbar .desktop-danmaku-control > button{background:rgba(18,18,22,.82);color:#f0f0f3;border-color:#ffffff40}
+      .desktop-player .player-toolbar .desktop-social-controls > button[aria-expanded=true],.desktop-player .player-toolbar .desktop-danmaku-control > button[aria-pressed=true]{background:rgba(108,31,56,.92);color:#ffd0df;border-color:#fb7299ad}
       /* Include the pin in the measured controls row; the original absolute pin sits outside its group. */
       .app-shell:has(.desktop-player:not(.mini)) .window-controls.dark .window-pin{position:static}
       .desktop-player header .desktop-selection-open{margin-left:auto;border:1px solid #ffffff25;border-radius:7px;background:#ffffff08;color:#eee;padding:6px 12px;cursor:pointer}

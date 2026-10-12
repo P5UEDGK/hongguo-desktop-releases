@@ -1,18 +1,20 @@
 --- a/contributions/desktop-native-playback/src/frontend-native.js
 +++ b/contributions/desktop-native-playback/src/frontend-native.js
-@@ -5,6 +5,7 @@
+@@ -5,6 +5,8 @@
    let disposed = false, delegated = null, id = null, native = false, restored = false;
    let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
    let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
++  let controlsOverlay = null;
 +  let chromeObserver = null;
    let resize = null, lastRect = '', generation = 0, seekPending = null;
    let reportedSeek = false, fallbackStarted = false;
    let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
-@@ -63,7 +64,12 @@
+@@ -63,7 +65,13 @@
      restored = true;
      clearTimeout(timer); clearTimeout(controlTimer);
      resize?.disconnect();
 +    chromeObserver?.disconnect();
++    controlsOverlay?.dispose();
 +    const chrome = stage?.querySelector?.('.player-chrome');
 +    for (const name of ['transitionend', 'focusin', 'focusout', 'pointerdown', 'pointerup'])
 +      chrome?.removeEventListener?.(name, layout);
@@ -21,7 +23,7 @@
      document.removeEventListener('fullscreenchange', layout);
      document.removeEventListener('visibilitychange', layout);
      stage?.classList.remove('desktop-native-playback');
-@@ -126,7 +132,7 @@
+@@ -126,7 +134,7 @@
      } catch {if (!disposed) failPreparation();}
      finally {
        controlBusy = false;
@@ -30,7 +32,7 @@
      }
    }
    function updateDanmaku() {
-@@ -136,14 +142,51 @@
+@@ -136,14 +144,51 @@
    function layout() {
      if (!native || !stage) return;
      const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
@@ -60,7 +62,7 @@
 +          Math.ceil((bottom - rect.top) * scale) - y);
 +      }
 +    };
-+    const chrome = stage.querySelector?.('.player-chrome');
++    const chrome = media.desktopControlsOverlayError && stage.querySelector?.('.player-chrome');
 +    const style = chrome && typeof getComputedStyle === 'function' ? getComputedStyle(chrome) : null;
 +    const shown = chrome && (chrome.matches?.('.visible,:has(:focus-visible,:active)') ||
 +      !style || Number(style.opacity) > .001);
@@ -71,7 +73,7 @@
 +        .filter(child => child.width > 0 && child.height > 0);
 +      const top = children.length ? Math.max(box.top, Math.min(...children.map(child => child.top)) - 8) : box.top;
 +      cut({...box.toJSON?.(), left:box.left, top, width:box.width, height:box.top + box.height - top});
-+    } else {
++    } else if (media.desktopControlsOverlayError) {
 +      const idle = stage.querySelector?.('.player-idle-progress');
 +      if (idle && (typeof getComputedStyle !== 'function' || Number(getComputedStyle(idle).opacity) > .001))
 +        cut(idle.getBoundingClientRect());
@@ -89,9 +91,14 @@
    }
    function seek(value) {
      if (disposed || !Number.isFinite(value)) return;
-@@ -195,9 +238,20 @@
+@@ -194,10 +239,25 @@
+       queue({paused: true}); if (!wasPaused && ready) event('pause');
      }});
      stage?.classList.add('desktop-native-playback');
++    controlsOverlay = desktopNativeControlsOverlay(media, stage, body => {
++      queue(body);
++      if (!controlBusy) {clearTimeout(controlTimer); controlTimer=null; flush();}
++    }, layout);
      resize = new ResizeObserver(layout); resize.observe(media);
 +    const chrome = stage?.querySelector?.('.player-chrome');
 +    if (chrome) resize.observe(chrome);

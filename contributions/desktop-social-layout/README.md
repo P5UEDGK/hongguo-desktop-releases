@@ -11,6 +11,8 @@
 bootstrap.mjs 导出 createSocialUI({React,jsxRuntime,resolveEndpoint})，返回 Drawer、Controls、Selection 及依赖对象。它引用 contributions 下其他三个前端包，需共同检出。只调用一次工厂，不要在每次 render 创建新组件类型。
 
 ```js
+import {createSocialUI,desktopNativeControlsOverlay,desktopControlsCanHide} from './src/bootstrap.mjs';
+
 const {Drawer,Controls,Selection,toggleSidebar}=createSocialUI({React,jsxRuntime,resolveEndpoint:trustedEndpoint});
 // 原 header: <Selection media={mediaRef}/>
 // 原 .player-toolbar: <Controls media={mediaRef} sessionKey={session.streamUrl}/>
@@ -24,15 +26,17 @@ const {Drawer,Controls,Selection,toggleSidebar}=createSocialUI({React,jsxRuntime
 
 宿主窗口控制组件应在普通窗口始终渲染已有置顶按钮，不要用 `dark || pinned` 决定是否渲染；`dark` 只决定配色，`pinned` 决定图标及按下状态。继续调用原窗口 owner 的查询和切换 API，避免新增第二套置顶状态。迷你模式沿用宿主原有窗口控制策略。验收同时检查普通窗口及播放窗口的按钮可见性、置顶/取消置顶的实际窗口状态和顶部边界。
 
-原生模式依次应用 patches/native-layout.patch、patches/native-layout-events.patch（前提为弹幕后端两个补丁）。rect/occlusion 改动立即 flush，忙碌时下一轮不延迟250ms。视频按完整可用区域等比显示，控制栏不占独立高度；仅在控件显示时通过窗口 region 避让实际控件，设置面板另行避让，关闭后恢复。occlusion 继续接受原有空列表或一个矩形，并支持两个矩形的扁平列表（最多8个整数）。SetWindowRgn 成功后所有权交给 Windows，失败路径释放本包 GDI 对象。不复制 #204/#205 的整个播放器。
+原生模式依次应用 patches/native-layout.patch、patches/native-layout-events.patch（前提为弹幕后端两个补丁），并将上方导入的 `desktopNativeControlsOverlay` 保持在原生前端适配器的作用域内。rect/occlusion 改动立即 flush。进入播放器即使用完整区域，首张控件位图准备期间也不挖除底部区域；控制栏背景透明，显示、隐藏及再次显示都不改变视频尺寸。现有 DOM 控件按原布局绘制为带 alpha 的位图，由 libmpv 合成到完整视频上。绘制沿用宿主解析后的尺寸、间距和字体，避免 SVG 自身视口改变按钮位置。DOM 继续处理按钮、拖动、键盘焦点和无障碍，不复制播放状态机。设置面板保留自己的卡片背景，仅该面板需要窗口 region 避让。
+
+位图协议只接受有界尺寸和压缩后的预乘 BGRA 像素，解压上限4MiB；不接受路径、指针或 mpv 命令。原生后端自行创建内存缓冲并同步调用 overlay-add，复用引擎前移除旧位图。前端最多每120ms检查一次，只提交变化的画面，销毁时取消绘制和观察器。需要支持 SVG foreignObject、Canvas 和 CompressionStream 的 WebView2；绘制失败会保留原 DOM 避让入口以便操作，并在 `media.desktopControlsOverlayError` 留下诊断。该降级路径仍可能出现原黑底，不能当作透明验收通过。
 
 接入 #213 连续切集时，再应用 patches/standby-layout.patch，使备用帧与当前画面使用相同完整区域。该补丁只删除原先扣除控制栏高度的逻辑，不改预热、切集和播放状态。
 
-原生接线需要 #204 的控制栏自动显隐修复。本包的事件补丁已兼容移除永久可见样式后的版本；不要重新添加强制 `.player-chrome` 的 opacity 或 pointer-events 覆盖。显隐由宿主现有控制器处理，弹幕设置面板打开时的临时保持显示仍有效。
+原生接线需要 #204 的控制栏自动显隐修复。本包的事件补丁已兼容移除永久可见样式后的版本；不要重新添加强制 `.player-chrome` 的 opacity 或 pointer-events 覆盖。显隐由宿主现有控制器处理，弹幕设置面板打开时的临时保持显示仍有效。将原控制器的隐藏等待改为1000ms，计时回调在 `desktopControlsCanHide(stage.current, dragRef.current)` 为真且媒体仍在播放时隐藏；存在拖动、悬停控制栏、键盘焦点或设置面板时重新计时。继续使用原鼠标、焦点与拖动事件，不另建显隐控制器。暂停沿用原策略。
 
 抽屉取消独立标题行，关闭按钮与页签同排。仅选集页可收起整层右列；两个评论页关闭后返回选集并保持右列展开。底部评论开关关闭时隐藏两个评论页签，只保留选集；开启时恢复页签并进入本集评论。
 
-底部控制栏始终单行。按 `.player-stage` 可用宽度使用容器查询缩小按钮、音量滑条和间距，保留全部控制；宽屏图标按钮32×32 CSS像素，窄视频区域缩至28或20像素宽，SVG 与悬停背景居中。宿主需保留 `.player-clock`、`.player-toolbar-spacer`，倍速 select 和音量 range 作为控制栏直接子节点。进度条和按钮沿用宿主原有位置、样式和事件，不因这次画面修复而移动。原生表面不再永久扣除 `.player-chrome` 高度，也不把其透明顶部 padding 变成黑色占位；监听原控制栏显隐和尺寸变化，只更新遮挡区域，显隐不改变视频缩放。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
+底部控制栏始终单行。按 `.player-stage` 可用宽度使用容器查询缩小按钮、音量滑条和间距，保留全部控制；宽屏图标按钮32×32 CSS像素，窄视频区域缩至28或20像素宽，SVG 与悬停背景居中。宿主需保留 `.player-clock`、`.player-toolbar-spacer`，倍速 select 和音量 range 作为控制栏直接子节点。进度条和按钮沿用宿主原有位置、样式和事件，不因这次画面修复而移动。原生表面不再永久扣除 `.player-chrome` 高度，也不把其透明顶部 padding 变成黑色占位；监听原控制栏显隐和尺寸变化，只更新控件位图及设置面板遮挡，显隐不改变视频缩放。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
 
 剧场按钮和 T 快捷键共用 `toggleSidebar`：右侧栏展开时收起，关闭时打开选集；从评论页收起后再点也进入选集。宿主移除独立的剧场状态及 `.theater` 类切换，按钮保持“剧场模式”名称，提示可用“切换右侧栏（T）”。选集、评论、关闭和缓存继续由现有侧栏 owner 管理，窗口、播放和弹幕不随此动作改变。浏览器回归覆盖二次点击、宽窄窗口、评论页及侧栏已关闭的情况。
 
@@ -58,6 +62,11 @@ node contributions/desktop-social-layout/tests/test_native_layout.cjs contributi
 
 ## 首轮审查修复
 
-迷你模式恢复单列视频、隐藏已经展开的 aside；ResizeObserver 也观察迷你按钮本身。新增无需窗口 resize 的按钮变宽测试及迷你模式回归。本轮补充抽屉关闭、无标题布局、播放按钮对齐和单击暂停/继续的组合回归；原生桥接测试覆盖实际控制栏高度、DPI、resize、暂停/继续命令和监听清理。
+迷你模式恢复单列视频、隐藏已经展开的 aside；ResizeObserver 也观察迷你按钮本身。新增无需窗口 resize 的按钮变宽测试及迷你模式回归。本轮补充抽屉关闭、无标题布局、播放按钮对齐和单击暂停/继续的组合回归；原生桥接测试覆盖完整区域、DPI、resize、透明控件及设置面板、暂停/继续命令和监听清理；浏览器用例确认背景 alpha、预乘像素、拖动/焦点保护和销毁清理。
 
 选集紧凑样式沿用宿主的 `.player-series-summary`、`.episode-heading`、`.season-continuation`、`.episode-navigation`、`.episode-page-buttons`、`.episode-locate`、`.desktop-episode-grid` 和 `.episode-expand` 类。分组容器包含范围状态及前后按钮：范围在左，前后按钮在右同排；宿主保留原事件与DOM顺序，样式不添加监听。定位和季查询继续由宿主负责。侧栏320px及以上验收同排，长列表保留滚动空间。
+
+
+## 透明控制栏验收
+
+本机用匿名竖屏 HEVC 夹具完成真实 Tauri/WebView2 和 libmpv 验收：首次布局即完整，展开时底部仍显示视频与烧录字幕，隐藏前后画面尺寸一致；设置面板、播放/暂停、拖动、键盘焦点及抽屉继续可用。评论与弹幕按钮保留原位置和尺寸，加深关闭与开启状态的底色。原生视频与控件以 libmpv 合成输出截图及像素比较核验，不能用不包含原生 HWND 的浏览器截图代替。HLS 回退使用透明背景和同一隐藏计时。维护者接入宿主计时回调后仍需在目标安装包完成同样验收。本轮只更新 PR，本机安装包等待片库修改完成后再组合验收。
