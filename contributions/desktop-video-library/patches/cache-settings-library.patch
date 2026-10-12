@@ -1,0 +1,85 @@
+diff --git a/contributions/desktop-prefetch-cache/src/desktop_cache_budget.py b/contributions/desktop-prefetch-cache/src/desktop_cache_budget.py
+index d50bdbf..793a6bf 100644
+--- a/contributions/desktop-prefetch-cache/src/desktop_cache_budget.py
++++ b/contributions/desktop-prefetch-cache/src/desktop_cache_budget.py
+@@ -55,15 +55,19 @@ class CacheBudget:
+             yield self.check
+ 
+ 
+-def cache_complete_episode(budget, output, expected_bytes, fetch, convert):
++def cache_complete_episode(budget, output, expected_bytes, fetch, convert, *, before_publish=None):
+     """Fetch and convert privately; publish an original only after complete validation.
+ 
+     fetch(path, maximum, check) must honor the byte bound and cancellation check.
+     convert(input, output) must validate/remux the complete media into output.
+     The three source-sized copies reserve download/decrypt/remux peak usage.
++    Optional before_publish(staged, output) persists the named-file identity;
++    readers must verify that the final file exists and matches its digest.
+     """
+     output = Path(output)
+-    if output.parent.resolve() != budget.root / 'stream-cache':
++    stream_root = budget.root / 'stream-cache'
++    parent = output.parent.resolve(strict=True)
++    if parent != stream_root and stream_root not in parent.parents:
+         raise ValueError('Original output is outside the selected video cache')
+     if type(expected_bytes) is not int or expected_bytes <= 0:
+         raise CacheLimitReached('Complete episode size is unavailable')
+@@ -80,7 +84,10 @@ def cache_complete_episode(budget, output, expected_bytes, fetch, convert):
+                 raise OSError('Incomplete episode conversion')
+             check()
+             # A concurrent foreground writer must own the same per-media lock.
+-            if output.exists():
++            if output.exists() or output.is_symlink():
+                 raise FileExistsError('Original output already exists')
++            if before_publish:
++                before_publish(complete, output)
++                check()
+             os.replace(complete, output)
+         return output
+diff --git a/contributions/desktop-prefetch-cache/src/desktop_cache_settings.py b/contributions/desktop-prefetch-cache/src/desktop_cache_settings.py
+index b8791ba..db48c43 100644
+--- a/contributions/desktop-prefetch-cache/src/desktop_cache_settings.py
++++ b/contributions/desktop-prefetch-cache/src/desktop_cache_settings.py
+@@ -233,7 +233,7 @@ def make_router(settings, origins=("http://tauri.localhost", "tauri://localhost"
+     return router
+ 
+ 
+-def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0):
++def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0, library=None):
+     """Delete only recognized originals and fully owned HLS entries, oldest first."""
+     from desktop_playable_cache import plain
+     root = Path(root).resolve(strict=True)
+@@ -241,6 +241,17 @@ def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0):
+     hls_file = re.compile(r"(?:owner\.marker|cache\.json|complete\.marker|index\.m3u8|init\.mp4|seg[0-9]{6}\.m4s)").fullmatch
+     candidates = []
+     total = extra_bytes
++    from desktop_video_library import VideoLibrary
++    if library is None:
++        try:library = VideoLibrary(root)
++        except OSError:library = None  # Invalid indexes and unknown files are preserved.
++    named = {}
++    if library is not None:
++        named = library.originals()
++        for path in named:
++            info = path.stat();total += info.st_size
++            if path not in protected:
++                candidates.append((info.st_mtime, path, info.st_size, False))
+     for path in root.iterdir():
+         if not path.is_file() or not plain(path):
+             continue
+@@ -267,11 +278,14 @@ def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0):
+                     if any(not hls_file(child.name) for child in cache._owned_children(path)):
+                         continue
+                     cache._remove_owned(path)
+-            elif path.parent == root and plain(path) and path.resolve() not in protected:
++            elif plain(path) and path.resolve() not in protected and (
++                    path.parent == root or (path in named and library.lookup(named[path]) == path)):
+                 path.unlink()
+             else:
+                 continue
+             total -= size;freed += size;removed.append(path)
+         except (OSError, ValueError):
+             continue
++    if library is not None:
++        library.forget(removed)
+     return {"clearedBytes":freed, "clearedFiles":len(removed), "remainingBytes":max(0,total), "removed":removed}
