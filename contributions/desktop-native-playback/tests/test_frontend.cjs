@@ -3,7 +3,7 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../src/fronten
 const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
 (async()=>{
   let supported=true,smooth=true,containerDuration=null,calls=[],controllers=[],timers=new Map(),tid=0;
-  const c={URL,Headers,Number,Math,Date,queueMicrotask,
+  const c={URL,Headers,Number,Math,Date,queueMicrotask,AbortController,
     setTimeout:(fn,delay)=>{timers.set(++tid,{fn,delay});return tid},clearTimeout:id=>timers.delete(id),
     MediaSource:{isTypeSupported:()=>supported},navigator:{mediaCapabilities:{decodingInfo:async()=>({supported,smooth})}},
     fetch:async(url,init={})=>{

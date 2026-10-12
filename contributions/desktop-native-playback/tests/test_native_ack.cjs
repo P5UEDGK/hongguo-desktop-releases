@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const tick=()=>new Promise(setImmediate);
-async function scenario(hostContext, invalidResume = false){
+async function scenario(hostContext, invalidResume = false, autoStart = false){
   let selected=false,revision=0,position=0,ready=0,seeked=0,token=0,allowReady=false,creates=0,fallbacks=0,errors=0;
   const calls=[],timers=new Map();
   const stage={classList:{add(){},remove(){}},querySelector:()=>null};
@@ -37,7 +37,7 @@ async function scenario(hostContext, invalidResume = false){
           width:allowReady?128:0,height:128,time:position,duration:90,paused:true,seeking:false}:null};
       return {ok:true,status:200,json:async()=>body};
     }};
-  vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/frontend-native.js'),'utf8'),context);
+  vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[3] || path.join(__dirname,'../src/frontend-native.js'),'utf8'),context);
   const dispose=context.desktopNativePlayback(media,'http://127.0.0.1',invalidResume&&!['stale-window','hls-unknown-zero'].includes(invalidResume)?90:0,{onReady(){if(++ready===1)media.currentTime=25;},onError(){errors++;}},null,true);
   for(let n=0;n<5;n++)await tick();
   if(String(invalidResume).startsWith('hls-')){
@@ -58,7 +58,7 @@ async function scenario(hostContext, invalidResume = false){
   const initial=[...timers].filter(([,entry])=>entry.delay===250);
   assert.equal(initial.length,2,'initial layout and first preparing poll are queued independently');
   if(!invalidResume){
-    media.pause();await media.play();
+    if (!autoStart) {media.pause();await media.play();}
     const [id,entry]=initial.shift();timers.delete(id);await entry.fn();await tick();
     const command=JSON.parse(calls.find(([url])=>url.endsWith('/control'))[1].body);
     assert.equal(command.paused,false);assert.equal(command.rate,2,'pre-ready play includes remembered speed');
@@ -83,4 +83,4 @@ async function scenario(hostContext, invalidResume = false){
   }
   dispose();await tick();timers.clear();
 }
-(async()=>{if(process.argv[2])await scenario(true,process.argv[2]);else {await scenario(false);await scenario(true);for(const fault of [true,'unknown','unknown-seek','start-failure','stale-window','hls-unknown','hls-unknown-seek','hls-unknown-zero'])await scenario(true,fault);}console.log('PASS: seek ACK, Tauri binding, EOF/unknown/failed resume reset, HLS-only resume and remembered pre-ready controls');})().catch(error=>{console.error(error);process.exitCode=1});
+(async()=>{if(process.argv[2]==='initial-controls')await scenario(true,false,true);else if(process.argv[2])await scenario(true,process.argv[2]);else {await scenario(false);await scenario(true);await scenario(true,false,true);for(const fault of [true,'unknown','unknown-seek','start-failure','stale-window','hls-unknown','hls-unknown-seek','hls-unknown-zero'])await scenario(true,fault);}console.log('PASS: seek ACK, Tauri binding, EOF/unknown/failed resume reset, HLS-only resume and remembered pre-ready controls');})().catch(error=>{console.error(error);process.exitCode=1});

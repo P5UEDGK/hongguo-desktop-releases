@@ -214,7 +214,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     const bounds = desktopNativeSurfaceRect(media);
     const visible = desktopNativeSurfaceVisible(media);
     const signature = JSON.stringify([bounds, visible]);
-    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible, paused:visible ? state.paused : true});}
+    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible, paused:visible ? state.paused : true, rate:state.rate, volume:state.volume, muted:state.muted});}
   }
   function seek(value) {
     if (disposed || !Number.isFinite(value)) return;

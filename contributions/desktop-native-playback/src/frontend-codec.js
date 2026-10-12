@@ -26,7 +26,20 @@ async function desktopSupportsSource(source) {
 
 function desktopCreateCodecFetch(forceH264 = false) {
   let closed = false, usedCopy = false, failureCode = null, knownDuration = false;
-  const pending = new Map();
+  const pending = new Map(), selecting = new Set();
+  async function selection(input, init) {
+    const control = new AbortController(), parent = init.signal;
+    const abort = () => control.abort();
+    if (closed || parent?.aborted) throw Error('Expired codec selection');
+    parent?.addEventListener('abort', abort, {once:true}); selecting.add(control);
+    let timer;
+    try {
+      return await Promise.race([
+        fetch(input, {...init, signal:control.signal}).then(async response => ({response, body:response.ok ? await response.json() : null})),
+        new Promise((resolve,reject) => {timer=setTimeout(() => {control.abort();reject(Error('Codec selection timed out'));},15000);})
+      ]);
+    } finally {clearTimeout(timer); selecting.delete(control); parent?.removeEventListener('abort',abort);}
+  }
   const request = async (input, init = {}) => {
     const url = new URL(input);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' ||
@@ -47,22 +60,32 @@ function desktopCreateCodecFetch(forceH264 = false) {
       if (!pending.has(url.pathname)) pending.set(url.pathname, (async () => {
         const copy = !status.startSeconds && await desktopSupportsSource(status.source);
         if (closed || init.signal?.aborted) return;
-        const selected = await fetch(url.href.replace(/\/status$/, '/mode'), {
-          method: 'POST', headers: new Headers([...headers, ['content-type', 'application/json']]),
-          body: JSON.stringify({mode: copy ? 'copy' : 'h264'}),
-          credentials: 'omit', redirect: 'error', cache: 'no-store', signal: init.signal
-        });
-        if (selected.ok) usedCopy = (await selected.json()).mode === 'copy';
-        else if (selected.status !== 409) throw Error('Codec selection failed');
+        let selected;
+        try {
+          const result = await selection(url.href.replace(/\/status$/, '/mode'), {
+            method:'POST', headers:new Headers([...headers, ['content-type','application/json']]),
+            body:JSON.stringify({mode:copy ? 'copy' : 'h264'}),
+            credentials:'omit', redirect:'error', cache:'no-store', signal:init.signal
+          });
+          if (result.response.ok) selected = result.body.mode;
+          else if (result.response.status !== 409) throw Object.assign(Error('Codec selection failed'),{status:result.response.status});
+        } catch (error) {if (closed || init.signal?.aborted || error.status) throw error;}
+        if (!selected) {
+          const result = await selection(url.href, {headers,credentials:'omit',redirect:'error',cache:'no-store',signal:init.signal});
+          if (!result.response.ok || result.body.state === 'failed') throw Error('Codec reconciliation failed');
+          selected = result.body.videoMode;
+        }
+        if (!['copy','h264'].includes(selected)) throw Error('Codec selection unavailable');
+        usedCopy = selected === 'copy';
       })());
-      await pending.get(url.pathname);
+      try {await pending.get(url.pathname);} finally {pending.delete(url.pathname);}
     }
     return response;
   };
   request.usedCopy = () => usedCopy;
   request.durationKnown = () => knownDuration;
   request.failureCode = () => failureCode;
-  request.close = () => {closed = true;};
+  request.close = () => {closed = true; for (const control of selecting) control.abort();};
   return request;
 }
 
