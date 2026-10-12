@@ -87,7 +87,7 @@ def validate_audio_source(media):
     if not media.streams.audio: raise ValueError('Preload audio readiness requires an audio track')
 
 
-def preload_timeout(total_bytes, range_delay, override=None):
+def preload_timeout(total_bytes, range_delay, override=None, *, cache_budget=None):
     if (type(total_bytes) is not int or total_bytes <= 0 or
             not math.isfinite(range_delay) or range_delay < 0):
         raise ValueError('Invalid fixture size/delay')
@@ -96,6 +96,9 @@ def preload_timeout(total_bytes, range_delay, override=None):
         if not math.isfinite(override) or not 1 <= override <= 3600:
             raise ValueError('Preload timeout must be between 1 and 3600 seconds')
         return override
+    if cache_budget is not None:
+        if type(cache_budget) is not int or cache_budget <= 0:raise ValueError("Invalid cache budget")
+        total_bytes=min(total_bytes,cache_budget)
     required=30 + math.ceil(total_bytes / 65536) * range_delay * 3 + total_bytes / (8 * 1024 ** 2)
     if required > 3600:raise ValueError('Aggregate Range work exceeds the verifier timeout cap')
     return required
@@ -174,7 +177,7 @@ def main():
     fixture = ProgressiveFixture(app, work, [args.source])
     validate_budget(args.cache_budget,ProgressiveSource.block_size,fixture.files[0].stat().st_size)
     fixture.delay = args.range_delay
-    timeout = preload_timeout(fixture.files[0].stat().st_size, fixture.delay, args.preload_timeout)
+    timeout = preload_timeout(fixture.files[0].stat().st_size, fixture.delay, args.preload_timeout, cache_budget=module.CACHE_FILE_BUDGET)
     host = NativeHost(parent_pid=os.getpid(), hardware=not args.software,
                       dll_path=args.mpv.resolve())
     assert host.available
@@ -227,7 +230,7 @@ def main():
             identifier=request('?series_id=1234567890123456&ep=1','POST')['id']
             wait(identifier,lambda s:bool(s.get('source')),timeout=timeout)
             request('/'+identifier+'/mode','POST',{'mode':'native'})
-            initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready',timeout=timeout)
+            initial=wait(identifier,lambda s:s.get('native',{}).get('state')=='ready' and s['native'].get('outputReady') is True,timeout=timeout)
             session=host.sessions[identifier]
             check('first-frame-ready',initial['native']['outputReady'],initial)
             report['fullSourceAtFirstFrame']=initial['sourceProgress']['complete']

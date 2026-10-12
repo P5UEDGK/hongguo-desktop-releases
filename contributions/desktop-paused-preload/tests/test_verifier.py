@@ -14,6 +14,18 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_timeout_caps_work_at_cache_budget(self):
+        expected=probe.preload_timeout(512*1024**2,.12)
+        self.assertEqual(probe.preload_timeout(700*1024**2,.12,cache_budget=512*1024**2),expected)
+        self.assertLess(expected,3600)
+
+    def test_initial_ready_wait_requires_decoded_output(self):
+        tree=ast.parse(inspect.getsource(probe));calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='wait' and len(n.args)>1 and isinstance(n.args[1],ast.Lambda)]
+        predicate=next(n.args[1] for n in calls if "get('state') == 'ready'" in ast.unparse(n.args[1]))
+        check=eval(compile(ast.fix_missing_locations(ast.Expression(predicate)),'<initial-ready>','eval'))
+        self.assertFalse(check({'native':{'state':'ready','outputReady':False}}))
+        self.assertTrue(check({'native':{'state':'ready','outputReady':True}}))
+
     def test_aggregate_delayed_ranges_cannot_exceed_the_timeout_cap(self):
         for total,delay in ((513*1024**2,1),(2*1024**3,.12)):
             with self.subTest(total=total),self.assertRaises(ValueError):probe.preload_timeout(total,delay)
