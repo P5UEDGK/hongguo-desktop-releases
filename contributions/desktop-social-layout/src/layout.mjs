@@ -58,8 +58,6 @@ export function installSocialStyles() {
       .desktop-social-list-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;position:sticky;top:0;background:#1c1d22;padding:4px 0 8px;z-index:1}
       .desktop-social-list-heading button{background:transparent;border:0;color:#aeb5bf;font-size:12px;padding:4px 0}
       .desktop-player.mini .desktop-social-controls,.desktop-player.mini .desktop-selection-open{display:none}
-      .desktop-player.theater .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr)}
-      .desktop-player.theater .desktop-player-layout.desktop-social-enabled aside{display:none}
       @keyframes desktopDrawerIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
       @media(max-width:800px){.desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr) min(44vw,340px)}.desktop-social-navigation,.desktop-social-toolbar{padding-left:12px;padding-right:12px}.desktop-social-list{padding-left:12px;padding-right:12px}.player-toolbar .desktop-social-controls{gap:2px}.player-toolbar .desktop-social-controls button{min-width:34px;padding:4px}}
       @container desktop-video (max-width:650px){
