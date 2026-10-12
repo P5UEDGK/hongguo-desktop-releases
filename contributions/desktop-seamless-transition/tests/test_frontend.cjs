@@ -74,6 +74,7 @@ async function scenario(native,fail=false,fault=null){
   }else{
     const media=new Video();media.stage=current.stage;Object.assign(media,{playbackRate:record.settings.rate,volume:record.settings.volume,muted:record.settings.muted});let ended=0,errors=0,fallbacks=0;
     if(fault==='play')children[0].play=()=>Promise.reject(Error('play rejected'));
+    let rejectOldPlay,playCount=0;if(fault==='superseded-play'){children[0].play=()=>{children[0].paused=false;playCount++;return playCount===1?new Promise((resolve,reject)=>rejectOldPlay=reject):Promise.resolve();};}
     media.addEventListener('ended',()=>ended++);
     prep.retain(()=>started++);
     let timeline;const acceptance=[];
@@ -115,6 +116,10 @@ async function scenario(native,fail=false,fault=null){
     if(['pause-activation','paused-frame-hold','activate-paused'].includes(fault))media.pause();
     if(fault==='paused-frame-hold')children[0].requestVideoFrameCallback=()=>1;
     if(fault==='pause-after-frame-wait'){children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();assert.equal(started,1);media.pause();assert.equal(started,2,'activated pause releases predecessor without waiting for a future frame');assert(!children[0].removed);dispose();await tick();for(const timer of timers)clearTimeout(timer);return;}
+    if(fault==='superseded-play'){
+      confirmActivation();await tick();assert.equal(playCount,1);media.pause();await media.play();rejectOldPlay(Object.assign(Error('old play interrupted'),{name:'AbortError'}));await tick();
+      assert.equal(fallbacks,0,'superseded HLS play rejection does not abandon newer successful intent');assert(!children[0].removed);assert.equal(media.paused,false);dispose();await tick();for(const timer of timers)clearTimeout(timer);return;
+    }
     if(fault==='terminal-error'){
       children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();
       assert.equal(started,1,'old picture stays until the first actual HLS frame');
@@ -140,7 +145,7 @@ async function scenario(native,fail=false,fault=null){
   for(const timer of timers)clearTimeout(timer);
 }
 (async()=>{if(process.argv[3]){await scenario(false,false,process.argv[3]);return;}await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['replacement-gap','eof-during-capabilities','eof-during-stage','activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
+  for(const fault of ['superseded-play','replacement-gap','eof-during-capabilities','eof-during-stage','activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

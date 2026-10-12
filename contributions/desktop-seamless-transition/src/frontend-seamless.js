@@ -311,7 +311,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       return {id, mode, dispose:cleanup, adopt(media, handlers, onFailure) {
         if (disposed) return null;
         const saved = new Map(), listeners = [];
-        let closed = false, activationComplete = false, wantsPlayback = true;
+        let closed = false, activationComplete = false, wantsPlayback = true, playGeneration = 0;
         const settings = {rate:media.playbackRate || 1,volume:media.volume,muted:media.muted};
         const property = (name, descriptor) => {
           saved.set(name,Object.getOwnPropertyDescriptor(media,name));
@@ -321,8 +321,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
           property(name,{get:()=>video[name],set:v=>{video[name]=v;if(name==='currentTime')rememberResume(video.currentTime+(known.onWindowOrigin?.[0]||0),known.onTimeline?.[0]||video.duration);}});
         for (const name of ['paused','ended','duration','readyState','videoWidth','videoHeight','buffered','seeking','error'])
           property(name,{get:()=>video[name]});
-        property('play',{value:()=>{wantsPlayback=true;return activationComplete ? video.play() : Promise.resolve();}});
-        property('pause',{value:()=>{wantsPlayback=false;video.pause();if(activationComplete)finishRetained();}});
+        property('play',{value:()=>{playGeneration++;wantsPlayback=true;return activationComplete ? video.play() : Promise.resolve();}});
+        property('pause',{value:()=>{playGeneration++;wantsPlayback=false;video.pause();if(activationComplete)finishRetained();}});
         property('desktopDisplayMedia',{value:video});
         property('desktopSessionId',{value:()=>controller?.sessionId?.() ?? null});
         for (const name of ['play','playing','pause','ended','timeupdate','waiting','seeking','seeked','progress','volumechange','ratechange','error','loadedmetadata','durationchange']) {
@@ -365,7 +365,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
           if (!disposed && !closed) throw Error('Standby activation timed out');
         })().then(async () => {
           if (disposed || closed || !wantsPlayback) return;
-          try {await video.play();} catch (error) {if (wantsPlayback) throw error;}
+          const generation=playGeneration;
+          try {await video.play();} catch (error) {if (wantsPlayback && generation===playGeneration) throw error;}
         }).then(() => {
           if (disposed) return;
           if (!wantsPlayback) finishRetained();
