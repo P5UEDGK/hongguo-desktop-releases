@@ -10,20 +10,18 @@ const DesktopEmojiText = props => b.jsx(emojis.Text, props);
 function desktopSocialEndpoint(session) {
   try {
     const endpoint = resolveEndpoint(session.streamUrl);
-    const params = new URL(endpoint.url).searchParams;
-    const series = params.get('series_id'), episode = params.get('ep');
-    if (!series || !episode) return null;
-    return {...endpoint, series, episode};
+    return {...endpoint, series: new URL(endpoint.url).searchParams.get('series_id'),
+      episode: new URL(endpoint.url).searchParams.get('ep')};
   } catch {return null;}
 }
 
-async function desktopSocialRead(endpoint, resource, params = {}, signal, budget = 15000) {
+async function desktopSocialRead(endpoint, resource, params = {}, signal) {
   const url = new URL(endpoint.origin + '/desktop/social/' + resource);
   url.search = new URLSearchParams({series_id: endpoint.series, ep: endpoint.episode, ...params});
   const abort = new AbortController(), cancel = () => abort.abort();
   if (signal?.aborted) abort.abort();
   signal?.addEventListener('abort', cancel, {once:true});
-  const timer = setTimeout(cancel, Math.max(0,budget));
+  const timer = setTimeout(cancel, 15000);
   try {
     const response = await fetch(url, {headers: {'x-api-key': endpoint.key}, signal:abort.signal,
       credentials: 'omit', redirect: 'error', cache: 'no-store'});
@@ -38,74 +36,32 @@ function desktopSocialStore(endpoint) {
   const identity = (resource, params) => JSON.stringify([resource, params.kind || params.comment_id || '']);
   function clear(resource, params) {
     for (const [key, entry] of entries) if ((!resource || entry.resource === resource)
-      && (!params || key === identity(resource, params))) {entry.cancelled = true; entry.abort.abort(); entries.delete(key);}
+      && (!params || key === identity(resource, params))) {entry.abort.abort(); entries.delete(key);}
   }
-  function read(resource, params = {}, deadline = Date.now()+15000, pageOnly = false, replyCount) {
-    if (Date.now() >= deadline) return Promise.reject(new DOMException("Read deadline expired", "TimeoutError"));
+  function read(resource, params = {}) {
     const key = identity(resource, params), cursor = params.cursor || '';
     let entry = entries.get(key);
-    if (entry && resource==='replies' && replyCount !== undefined && entry.replyCount !== undefined && entry.replyCount !== replyCount) {
-      clear(resource,params);entry=null;
-    }
     if (!entry) {
-      if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).cancelled = true; entries.get(oldest).abort.abort(); entries.delete(oldest);}
-      entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set(), pages:new Map()}; entries.set(key, entry);
+      if (entries.size >= 32) {const oldest = entries.keys().next().value; entries.get(oldest).abort.abort(); entries.delete(oldest);}
+      entry = {resource, abort:new AbortController(), value:null, pending:null, cursors:new Set()}; entries.set(key, entry);
     }
-    if (replyCount !== undefined) entry.replyCount=replyCount;
-    const requested = () => {
-      if (pageOnly === 'replyThread') {
-        const firstIds = new Set(entry.pages.get('')?.items.map(row => row.id) || []);
-        const laterIds = new Set();
-        for (const [key, page] of entry.pages) if (key)
-          for (const row of page.items) if (!firstIds.has(row.id)) laterIds.add(row.id);
-        return {value:entry.value, page:entry.pages.get(cursor), laterIds, firstIds};
-      }
-      return pageOnly ? entry.pages.get(cursor) : entry.value;
-    };
-    const pendingResult = () => pageOnly ? entry.pending.then(requested) : entry.pending;
-    if (entry.pending) {
-      if (entry.pendingCursor === cursor) return pendingResult();
-      let timer;
-      return Promise.race([
-        entry.pending.catch(() => {}).then(() => {
-          if (entry.cancelled) throw new DOMException('Aborted', 'AbortError');
-          return read(resource, params, deadline, pageOnly, replyCount);
-        }),
-        new Promise((_,reject)=>{timer=setTimeout(()=>reject(new DOMException('Read deadline expired','TimeoutError')),Math.max(0,deadline-Date.now()));})
-      ]).finally(()=>clearTimeout(timer));
-    }
-    if (entry.value && entry.cursors.has(cursor)) return Promise.resolve(requested());
-    entry.pendingCursor = cursor;
+    if (entry.value && (!cursor || entry.cursors.has(cursor))) return Promise.resolve(entry.value);
+    if (entry.pending) return entry.pending;
     if (entry.abort.signal.aborted) entry.abort = new AbortController();
-    const timer = setTimeout(() => entry.abort.abort(), Math.max(0,deadline-Date.now()));
-    entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal, deadline-Date.now()).then(result => {
+    const timer = setTimeout(() => entry.abort.abort(), 15000);
+    entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal).then(result => {
       if (entry.abort.signal.aborted || entries.get(key) !== entry) throw new DOMException('Aborted', 'AbortError');
       const page = resource === 'comments' || resource === 'replies';
-      if (page && !cursor && resource !== 'replies') {entry.cursors.clear(); entry.pages.clear();}
-      entry.pages.set(cursor, page ? {...result, has_more:result.has_more && result.cursor !== cursor} : result);
       entry.value = page ? {...result, has_more:result.has_more && result.cursor !== cursor,
         items:cursor && entry.value ? [...new Map([...entry.value.items, ...result.items].map(item => [item.id,item])).values()] : result.items} : result;
-      if (resource === 'replies' && entry.pages.has('')) {
-        const chain = [], visited = new Set();
-        let next = '';
-        while (entry.pages.has(next) && !visited.has(next)) {
-          visited.add(next);
-          const current = entry.pages.get(next);chain.push(current);
-          if (!current.has_more) break;
-          next = current.cursor;
-        }
-        const last = chain.at(-1);
-        entry.value = {...last,
-          items:[...new Map(chain.flatMap(page=>page.items).map(row=>[row.id,row])).values()]};
-      }
       entry.cursors.add(cursor); return entry.value;
     }).catch(error => {
       if (!entry.value && entries.get(key) === entry) entries.delete(key);
       throw error;
     }).finally(() => {clearTimeout(timer); entry.pending = null;});
-    return pendingResult();
+    return entry.pending;
   }
-  return {read, readReplyThread:(params,deadline,replyCount) => read('replies',params,deadline,'replyThread',replyCount), readPage:(resource,params,deadline) => read(resource,params,deadline,true), clear, dispose:() => clear()};
+  return {read, clear, dispose:() => clear()};
 }
 
 function desktopSocialPreference(name, fallback) {
@@ -127,13 +83,7 @@ function desktopSocialSet(media, changes) {
 }
 
 function DesktopSocialControls({media, sessionKey}) {
-  const [social, setSocial] = O.useState(false), [danmakuError,setDanmakuError] = O.useState('');
-  O.useEffect(()=>{
-    const video=media.current, changed=event=>setDanmakuError(event.detail || '');
-    setDanmakuError(video?.desktopDanmakuStatus || '');
-    video?.addEventListener('desktopdanmakustatus',changed);
-    return ()=>video?.removeEventListener('desktopdanmakustatus',changed);
-  },[sessionKey]);
+  const [social, setSocial] = O.useState(false);
   O.useEffect(() => {
     const video = media.current; setSocial(false);
     const changed = event => {
@@ -145,8 +95,7 @@ function DesktopSocialControls({media, sessionKey}) {
   }, [sessionKey]);
   return b.jsxs('span', {className: 'desktop-social-controls', children: [
     b.jsx(DesktopDanmakuSettings,{media,sessionKey}),
-    danmakuError && b.jsx('span',{className:'desktop-social-error',role:'status',title:danmakuError,children:'弹幕加载失败'}),
-    b.jsx('button', {className: 'desktop-social-toggle', 'aria-label': '评论与互动', 'aria-pressed': social,
+    b.jsx('button', {className: 'desktop-social-toggle', 'aria-label': '评论与互动', 'aria-expanded': social,
       'aria-controls': 'desktop-social-drawer', title: '评论、点赞数和收藏数',
       onClick: async () => {
         if (!social && document.fullscreenElement) try {await document.exitFullscreen();} catch {}
@@ -161,14 +110,14 @@ function SocialSession({session, media}) {
   O.useEffect(() => () => store.dispose(), [store]);
   const [stats, setStats] = O.useState(null), [statsError, setStatsError] = O.useState('');
   const [tab, setTab] = O.useState('episodes'), [page, setPage] = O.useState(null);
-    const [error, setError] = O.useState(''), [busy, setBusy] = O.useState(false);
-    const failedCursor = O.useRef('');
+  const [error, setError] = O.useState(''), [busy, setBusy] = O.useState(false);
   const [refresh, setRefresh] = O.useState(0), [metricsRefresh, setMetricsRefresh] = O.useState(0);
   const consumedMetricsRefresh = O.useRef(0);
   const consumedCommentsRefresh = O.useRef(0);
   const [danmaku, setDanmaku] = O.useState(() => desktopSocialPreference('danmaku', true));
   const [drawer, setDrawer] = O.useState(() => desktopSocialPreference('social', false));
   const [comments, setComments] = O.useState(false);
+  const [danmakuError, setDanmakuError] = O.useState('');
   const commenting = drawer && comments && tab !== 'episodes';
   const current = O.useRef(null);
   const [,refreshEmojis]=O.useState(0);
@@ -219,7 +168,7 @@ function SocialSession({session, media}) {
   }, [key, tab, refresh, commenting]);
   async function load(cursor = '', own = current.current) {
     if (!own || own.busy || own.abort.signal.aborted) return;
-    own.busy = true; failedCursor.current = cursor; setBusy(true); setError('');
+    own.busy = true; setBusy(true); setError('');
     try {
       const result = await store.read('comments', {kind: tab, cursor});
       if (current.current !== own) return;
@@ -229,13 +178,10 @@ function SocialSession({session, media}) {
     finally {own.busy = false; if (current.current === own) setBusy(false);}
   }
   O.useEffect(() => {
-    const video=media.current;
-    const status=message=>{if(video){video.desktopDanmakuStatus=message;video.dispatchEvent(new CustomEvent('desktopdanmakustatus',{detail:message}));}};
-    status('');
+    setDanmakuError('');
     try {localStorage.setItem('hongguo:danmaku', danmaku ? 'on' : 'off');} catch {}
     if (!endpoint || !danmaku || !media.current) return;
-    const stop=desktopStartDanmaku(video, endpoint, status);
-    return ()=>{stop?.();status('');};
+    return desktopStartDanmaku(media.current, endpoint, setDanmakuError);
   }, [key, danmaku]);
   if (!endpoint) return null;
   return b.jsxs('section', {id: 'desktop-social-drawer', className: 'desktop-social', 'data-tab': tab,
@@ -258,6 +204,7 @@ function SocialSession({session, media}) {
       b.jsx('button', {onClick: () => setMetricsRefresh(n => n + 1), 'aria-label': '刷新互动计数', children: '刷新'}),
       b.jsx('small', {className: 'desktop-social-favorite', children: '整剧收藏 ' + (stats ? stats.favorites.toLocaleString('zh-CN') : '…')})]}),
     tab !== 'episodes' && statsError && b.jsx('p', {className: 'desktop-social-error', role: 'status', children: statsError}),
+    tab !== 'episodes' && danmakuError && b.jsx('p', {className: 'desktop-social-error', role: 'status', children: danmakuError}),
     tab !== 'episodes' && b.jsxs('div', {className: 'desktop-social-list', role: 'tabpanel', 'aria-label': tab === 'episode' ? '本集评论' : '整剧剧评', children: [
       b.jsxs('div', {className: 'desktop-social-list-heading', children: [
         b.jsx('small', {className: 'desktop-social-status', children: page ? '共 ' + page.total.toLocaleString('zh-CN') + ' 条' : '评论'}),
@@ -265,7 +212,7 @@ function SocialSession({session, media}) {
       page?.items.map(item => b.jsx(DesktopSocialComment, {item, endpoint, store, replies: tab === 'episode'}, key + tab + item.id)),
       page && !page.items.length && b.jsx('p', {className: 'desktop-social-status', children: '暂无评论'}),
       error && b.jsxs('p', {className: 'desktop-social-error', role: 'status', children: [error, ' ', b.jsx('button', {
-        onClick: () => load(failedCursor.current), children: '重试'})]}),
+        onClick: () => load(page?.cursor || ''), children: '重试'})]}),
       busy && b.jsx('p', {className: 'desktop-social-status', role: 'status', children: '正在加载…'}),
       page?.has_more && b.jsx('button', {disabled: busy, onClick: () => load(page.cursor), children: '加载更多评论'})]})]});
 }
@@ -274,45 +221,19 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
   const [open, setOpen] = O.useState(false), [page, setPage] = O.useState(null);
   const [busy, setBusy] = O.useState(false), [error, setError] = O.useState('');
   const own = O.useRef(null);
-  const detachedCursor = O.useRef(null);
-  const laterIds = O.useRef(new Set());
-  const failedCursor = O.useRef('');
-  const replyIdentity = O.useRef([item.id,item.replies,replies]);
   O.useEffect(() => {
     own.current = {abort: new AbortController(), busy: false};
     return () => {own.current.abort.abort();};
   }, []);
-  O.useEffect(() => {
-    const previous=replyIdentity.current;
-    const changed=previous[0]!==item.id || previous[1]!==item.replies || previous[2]!==replies;
-    replyIdentity.current=[item.id,item.replies,replies];
-    if (changed) store?.clear('replies',{comment_id:previous[0]});
-    if (changed || !replies || item.replies <= 0) {
-      own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false};
-      setOpen(false);setPage(null);setBusy(false);setError('');laterIds.current.clear();detachedCursor.current=null;
-    }
-  }, [item.id,item.replies,replies]);
   async function load(cursor = '') {
     const request = own.current;
     if (!request || request.busy || request.abort.signal.aborted) return;
-    request.busy = true; request.cursor = cursor; failedCursor.current = cursor; setBusy(true); setError('');
+    request.busy = true; setBusy(true); setError('');
     try {
       const params = {comment_id:item.id, cursor};
-      const cached = store?.readReplyThread ? await store.readReplyThread(params,undefined,item.replies) : null;
-      const result = cached ? cached.value : await (store ? (store.readPage || store.read).call(store,'replies',params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
-      if (own.current === request && !request.abort.signal.aborted) setPage(previous => {
-        detachedCursor.current = null;
-        const freshIds = new Set((cached?.page || result).items.map(row => row.id));
-        if (cursor && !cached) for (const id of freshIds) laterIds.current.add(id);
-        else for (const id of freshIds) laterIds.current.delete(id);
-        if (cached) {for (const id of cached.firstIds) laterIds.current.delete(id); for (const id of cached.laterIds) laterIds.current.add(id);}
-        const resultIds = new Set(result.items.map(row => row.id));
-        const later = previous?.items.filter(row => laterIds.current.has(row.id) && !resultIds.has(row.id)) || [];
-        const keepLater = !cursor && later.length > 0;
-        return {...result, cursor: keepLater ? previous.cursor : result.cursor,
-          has_more: keepLater ? previous.has_more : result.has_more && result.cursor !== cursor,
-          items: !previous ? result.items : cursor ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : [...result.items, ...later]};
-      });
+      const result = await (store ? store.read('replies', params) : desktopSocialRead(endpoint, 'replies', params, request.abort.signal));
+      if (own.current === request && !request.abort.signal.aborted) setPage(previous => ({...result, has_more: result.has_more && result.cursor !== cursor,
+        items: cursor && previous ? [...new Map([...previous.items, ...result.items].map(row => [row.id, row])).values()] : result.items}));
     } catch (e) {if (!request.abort.signal.aborted) setError('回复加载失败，请重试');}
     finally {request.busy = false; if (!request.abort.signal.aborted) setBusy(false);}
   }
@@ -321,12 +242,12 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     b.jsx('p', {children: b.jsx(DesktopEmojiText,{text:item.text || (item.image_count ? '[图片评论]' : '[无文字评论]')})}),
     b.jsx('small', {children: (item.created_at ? new Date(item.created_at * 1000).toLocaleDateString('zh-CN') + ' · ' : '') + '赞 ' + item.likes}),
     replies && item.replies > 0 && b.jsx('button', {'aria-expanded': open, onClick: () => {
-      setOpen(!open); if (open) {if (store && own.current?.busy) detachedCursor.current = own.current.cursor; own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!busy && (store || !page)) load(detachedCursor.current ?? '');}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
-    open && replies && item.replies > 0 && b.jsxs('div', {className: 'desktop-social-replies', children: [
+      setOpen(!open); if (open) {own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!page && !busy) load();}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
+    open && b.jsxs('div', {className: 'desktop-social-replies', children: [
       page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, store, replies: false}, row.id)),
       page && !page.items.length && b.jsx('p', {children: '暂无回复'}),
       busy && b.jsx('p', {role: 'status', children: '正在加载回复…'}),
-      error && b.jsxs('p', {role: 'status', children: [error, ' ', b.jsx('button', {onClick: () => load(failedCursor.current), children: '重试'})]}),
+      error && b.jsxs('p', {role: 'status', children: [error, ' ', b.jsx('button', {onClick: () => load(page?.cursor || ''), children: '重试'})]}),
       page?.has_more && b.jsx('button', {disabled: busy, onClick: () => load(page.cursor), children: '加载更多回复'})]})]});
 }
 

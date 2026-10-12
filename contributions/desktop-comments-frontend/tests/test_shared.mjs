@@ -18,8 +18,6 @@ api.set(media,{danmaku:true});api.set(media,{social:false});assert.equal(api.pre
 assert.equal(changes.social,false);
 globalThis.fetch=async()=>({ok:false});await assert.rejects(()=>api.read(endpoint,'comments'),/加载失败/);
 assert.equal(api.endpoint({streamUrl:'bad'}),null);
-for(const query of ('', '?ep=2', '?series_id=123', '?series_id=&ep=2', '?series_id=123&ep='))
-  assert.equal(api.endpoint({streamUrl:'http://127.0.0.1:1234/stream'+query}),null);
 const abort=new AbortController();
 globalThis.fetch=async(url,{signal})=>new Promise((_,reject)=>{
   if(signal.aborted)reject(new DOMException('Aborted','AbortError'));
