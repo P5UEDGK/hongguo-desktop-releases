@@ -45,6 +45,21 @@ def encoder(source, directory, on_ready=lambda: None, *, cancelled=lambda: False
 
 
 class PrefetchTests(unittest.TestCase):
+    def test_finish_reuses_the_foreground_identity_without_rehashing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p=EpisodePrefetcher(lambda _:None,lambda _:({},metadata()),Path(folder)/'cache',encoder=lambda source,directory,on_ready,**kw:complete_output(directory),profile_files=PROFILE_FILES,ahead=0)
+            self.addCleanup(p.close)
+            job=Job('identity',Path(folder)/'out');job.video_mode='h264';job.failed=False
+            p.foreground[job.id]=p.generation;p.busy=job.id;p.current={'seriesId':SERIES,'episode':1};p.latest_episodes=[]
+            p.foreground_directories[job.id]=Path(folder)/'out'
+            source=Path(folder)/'source.mp4';source.write_bytes(b'owned source')
+            self.assertTrue(p.encode(source,p.foreground_directories[job.id]))
+            with patch.object(p.cache,'_identity',side_effect=AssertionError('source rehashed in finish')) as identity:
+                p.finish(job,SERIES,1,source)
+                identity.assert_not_called()
+            self.assertTrue(p.current_complete);self.assertTrue(p.window_keys);self.assertIsNone(p.busy)
+
+
     def test_stale_download_active_is_reported_after_generation_changes(self):
         reports=[];value=self.make(ahead=0)
         with value.condition:value.download_pending=[(value.generation,2,'10000002')]

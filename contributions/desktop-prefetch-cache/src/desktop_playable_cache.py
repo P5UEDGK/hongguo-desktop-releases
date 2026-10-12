@@ -446,7 +446,7 @@ class PlayableEpisodeCache:
                     self._remove_owned(stage)
 
     def encode(self, source, directory, on_ready=lambda: None, *, cancelled=lambda: False,
-               start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264"):
+               start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264", on_cache_key=lambda key: None):
         restored, identity_result = False, None
         try:
             if self.available:
@@ -462,6 +462,7 @@ class PlayableEpisodeCache:
             if start_seconds: on_window(0, None)  # Full artifact; host keeps its source duration.
             if cancelled():raise EncodingCancelled()
             on_ready()
+            on_cache_key(identity_result[0])
             return True
         if start_seconds:
             extra = {"video_mode": "copy"} if video_mode == "copy" else {}
@@ -471,8 +472,10 @@ class PlayableEpisodeCache:
         extra = {"video_mode": "copy"} if video_mode == "copy" else {}
         self.encoder(source, directory, on_ready, cancelled=cancelled, **extra)
         try:
-            return identity_result is not None and self.store(source, directory, cancelled, video_mode=video_mode,
-                                                             _identity_result=identity_result) is not None
+            cached = identity_result is not None and self.store(source, directory, cancelled, video_mode=video_mode,
+                                                               _identity_result=identity_result) is not None
+            if cached: on_cache_key(identity_result[0])
+            return cached
         except EncodingCancelled:
             raise
         except Exception:

@@ -192,8 +192,12 @@ class EpisodePrefetcher:
         current_complete, current_key = False, None
         try:
             if expected is not None and source is not None and mode != "native" and not job.failed and not cancelled():
-                current_complete = cached_result if cached_result is not None else self.cache.contains(source, mode, cancelled=cancelled)
-                if current_complete:current_key = self.cache._identity(source, mode, cancelled)[0]
+                if cached_result is not None:
+                    current_complete, current_key = cached_result
+                else:
+                    identity = self.cache._identity(source, mode, cancelled)
+                    current_complete = self.cache.contains(source, mode, cancelled=cancelled, _identity_result=identity)
+                    if current_complete: current_key = identity[0]
         except Exception:
             pass  # Completion bookkeeping still releases the old foreground slot.
         with self.condition:
@@ -318,11 +322,12 @@ class EpisodePrefetcher:
 
     def encode(self, *args, **kwargs):
         cancelled = kwargs.pop("cancelled", lambda: False)
-        result = self.cache.encode(*args, cancelled=lambda: self.closed or cancelled(), **kwargs)
+        key = []
+        result = self.cache.encode(*args, cancelled=lambda: self.closed or cancelled(), on_cache_key=key.append, **kwargs)
         directory = Path(args[1] if len(args)>1 else kwargs['directory'])
         with self.condition:
             for identifier, target in self.foreground_directories.items():
-                if target == directory: self.cache_results[identifier] = result
+                if target == directory: self.cache_results[identifier] = (result, key[0] if key else None)
         return result
 
     def snapshot(self):
