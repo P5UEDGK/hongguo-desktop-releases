@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
 const source=fs.readFileSync('contributions/desktop-poster-cache/src/frontend-posters.js','utf8');
-const context=vm.createContext({URL,AbortController,setTimeout,clearTimeout,queueMicrotask,Date,console});
+const context=vm.createContext({URL,AbortController,setTimeout,clearTimeout,queueMicrotask,Date,console,TextDecoder});
 vm.runInContext(source,context);const create=vm.runInContext('desktopCreatePosterLoader',context);
 const data='data:image/jpeg;base64,/9j/';const sid='9000000000000001';
 test('shared entry batches and merges repeated identity',async()=>{
@@ -55,4 +55,37 @@ test('occupied download slots never block new disk reads', {timeout:1500},async(
     assert.ok(calls.filter(c=>!c.localOnly).every(c=>!c.ids.includes(sid)&&c.ids.length<=20));
     release();await work;
   } finally {release();}
+});
+
+test('one completed image resolves while its batch still downloads', {timeout:1500},async()=>{
+  const slow='9000000000000002';let release,entered;
+  const gate=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+  const load=create(async(ids,{localOnly},progress)=>{
+    if(localOnly)return {covers:{}};
+    progress({covers:{[sid]:data}});entered();await gate;
+    progress({covers:{[slow]:data}});return {covers:{}};
+  });
+  try {
+    const one=load(sid),two=load(slow);let done=false;two.then(()=>done=true);
+    await started;assert.equal(await one,data);assert.equal(done,false);
+    release();assert.equal(await two,data);
+  } finally {release();}
+});
+
+test('stream handles split frames, final line, and rejects malformed data',async()=>{
+  const read=vm.runInContext('desktopReadPosterStream',context),encoder=new TextEncoder(),parts=[];
+  const bytes=encoder.encode(JSON.stringify({covers:{[sid]:data}})+'\n'+JSON.stringify({covers:{},missing:['中文']}));
+  const response=new Response(new ReadableStream({start(c){for(let i=0;i<bytes.length;i+=7)c.enqueue(bytes.slice(i,i+7));c.close();}}));
+  await read(response,part=>parts.push(part));assert.equal(parts[0].covers[sid],data);assert.equal(parts[1].missing[0],'中文');
+  await assert.rejects(read(new Response('{bad}\n'),()=>{}));
+  await assert.rejects(read(new Response('{"covers":[]}\n'),()=>{}),/格式无效/);
+});
+
+test('successful streamed image survives later batch failure',async()=>{
+  const slow='9000000000000002';
+  const load=create(async(ids,{localOnly},progress)=>{
+    if(localOnly)return {covers:{}};
+    progress({covers:{[sid]:data}});throw Error('stream interrupted');
+  });
+  const one=load(sid),two=load(slow);await assert.rejects(two,/interrupted/);assert.equal(await one,data);
 });
