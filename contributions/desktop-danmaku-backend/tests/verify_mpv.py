@@ -16,6 +16,11 @@ sys.path[:0]=[str(Path(__file__).resolve().parents[1]/'src'),str(args.native_pac
 from desktop_native import NativeHost,Mpv
 from desktop_danmaku import ass_document
 from desktop_danmaku_track import DanmakuTrack
+import ast
+policy=ast.parse((args.native_package/'src/desktop_native.py').read_text(encoding='utf8'))
+options=next(node.value for node in ast.walk(policy) if isinstance(node,ast.Assign) and any(isinstance(target,ast.Name) and target.id=='options' for target in node.targets) and isinstance(node.value,ast.Dict))
+options=eval(compile(ast.fix_missing_locations(ast.Expression(options)),'<actual-native-policy>','eval'),{'hwnd':1})
+assert all(options[name]=='no' for name in ('input-default-bindings','input-vo-keyboard','config','load-scripts')),'native keyboard and scripts stay disabled'
 host=NativeHost(parent_pid=os.getpid(),dll_path=args.dll)
 if not host.available:raise RuntimeError('Verified native package DLL unavailable')
 player=Mpv(host.dll)
@@ -117,9 +122,20 @@ try:
         live.apply(player)
         assert not live.failed and float(player.get('sub-delay'))==0 and player.get('sub-ass-override')=='no' and player.get('sub-visibility')=='yes'
         player.command('seek','2','absolute+exact');deadline=time.monotonic()+3
-        while time.monotonic()<deadline and 'live option overlay' not in (player.get('sub-text') or ''):time.sleep(.02)
-        assert 'live option overlay' in (player.get('sub-text') or ''),dict(failed=live.failed,sid=player.get('sid'),secondary=player.get('secondary-sid'),time=player.get('time-pos'),text=player.get('sub-text'),options={name:player.get(name) for name in ('sub-delay','sub-visibility','sub-pos','sub-ass-override','sub-speed')},document=live.document)
+        live_text=''
+        while time.monotonic()<deadline:
+            live_text=player.get('sub-text') or ''
+            if 'live option overlay' in live_text:break
+            time.sleep(.02)
+        assert 'live option overlay' in live_text,dict(failed=live.failed,sid=player.get('sid'),secondary=player.get('secondary-sid'),time=player.get('time-pos'),text=live_text,options={name:player.get(name) for name in ('sub-delay','sub-visibility','sub-pos','sub-ass-override','sub-speed')},document=live.document)
         live.close(player)
         assert float(player.get('sub-delay'))==3 and player.get('sub-ass-override')=='strip' and player.get('sub-visibility')=='no'
-        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, subtitle selection/restoration and sub-speed timing; no pixel or Win32 claim'}))
+        player.command('set','sid','no');player.command('set','secondary-sid','no');player.command('set','sub-delay','2')
+        player.command('sub-add','memory://'+caption,'select','caption before switch')
+        switched=DanmakuTrack();switched.update({'danmaku':[{'text':'switch option overlay','offset_ms':0,'lane':0}]});switched.apply(player)
+        player.command('sub-add','memory://'+caption,'select','caption after switch');selected=player.get('sid')
+        player.command('set','sub-delay','3');switched.apply(player)
+        assert not switched.failed and player.get('secondary-sid')==selected and float(player.get('secondary-sub-delay'))==3
+        switched.close(player);assert player.get('sid')==selected and float(player.get('sub-delay'))==3
+        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, simultaneous caption/option switch, subtitle restoration and sub-speed timing; no pixel or Win32 claim'}))
 finally:player.close()

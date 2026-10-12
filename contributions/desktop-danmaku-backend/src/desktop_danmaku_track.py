@@ -176,7 +176,7 @@ class DanmakuTrack:
             self.dirty = True
         if self.promoted and self.saved and str(player.get('secondary-sid')) != str(self.saved[0]):
             self.dirty = True
-        if self.track_id and self.saved_options is not None and str(player.get('sid')) == str(self.track_id):
+        if self.track_id and self.saved_options is not None:
             for name,neutral in (('sub-ass-override','no'),('sub-delay','0'),('sub-visibility','yes'),('sub-pos',self.saved_options['sub-pos'])):
                 live = str(player.get(name))
                 if live != self.modified_options.get(name,neutral):
