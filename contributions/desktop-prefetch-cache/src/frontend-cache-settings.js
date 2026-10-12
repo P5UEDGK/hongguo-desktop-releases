@@ -122,8 +122,10 @@ function DesktopCacheSettings() {
       b.jsxs("label", {style:{display:"flex", alignItems:"center", gap:"7px", whiteSpace:"nowrap"}, children:[
         b.jsx("input", {id:"video-cache-all", type:"checkbox", checked:all, onChange:event=>setAll(event.target.checked), disabled:busy||!loaded, style:{accentColor:"#ff6b98"}}), "剩余集数"
       ]}),
-      b.jsx("label", {htmlFor:"video-cache-count", style:{marginLeft:"12px", whiteSpace:"nowrap"}, children:"指定集数："}),
-      b.jsx("input", {id:"video-cache-count", "aria-label":"指定集数", type:"number", min:1, max:100000, step:1, value:count, onChange:event=>setCount(event.target.value), disabled:busy||!loaded||all, style:{...field, width:"90px", opacity:all?0.45:1}}),
+      b.jsxs("div", {style:{display:"flex", alignItems:"center", gap:"5px", marginLeft:"17px"}, children:[
+        b.jsx("label", {htmlFor:"video-cache-count", style:{whiteSpace:"nowrap"}, children:"指定集数："}),
+        b.jsx("input", {id:"video-cache-count", "aria-label":"指定集数", type:"number", min:1, max:100000, step:1, value:count, onChange:event=>setCount(event.target.value), disabled:busy||!loaded||all, style:{...field, width:"90px", opacity:all?0.45:1}})
+      ]}),
       b.jsx("small", {style:{color:"#8a8f98"}, children:"推荐 3 集"})
     ]}),
     b.jsxs("div", {style:row, children:[
