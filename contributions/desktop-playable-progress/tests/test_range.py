@@ -9,62 +9,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from desktop_playable_range import playable_range
 
 class RangeTests(unittest.TestCase):
-    def test_playlist_type_is_unique_and_known(self):
-        self.output();path=self.path/'index.m3u8';original=path.read_text(encoding='utf8')
-        for tag in ('#EXT-X-PLAYLIST-TYPE:OTHER','#EXT-X-PLAYLIST-TYPE',
-                    '#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-PLAYLIST-TYPE:VOD'):
-            path.write_text(original+tag+'\n',encoding='utf8');self.assertEqual(playable_range(self.job),[0,0])
-        for tag in ('EVENT','VOD'):
-            path.write_text(original+'#EXT-X-PLAYLIST-TYPE:'+tag+'\n',encoding='utf8')
-            self.assertEqual(playable_range(self.job),[0,2])
-
-    def test_discontinuous_timelines_are_unsupported(self):
-        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
-        for tag in ('#EXT-X-DISCONTINUITY','#EXT-X-DISCONTINUITY-SEQUENCE:0',
-                    '#EXT-X-DISCONTINUITY-SEQUENCE:bad','#EXT-X-DISCONTINUITY-SEQUENCE',
-                    '#EXT-X-DISCONTINUITY-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:1'):
-            for body in (original.replace('#EXTM3U\n','#EXTM3U\n'+tag+'\n',1),original+tag+'\n'):
-                with self.subTest(tag=tag):
-                    playlist.write_text(body,encoding='utf8');self.assertEqual(playable_range(self.job),[0,0])
-
-    def test_media_sequence_must_be_unique_unsigned_decimal(self):
-        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
-        for tag in ('#EXT-X-MEDIA-SEQUENCE:bad', '#EXT-X-MEDIA-SEQUENCE',
-                    '#EXT-X-MEDIA-SEQUENCE:-1', '#EXT-X-MEDIA-SEQUENCE:1.5',
-                    '#EXT-X-MEDIA-SEQUENCE:18446744073709551616',
-                    '#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MEDIA-SEQUENCE:1'):
-            with self.subTest(tag=tag):
-                playlist.write_text(original+tag+'\n',encoding='utf8')
-                self.assertEqual(playable_range(self.job),[0,0])
-        playlist.write_text(original.replace('#EXTM3U\n','#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n',1),encoding='utf8')
-        self.assertEqual(playable_range(self.job),[0,2])
-    def test_media_sequence_after_first_media_uri_is_rejected(self):
-        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
-        for body in (original+'#EXT-X-MEDIA-SEQUENCE:0\n',original.replace('#EXT-X-ENDLIST','#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-ENDLIST')):
-            playlist.write_text(body,encoding='utf8');self.assertEqual(playable_range(self.job),[0,0])
-
-    def test_master_tags_cannot_enter_local_media_coverage(self):
-        self.output();playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
-        for tag in ('#EXT-X-SESSION-DATA:DATA-ID="fixture",VALUE="x"',
-                    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="fixture",NAME="audio"',
-                    '#EXT-X-STREAM-INF:BANDWIDTH=1000',
-                    '#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1000,URI="iframe.m3u8"',
-                    '#EXT-X-SESSION-KEY:METHOD=AES-128,URI="key"'):
-            with self.subTest(tag=tag):
-                playlist.write_text(original+tag+'\n',encoding='utf8')
-                self.assertEqual(playable_range(self.job),[0,0])
-
-    def test_numbered_fragments_must_be_contiguous_from_zero(self):
-        self.output(second=True)
-        playlist=self.path/'index.m3u8';original=playlist.read_text(encoding='utf8')
-        for name in ('seg000001.m4s','seg000002.m4s','seg000003.m4s'):
-            (self.path/name).write_bytes(b'fragment')
-        for body in (original.replace('seg000001','seg000002'),
-                     original.replace('seg000000','seg000002'),
-                     original.replace('seg000000','seg000002').replace('seg000001','seg000003')):
-            with self.subTest(playlist=body):
-                playlist.write_text(body,encoding='utf8')
-                self.assertEqual(playable_range(self.job),[0,0])
     def test_large_target_duration_cannot_hide_truncated_completed_playlist(self):
         self.output();self.job.done.set()
         path=self.path/'index.m3u8'

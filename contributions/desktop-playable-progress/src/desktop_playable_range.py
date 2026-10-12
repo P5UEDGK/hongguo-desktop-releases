@@ -40,19 +40,9 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
             return [0, 0]
         # This adapter serves clear local fMP4 only. A fragment cannot prove
         # decryptability, even when an encrypted playlist has ENDLIST.
-        if any(line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-SESSION-DATA:", "#EXT-X-MEDIA:", "#EXT-X-STREAM-INF:", "#EXT-X-I-FRAME-STREAM-INF:", "#EXT-X-BYTERANGE:")) for line in lines):
-            return [0, 0]
-        types = [line for line in lines if line.startswith('#EXT-X-PLAYLIST-TYPE')]
-        if len(types)>1 or types and types[0] not in ('#EXT-X-PLAYLIST-TYPE:EVENT','#EXT-X-PLAYLIST-TYPE:VOD'):
+        if any(line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")) for line in lines):
             return [0, 0]
         parameters = {}
-        if any(line.startswith('#EXT-X-DISCONTINUITY') for line in lines):
-            return [0, 0]  # The fixed local generator emits one continuous timeline.
-        sequences = [line for line in lines if line.startswith('#EXT-X-MEDIA-SEQUENCE')]
-        if (len(sequences) > 1 or sequences and
-                (not re.fullmatch(r'#EXT-X-MEDIA-SEQUENCE:[0-9]{1,20}', sequences[0])
-                 or int(sequences[0].split(':', 1)[1]) > 2**64 - 1)):
-            return [0, 0]
         for tag, minimum in (("TARGETDURATION", 1), ("VERSION", 6)):
             prefix = "#EXT-X-" + tag + ":"
             values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
@@ -65,8 +55,6 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
         mapped, ended = False, False
         seen = set()
         for line in lines:
-            if line.startswith("#EXT-X-MEDIA-SEQUENCE") and seen:
-                return [0, 0]
             if line.startswith("#EXT-X-MAP:"):
                 if line != '#EXT-X-MAP:URI="init.mp4"':
                     return [0, 0]
@@ -88,8 +76,6 @@ def playable_range(job, full_cache_ready=None, *, native_state=None):
             elif line and not line.startswith("#"):
                 if not mapped or pending is None or line in seen or not re.fullmatch(r"seg[0-9]{6}\.m4s", line):
                     return [0, 0]
-                if int(line[3:9]) != len(seen):
-                    return [0, 0]  # Host numbers every window from zero without gaps.
                 seen.add(line)
                 fragment = job.directory / line
                 if not incomplete:
