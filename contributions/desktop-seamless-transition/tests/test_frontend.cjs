@@ -1,5 +1,5 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const source=fs.readFileSync(process.argv[4] || require('node:path').join(__dirname,'../src/frontend-seamless.js'),'utf8');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../src/frontend-seamless.js'),'utf8');
 // Flush both promise work and the simulated 1 ms session polling timers.
 const tick=async()=>{for(let i=0;i<15;i++)await new Promise(resolve=>setTimeout(resolve,1))};
 class Video extends EventTarget {
@@ -13,30 +13,30 @@ class Video extends EventTarget {
   getBoundingClientRect(){return {left:10,top:10,width:800,height:500};}
 }
 async function scenario(native,fail=false,fault=null){
-  const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0,retired=0;
-  let playWaitSerial=5000;const playWaits=new Map();let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget,acceptanceCallback,terminalCallback;
+  const calls=[],children=[],timers=new Set();let selected=false,revision=0,released=0,stopped=0,started=0;
+  let confirmActivation,controllerId="c".repeat(32),now=0,expire,activationBudget,acceptanceCallback;
   const activated=new Promise(resolve=>confirmActivation=resolve);
   const current=new Video();current.volume=.3;current.playbackRate=3;current.paused=false;
   current.desktopSessionId=()=> 'a'.repeat(32);current.stage={append:v=>{v.stage=current.stage;children.push(v);}};
   const endpoint={origin:'http://127.0.0.1:23456',url:'http://127.0.0.1:23456/desktop/hls?series_id=1234567890123456&ep=2',key:'b'.repeat(64)};
   const context={URL,Event,Number,Math,Date:{now:()=>now},WeakMap,Proxy,Map,AbortController,window:{devicePixelRatio:1},
     w0:()=>endpoint,ik(){},desktopSupportsSource:async()=>true,
-    setTimeout(fn,ms){if(fault?.startsWith('pending-play')&&ms>100&&ms<=2000){const id=++playWaitSerial;playWaits.set(id,fn);return id;}if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;if(ms<=2000&&ms>100){activationBudget=ms;if(fault!=='activation-timeout')return 998;}const id=setTimeout(()=>{if(fault?.startsWith('eof-during-')&&ms===20)now+=20;if(fault==='activation-timeout'&&ms>100)now+=ms;if(fault==='no-frame'&&ms===100)now=90001;fn();},1);timers.add(id);return id;},
-    clearTimeout:id=>{playWaits.delete(id);timers.delete(id);clearTimeout(id);},requestAnimationFrame:fn=>queueMicrotask(fn),
+    setTimeout(fn,ms){if(ms===90000)expire=fn;if(ms>=15000&&!fault?.startsWith('hung'))return 999;if(ms<=2000&&ms>100){activationBudget=ms;if(fault!=='activation-timeout')return 998;}const id=setTimeout(()=>{if(fault==='activation-timeout'&&ms>100)now+=ms;if(fault==='no-frame'&&ms===100)now=90001;fn();},1);timers.add(id);return id;},
+    clearTimeout:id=>{timers.delete(id);clearTimeout(id);},requestAnimationFrame:fn=>queueMicrotask(fn),
     document:{createElement:()=>new Video()},
     desktopCodecHls(video,url,start,callbacks,prep,windowed,state){
       callbacks={...callbacks}; // Production codec copies/enumerates callback keys.
-      acceptanceCallback=callbacks.onAcceptanceHlsTransition;terminalCallback=callbacks.onError;
+      acceptanceCallback=callbacks.onAcceptanceHlsTransition;
       assert.equal(state.paused,true);assert(video.paused&&video.muted&&video.volume===0);
-      queueMicrotask(()=>{callbacks.onAcceptanceHlsTransition({from:'copy',to:'h264'},7);callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault==='pre-adoption-error')callbacks.onError(Error('hidden decode failed'));else if(fault!=='no-frame')callbacks.onReady();});
+      queueMicrotask(()=>{callbacks.onAcceptanceHlsTransition({from:'copy',to:'h264'},7);callbacks.onTimeline(90,9);callbacks.onPlayableRange([0,9]);callbacks.onComplete(true);callbacks.onWindowOrigin(0);if(fault!=='no-frame')callbacks.onReady();});
       return Object.assign(()=>{stopped++;},{seek:value=>{video.currentTime=value;},sessionId:()=>controllerId});
     },
     fetch:async(url,init={})=>{
       url=String(url);calls.push({url,...init});let body={};
       if(init.method==='DELETE'){released++;return {ok:true,status:204};}
-      if(url.endsWith('/activate')){await activated;if(['activate','activate-paused','near-eof-activate'].includes(fault))throw Error('activation rejected');}
+      if(url.endsWith('/activate')){await activated;if(fault==='activate')throw Error('activation rejected');}
       if(url.endsWith('/status')&&fault==='hung-status')return new Promise(()=>{});
-      if(url.endsWith('/capabilities')){if(fault==='replacement-gap'){current.desktopSessionId=()=>null;setTimeout(()=>{current.desktopSessionId=()=> 'b'.repeat(32);},0);}if(fault?.startsWith('eof-during-')){await tick();if(fault==='eof-during-capabilities')delete current.desktopSessionId;else current.stage=null;}body={standbyPlayback:1,nativePlayback:native?1:0};}
+      if(url.endsWith('/capabilities'))body={standbyPlayback:1,nativePlayback:native?1:0};
       else if(url.endsWith('/mode')){selected=true;body=JSON.parse(init.body);}
       else if(url.endsWith('/control')){revision++;body={revision};}
       else if(init.method==='POST'&&!url.endsWith('/activate'))body={id:'c'.repeat(32)};
@@ -45,46 +45,38 @@ async function scenario(native,fail=false,fault=null){
         native:selected?{outputReady:true,revision}:null};
       return {ok:true,status:200,json:async()=>url.endsWith('/status')&&fault==='hung-json'?new Promise(()=>{}):body};
     }};
-  vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);vm.runInContext(source,context);
+  vm.createContext(context);vm.runInContext(source,context);
   assert.equal(context.desktopShouldPrewarm({duration:100,currentTime:70,playbackRate:1,readyState:4}),false);
   assert.equal(context.desktopShouldPrewarm({duration:100,currentTime:70,playbackRate:3,readyState:4}),true);
   assert.equal(context.desktopShouldPrewarm({duration:100,currentTime:70,playbackRate:3,readyState:4,desktopBuffering:true}),false);
   assert.equal(context.desktopShouldPrewarm({duration:4,desktopTimelineDuration:90,currentTime:2,playbackRate:1,readyState:4}),false);
   assert.equal(context.desktopShouldPrewarm({duration:10,desktopTimelineDuration:90,desktopTimeOrigin:80,currentTime:2,playbackRate:1,readyState:4}),true);
   const prep=context.desktopPrepareNext(endpoint.url,current);
-  if(fail||fault==='pre-adoption-error')prep.retain(()=>retired++);
   if(fault==='late-claim'||fault==='idle-expiry'){
     await tick();now=90001;if(fault==='idle-expiry')expire();
-    if(fault==='url-mismatch'){prep.retain(()=>retired++);await tick();assert.equal(await prep.claimRecord(endpoint.url+'&refresh=1',0),null);await tick();assert.equal(retired,0,'URL identity fallback retains the predecessor until cold readiness');prep.finishRetained();assert.equal(retired,1);for(const timer of timers)clearTimeout(timer);return;}
-  const record=await prep.claimRecord(endpoint.url,0);await tick();
+    const record=await prep.claimRecord(endpoint.url,0);await tick();
     assert.equal(record,null);assert.equal(released,1);if(!native)assert(children[0].removed);
     for(const timer of timers)clearTimeout(timer);return;
   }
-  if(fault==='url-mismatch'){prep.retain(()=>retired++);await tick();assert.equal(await prep.claimRecord(endpoint.url+'&refresh=1',0),null);await tick();assert.equal(retired,0,'URL identity fallback retains the predecessor until cold readiness');prep.finishRetained();assert.equal(retired,1);for(const timer of timers)clearTimeout(timer);return;}
   const record=await prep.claimRecord(endpoint.url,0);
-  if(fail||fault==='no-frame'||fault==='pre-adoption-error'||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);if(fail||fault==='pre-adoption-error'){assert.equal(retired,0,'failed claimed preparation retains picture until cold fallback readiness');prep.finishRetained();assert.equal(retired,1);}for(const timer of timers)clearTimeout(timer);return;}
+  if(fail||fault==='no-frame'||fault?.startsWith('hung')){assert.equal(record,null);await tick();assert.equal(released,1);for(const timer of timers)clearTimeout(timer);return;}
   assert(record);assert.equal(record.settings.volume,.3);assert.equal(record.settings.rate,3);
   const create=calls.find(c=>c.headers?.['x-desktop-prewarm-parent']);
-  assert(create);assert.equal(create.headers['x-desktop-prewarm-parent'],(fault==='replacement-gap'?'b':'a').repeat(32),'live parent replacement gap waits for the new ID');
+  assert(create);assert.equal(create.headers['x-desktop-prewarm-parent'],'a'.repeat(32));
   prep.dispose();await tick();assert.equal(released,0,'claim transfers ownership');
   if(native){
     const command=JSON.parse(calls.find(c=>c.url.endsWith('/control')).body);
     assert(command.paused&&command.muted&&!command.visible);assert.equal(command.rate,3);
     record.dispose();await tick();assert.equal(released,1);
   }else{
-    const media=new Video();media.stage=current.stage;Object.assign(media,{playbackRate:record.settings.rate,volume:record.settings.volume,muted:record.settings.muted});let ended=0,errors=0,fallbacks=0;
+    const media=new Video();media.stage=current.stage;let ended=0,errors=0,fallbacks=0;
     if(fault==='play')children[0].play=()=>Promise.reject(Error('play rejected'));
-    if(fault?.startsWith('pending-play'))children[0].play=()=>new Promise(()=>{});
-    let rejectOldPlay,playCount=0;if(fault==='superseded-play'){children[0].play=()=>{children[0].paused=false;playCount++;return playCount===1?new Promise((resolve,reject)=>rejectOldPlay=reject):Promise.resolve();};}
     media.addEventListener('ended',()=>ended++);
     prep.retain(()=>started++);
     let timeline;const acceptance=[];
     if(fault==='replacement-id')controllerId='d'.repeat(32);
     if(fault==='pending-id')controllerId=null;
-    const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d,onAcceptanceHlsTransition:(...args)=>acceptance.push(args)},intent=>{
-      if(['activate','activate-paused','play','near-eof-activate'].includes(fault))assert.equal(intent?.time,fault==='near-eof-activate'?88:7,'failure fallback inherits the live adopted seek');
-      if(fault==='near-eof-activate')assert.equal(prep.resumePosition,88,'adopted near-EOF seek retains the cold resume marker');
-      if(fault==='activate-paused')assert.equal(intent?.paused,true,'failed activation carries latest pause to cold fallback');
+    const dispose=record.adopt(media,{onReady:()=>started++,onError:()=>errors++,onComplete:v=>assert(v),onTimeline:d=>timeline=d,onAcceptanceHlsTransition:(...args)=>acceptance.push(args)},()=>{
       fallbacks++;assert.equal(media.currentTime,0);assert.equal(media.play,Video.prototype.play);
       assert(children[0].removed);assert.equal(media.desktopSessionId,undefined);
       assert.equal(started,1,'failed standby must retain the old picture until fallback is ready');
@@ -93,10 +85,6 @@ async function scenario(native,fail=false,fault=null){
     controllerId='d'.repeat(32);
     assert.equal(media.desktopSessionId(),controllerId,'adopted media follows replacement codec sessions');
     assert.equal(dispose.sessionId(),controllerId);
-    controllerId=null;
-    assert.equal(media.desktopSessionId(),null,'replacement gap must not expose retired standby ID');
-    assert.equal(dispose.sessionId(),null);
-    controllerId='d'.repeat(32);
     assert.equal(timeline,90);
     assert.deepEqual(acceptance,[[{from:'copy',to:'h264'},7]],'preparation notification is replayed exactly once with all arguments');
     acceptanceCallback({from:'h264',to:'retry'},8);
@@ -104,8 +92,7 @@ async function scenario(native,fail=false,fault=null){
     assert.equal(media.volume,.3);assert.equal(media.playbackRate,3);assert.equal(media.paused,true);
     assert.equal(children[0].currentTime,0);assert.equal(children[0].style.opacity,'1');
     children[0].dispatchEvent(new Event('ended'));assert.equal(ended,1);
-    dispose.seek(fault==='near-eof-activate'?88:7);assert.equal(media.currentTime,fault==='near-eof-activate'?88:7);
-    if(fault==='near-eof-activate'){assert.equal(prep.resumePosition,88,'adopted seek updates the resume marker');media.currentTime=87;assert.equal(prep.resumePosition,87,'adopted currentTime updates the resume marker');dispose.seek(88);}
+    dispose.seek(7);assert.equal(media.currentTime,7);
     if(fault==='activation-timeout'){
       await tick();assert.equal(fallbacks,1);assert.equal(stopped,1);assert.equal(released,1);
       assert(activationBudget>0&&activationBudget<=2000,'activation uses the remaining handoff deadline');
@@ -114,27 +101,8 @@ async function scenario(native,fail=false,fault=null){
     await tick();assert.equal(media.paused,true);assert.equal(started,1,'retain old picture until activation is acknowledged');
     if(fault==='replacement-id'||fault==='pending-id')assert(calls.some(c=>c.url.endsWith('/'+'d'.repeat(32)+'/activate')));
     media.playbackRate=2;media.volume=.6;media.muted=true;
-    if(['pause-activation','paused-frame-hold','activate-paused'].includes(fault))media.pause();
-    if(fault==='paused-frame-hold')children[0].requestVideoFrameCallback=()=>1;
-    if(fault==='pause-after-frame-wait'){children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();assert.equal(started,1);media.pause();assert.equal(started,2,'activated pause releases predecessor without waiting for a future frame');assert(!children[0].removed);dispose();await tick();for(const timer of timers)clearTimeout(timer);return;}
-    if(fault==='superseded-play'){
-      confirmActivation();await tick();assert.equal(playCount,1);media.pause();await media.play();rejectOldPlay(Object.assign(Error('old play interrupted'),{name:'AbortError'}));await tick();
-      assert.equal(fallbacks,0,'superseded HLS play rejection does not abandon newer successful intent');assert(!children[0].removed);assert.equal(media.paused,false);dispose();await tick();for(const timer of timers)clearTimeout(timer);return;
-    }
-    if(fault?.startsWith('pending-play')){
-      confirmActivation();await tick();assert.equal(fallbacks,0);assert.equal(started,1);
-      assert.equal(playWaits.size,1,'pending adopted play has one bounded wait');
-      if(fault==='pending-play-cancel'){dispose();await tick();assert.equal(playWaits.size,0,'adoption cleanup cancels its pending play deadline');assert.equal(fallbacks,0);}
-      else{const [id,timeout]=[...playWaits][0];playWaits.delete(id);timeout();await tick();assert.equal(fallbacks,1,'pending adopted play reaches cold fallback');assert(children[0].removed);dispose();}
-      for(const timer of timers)clearTimeout(timer);return;
-    }
-    if(fault==='terminal-error'){
-      children[0].requestVideoFrameCallback=()=>1;confirmActivation();await tick();
-      assert.equal(started,1,'old picture stays until the first actual HLS frame');
-      terminalCallback(Error('adopted HLS terminal error'));assert.equal(errors,1);assert.equal(started,2,'adopted HLS error releases retained predecessor before forwarding error');
-      dispose();await tick();for(const timer of timers)clearTimeout(timer);return;
-    }
-    if(fault&&!fault.startsWith('eof-during-')&&fault!=='replacement-gap'&&fault!=='replacement-id'&&fault!=='pending-id'&&fault!=='pause-activation'&&fault!=='paused-frame-hold'){
+    if(fault==='pause-activation')media.pause();
+    if(fault&&fault!=='replacement-id'&&fault!=='pending-id'&&fault!=='pause-activation'){
       if(fault==='cancel')dispose();
       confirmActivation();await tick();
       assert.equal(errors,0);assert.equal(fallbacks,fault==='cancel'?0:1);
@@ -143,7 +111,7 @@ async function scenario(native,fail=false,fault=null){
       const before=ended;children[0].dispatchEvent(new Event('ended'));assert.equal(ended,before);
       dispose();for(const timer of timers)clearTimeout(timer);return;
     }
-    confirmActivation();await tick();assert.equal(media.paused,['pause-activation','paused-frame-hold','terminal-error'].includes(fault));assert(started>=2);
+    confirmActivation();await tick();assert.equal(media.paused,fault==='pause-activation');assert(started>=2);
     assert(calls.filter(c=>c.url.endsWith('/activate')).at(-1).url.endsWith('/'+controllerId+'/activate'),'activation follows a session replaced during POST');
     assert(activationBudget>0&&activationBudget<=2000);
     dispose();await tick();assert.equal(stopped,1);assert.equal(released,1);
@@ -152,8 +120,8 @@ async function scenario(native,fail=false,fault=null){
   }
   for(const timer of timers)clearTimeout(timer);
 }
-(async()=>{if(process.argv[3]){await scenario(false,false,process.argv[3]);return;}await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
-  for(const fault of ['pending-play','pending-play-cancel','superseded-play','replacement-gap','eof-during-capabilities','eof-during-stage','activate','activate-paused','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation','paused-frame-hold','terminal-error','pre-adoption-error','near-eof-activate','url-mismatch','pause-after-frame-wait'])await scenario(false,false,fault);
+(async()=>{await scenario(true);await scenario(false);await scenario(true,true);await scenario(false,true);
+  for(const fault of ['activate','play','cancel','hung-status','hung-json','late-claim','idle-expiry','replacement-id','pending-id','no-frame','activation-timeout','pause-activation'])await scenario(false,false,fault);
   console.log('PASS: activation/play rollback and normal fallback, stale cancel suppression, bounded hanging fetch/JSON');
   console.log('PASS: cold-source request, speed threshold, hidden/muted first frame, ownership, HLS bridge, controls, failure and release');
 })().catch(error=>{console.error(error);process.exitCode=1});

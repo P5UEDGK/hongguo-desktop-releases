@@ -1,19 +1,19 @@
 {
-  "nativeHead": "d83728b9378dde1d9897d8ca936198c452550daa",
+  "nativeHead": "933982add417b92ca9c1c152ba4b06be74c3e73f",
   "files": [
     {
       "path": "frontend/frontend-native.js",
-      "baseSha256": "39403e09f1ddbc63c13e8dbc465ebc173ac3579114113a5a64412864eed0dbb7",
-      "patchedSha256": "fcf03ce837805ce17bd867cedf6a9283617e604e8ec4353599877aa8101c8956"
+      "baseSha256": "c034f11882b2eed4a30cf17cbb7c90c85a3366201002e21c6a92add3a80c3a91",
+      "patchedSha256": "c4eded9b0de7909422f823bb230572df68cf1473663f1251d86fd5e3e37a3347"
     },
     {
       "path": "frontend/frontend-codec.js",
-      "baseSha256": "2d9f9b3707725455b3af4e6b9df53f775fb9a04e921bb88e1262caf475984a09",
-      "patchedSha256": "c198f6ef0698ecce6889eb265654e92bd017496428b27aff7d612420e4c6edfc"
+      "baseSha256": "1d0bf1e2053c50fc7102d02c4fd32f513142e61078cf246f989396344bf8012f",
+      "patchedSha256": "c5ddc1e6500e02122c9b8e7f9ae224155d4334fca167bf822eb9d9faf042325a"
     }
   ],
   "controlsPolicy": {
     "path": "src/frontend-controls.js",
-    "sha256": "0c31a3e738b48275afc46599270f4aa3aee7eae069da7e201c6e42246d72b8ba"
+    "sha256": "af283042c3d327fe4049cea3361a9b56f71a4d5548c906dbdb6cb8961ef7ba3b"
   }
 }

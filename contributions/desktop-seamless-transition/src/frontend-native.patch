@@ -1,25 +1,44 @@
 --- a/frontend/frontend-native.js
 +++ b/frontend/frontend-native.js
-@@ -48,7 +48,9 @@
+@@ -6,7 +6,7 @@
    let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
    let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
-   let resize = null, chromeChanges = null, lastRect = '', generation = 0, seekPending = null;
+   let style = null, resize = null, lastRect = '', generation = 0, seekPending = null;
 -  let reportedSeek = false, fallbackStarted = false;
 +  let reportedSeek = false, fallbackStarted = false, batchingControls = false;
-+  const inheritedSettings = preparation?.settings;
-+  if (inheritedSettings) {media.playbackRate=inheritedSettings.rate;media.volume=inheritedSettings.volume;media.muted=inheritedSettings.muted;}
    let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
      rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
      seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
-@@ -83,6 +85,7 @@
+@@ -36,13 +36,23 @@
      negotiationMethods.clear();
    }
    const headers = {'x-api-key': endpoint.key};
 +  media.desktopSessionId = () => id || delegated?.sessionId?.();
    const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
    const event = name => {if (!disposed && native) media.dispatchEvent(new Event(name));};
-   const pendingRequests = new Set();
-@@ -136,7 +139,7 @@
+-  async function request(path, init = {}) {
+-    const response = await fetch(endpoint.origin + '/desktop/hls' + path,
+-      {...options, ...init, headers: {...headers, ...init.headers}});
+-    if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
+-    return response.status === 204 ? null : response.json();
++  async function request(path, init = {}, timeoutMs = 15000) {
++    const abort = new AbortController();
++    let timeout;
++    try {
++      return await Promise.race([
++        (async () => {
++          const response = await fetch(endpoint.origin + '/desktop/hls' + path,
++            {...options,...init,signal:abort.signal,headers:{...headers,...init.headers}});
++          if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
++          return response.status === 204 ? null : response.json();
++        })(),
++        new Promise((_,reject)=>{timeout=setTimeout(()=>{abort.abort();reject(Error('Desktop request timed out'));},Math.max(1,timeoutMs));})
++      ]);
++    } finally {clearTimeout(timeout);}
+   }
+   async function release(identifier) {
+     if (!identifier) return true;
+@@ -71,7 +81,7 @@
        if (descriptor) Object.defineProperty(media, key, descriptor);
        else delete media[key];
      }
@@ -28,45 +47,52 @@
      media.playbackRate = state.rate;
      media.volume = state.volume;
      media.muted = state.muted;
-@@ -165,15 +168,14 @@
+@@ -98,7 +108,7 @@
+       transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
                    dispose() {if (!claimed) {claimed = true; release(old);}}};
      }
-     if (resetHlsOrigin && seekPending === null && state.time > 0) seekPending = state.time;
--    const resumeCallbacks = {...callbacks, preserveResumePosition: seekPending !== null || callbacks.preserveResumePosition === true};
--    const hlsCallbacks = resetHlsOrigin ? {...resumeCallbacks, onReady() {
--      if (seekPending !== null) {
-+    const hlsCallbacks = {...callbacks, preserveResumePosition: seekPending !== null || callbacks.preserveResumePosition === true, onReady() {
-+      if (resetHlsOrigin && seekPending !== null) {
-         const target = seekPending; seekPending = null;
-         queueMicrotask(() => {if (!disposed) delegated?.seek(target);});
-         return;
-       }
--      callbacks.onReady();
--    }} : resumeCallbacks;
-+      preparation?.finishRetained?.(); callbacks.onReady?.();
-+    }, onError(...args) { preparation?.finishRetained?.(); callbacks.onError?.(...args); }};
-     delegated = desktopCodecHls(media, url, resetHlsOrigin ? 0 : Math.max(0, state.time), hlsCallbacks,
-       transfer, windowed && !resetHlsOrigin, {forceH264, paused: state.paused});
+-    delegated = desktopCodecHls(media, url, Math.max(0, state.time), callbacks,
++    delegated = desktopCodecHls(media, url, Math.max(0, state.time), {...callbacks, onReady() { preparation?.finishRetained?.(); callbacks.onReady?.(); }},
+       transfer, windowed, {forceH264, paused: state.paused});
    }
-@@ -183,7 +185,7 @@
+   async function failPreparation() {
+@@ -107,21 +117,21 @@
      const old = id; id = null;
      restore();
      await release(old);
 -    if (!disposed) {callbacks.onComplete?.(false); callbacks.onError?.();}
 +    if (!disposed) {preparation?.cancelClaim?.(); preparation?.finishRetained?.(); callbacks.onComplete?.(false); callbacks.onError?.();}
    }
-   function delegateCommittedHls(status) {
-     const start = Math.max(requestedStart, ...[status.startSeconds,status.windowOrigin].filter(Number.isFinite));
-@@ -195,7 +197,7 @@
+   function queue(command) {
      if (disposed || !native || fallbackStarted) return;
-     if (command.paused === false && !desktopNativeSurfaceVisible(media)) command = {...command, paused:true};
      Object.assign(pending, command);
 -    if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
+-  }
+-  async function flush() {
 +    if (!batchingControls && !controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
-   }
-   async function flush(deadline = null) {
++  }
++  async function flush(deadline = null) {
      controlTimer = null;
-@@ -245,13 +247,13 @@
+     if (disposed || !id || !native || controlBusy || !Object.keys(pending).length) return;
+     controlBusy = true;
+     const command = pending; pending = {};
+     try {
+       const result = await request('/' + id + '/control', {method: 'POST',
+-        headers: {'content-type': 'application/json'}, body: JSON.stringify(command)});
++        headers: {'content-type': 'application/json'}, body: JSON.stringify(command)}, deadline === null ? 15000 : deadline-Date.now());
+       revision = result.revision;
+     } catch {if (!disposed) failPreparation();}
+     finally {
+@@ -135,7 +145,7 @@
+     // Keep the existing timeline, volume, speed and fullscreen buttons above
+     // the native surface; the reserved band is part of the current stage.
+     const bar = Math.min(84, Math.max(0, rect.height - 1));
+-    const bounds = [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
++    const bounds = typeof desktopNativeSurfaceRect === "function" ? desktopNativeSurfaceRect(media) : [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+       Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
+     const visible = !document.hidden && rect.width > 0 && rect.height > 0;
+     const signature = JSON.stringify([bounds, visible]);
+@@ -156,13 +166,13 @@
      // is downloading. Capture it immediately before replacing the properties.
      state.rate = media.playbackRate || state.rate;
      state.volume = media.volume; state.muted = media.muted;
@@ -82,16 +108,16 @@
      property('readyState', {get: () => ready ? 4 : 0});
      property('currentTime', {get: () => state.time, set: seek});
      property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
-@@ -335,6 +337,7 @@
-           else {callbacks.onReady(); if (!state.paused) event('playing');}
-         }
+@@ -220,6 +230,7 @@
+         callbacks.onComplete?.(!progressive || result.sourceProgress.complete || value.state === 'ended');
+         event('progress');
          const applied = value.revision >= revision && !controlBusy && !Object.keys(pending).length;
 +        if (applied && value.visible && value.outputReady) preparation?.finishRetained?.();
-         if (reportedSeek && applied && !value.seeking) {
-           state.time = value.time;
-           reportedSeek = false; seekPending = null; state.seeking = false;
-@@ -353,12 +356,44 @@
-     }
+         if (seekPending === null || applied) state.time = value.time;
+         if (!ready) {
+           ready = true;
+@@ -249,26 +260,38 @@
+     } catch {if (!disposed && ownGeneration === generation) failPreparation();}
      finally {
        pollBusy = false;
 -      if (!disposed && !fallbackStarted && ownGeneration === generation) timer = setTimeout(() => poll(ownGeneration), 250);
@@ -101,77 +127,53 @@
    (async () => {
      try {
 -      const capability = await request('/capabilities');
-+      const standby = await preparation?.claimRecord?.(url, initialPosition, windowed);
++      const standby = await preparation?.claimRecord?.(url, initialPosition);
 +      if (disposed) {standby?.dispose(); return;}
-+      state.rate=media.playbackRate || state.rate;state.volume=media.volume;state.muted=media.muted;
-+      if (preparation?.resumeInvalid) {initialPosition = 0; if (seekPending === null) state.time = 0;}
-+      if (!standby && preparation?.resumeFailed) {
-+        delegate(false); return;
-+      }
-+      if (standby) {
-+        while (seekPending !== null) {
-+          const target = seekPending;
-+          try {if (!standby.seek) throw Error('Standby seek unavailable');await standby.seek(target);}
-+          catch {preparation?.cancelClaim?.(true);delegate(false);return;}
-+          if (disposed) return;
-+          if (seekPending === target) seekPending = null;
-+        }
-+      }
++      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
 +      if (standby?.mode !== 'native' && standby?.adopt) {
-+        const adoption = standby.adopt(media, callbacks, intent => {
-+          state.paused = intent?.paused ?? state.paused;
-+          state.time = intent?.time ?? state.time;
++        delegated = standby.adopt(media, callbacks, () => {
 +          delegated = null;
 +          preparation?.cancelClaim?.(true);
 +          delegate(false);
 +        });
-+        if (disposed) {adoption?.();return;}
-+        delegated = adoption;
-+        if (!delegated) {preparation?.cancelClaim?.(true);delegate(false);return;}
-+        if (state.paused) media.pause();
 +        return;
 +      }
 +      const preparedNative = standby?.mode === 'native';
-+      if (preparedNative && !(Number.isFinite(standby.containerDuration) && standby.containerDuration > 0)) resetHlsOrigin = true;
 +      const capability = preparedNative ? {nativePlayback:1} : await request('/capabilities');
        if (disposed) return;
+       if (capability.nativePlayback !== 1) {delegate(false); return;}
        const sourceUrl = new URL(endpoint.url);
-       requestedStart = state.time;
-@@ -376,9 +411,9 @@
-         if (disposed) {await release(identifier); return null;}
-         return identifier;
-       }
--      id = await createSession();
-+      id = standby?.id || await createSession();
-       if (disposed) return;
--      const deadline = Date.now() + 90000;
-+      const deadline = Math.min(Date.now() + 90000, standby?.expiresAt ?? Infinity);
-       async function resetSavedPosition() {
-         const invalid = id; id = null;
-         if (!await release(invalid)) throw Error('Invalid resume session release failed');
-@@ -387,8 +422,8 @@
-         sourceUrl.searchParams.delete('start_seconds');
-         id = await createSession();
-       }
+       if (state.time > 0) sourceUrl.searchParams.set('start_seconds', state.time);
+-      const created = await fetch(sourceUrl, {...options, method: 'POST',
++      const created = standby ? null : await fetch(sourceUrl, {...options, method: 'POST',
+         headers: {...headers, 'x-desktop-codec-negotiation': '1'}});
+-      if (!created.ok) throw Error('Native session preparation failed');
+-      const identifier = (await created.json()).id;
++      if (created && !created.ok) throw Error('Native session preparation failed');
++      const identifier = standby?.id || (await created.json()).id;
+       if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid native session');
+       if (disposed) {await release(identifier); return;}
+       id = identifier;
+       const deadline = Date.now() + 90000;
 -      let metadata;
 -      while (!disposed && Date.now() < deadline) {
 +      let metadata = preparedNative ? standby.source : null;
 +      while (!metadata && !disposed && Date.now() < deadline) {
          const result = await request('/' + id + '/status');
-         if (result.state === 'failed' && result.failureCode === 'start-position' && requestedStart > 0) {
-           await resetSavedPosition();
-@@ -413,7 +448,7 @@
+         if (result.state === 'failed') throw Error('Source preparation failed');
+         if (result.source) {
+@@ -281,7 +304,7 @@
        // Source download/transport failure says nothing about decoder support.
        if (!metadata) {failPreparation(); return;}
-       if (capability.nativePlayback !== 1 || !metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
+       if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
 -      try {
 +      if (!preparedNative) try {
-         let context;
-         try {context = await desktopNativeWindowContext();}
-         catch {delegate(false); return;}
-@@ -430,23 +465,100 @@
-         if (latest.videoMode == null) {delegate(false); return;}
-         if (latest.videoMode !== 'native') throw error;
+         await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
+           body: JSON.stringify({mode: 'native'})});
+       } catch (error) {
+@@ -290,15 +313,63 @@
+         if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
+         delegate(false, true); return;
        }
 +      if (!preparedNative) {
 +        let registered = false;
@@ -188,107 +190,41 @@
 +        if (!disposed && !registered) throw Error('Native session registration timed out');
 +      }
        if (disposed) return;
--      const registeredUntil = Date.now() + 90000;
--      let registered = false;
--      while (!disposed && Date.now() < registeredUntil) {
--        const current = await request('/' + id + '/status');
-+      preparation?.dispose();
+       preparation?.dispose();
+-      patch(); poll(generation);
 +      // Batch initial layout and playback before allowing observers or polls
 +      // to announce readiness. A prepared first frame must start advancing in
 +      // the same control revision that makes the surface visible.
 +      batchingControls = !!standby;
 +      patch();
 +      if (standby) {
-+        // Minimization and zero geometry are intentional visibility states,
-+        // not failures of a decoded standby. Park it paused until it can show.
-+        const canShow = () => desktopNativeSurfaceVisible(media);
-+        const seekLanded = value => seekPending === null || !value.seeking && Number.isFinite(value.time) && Math.abs(value.time-seekPending) <= .05;
-+        while (!disposed && !canShow() && Date.now() < deadline) {
-+          layout();
-+          if (Object.keys(pending).length) {
-+            pending.paused = true;
-+            await flush(Math.min(deadline, Date.now() + 2000));
-+            if (disposed || fallbackStarted || !id || !native) return;
-+          }
-+          await new Promise(resolve => setTimeout(resolve, 100));
-+        }
-         if (disposed) return;
--        if (current.state === 'failed' || current.native?.state === 'failed') {
--          if (current.failureCode === 'source-read' || current.native?.failureCode === 'source-read') failPreparation();
--          else delegate(true);
--          return;
--        }
--        if (Number.isInteger(current.native?.revision)) {registered = true;break;}
--        await new Promise(resolve => setTimeout(resolve, 100));
--      }
--      if (!registered || disposed) {if (!disposed) failPreparation();return;}
--      preparation?.dispose();
--      patch(); poll(generation);
-+        if (!canShow()) throw Error('Standby visibility expired');
 +        // Apply geometry, speed and audio in the same activation command.
 +        // The backend refuses activation until a decoded output frame exists.
 +        layout();
-+        Object.assign(pending, {paused: state.paused, rate: state.rate, volume: state.volume, muted: state.muted});
++        Object.assign(pending, {paused: false, rate: state.rate, volume: state.volume, muted: state.muted});
 +        batchingControls = false;
 +        clearTimeout(controlTimer); controlTimer = null;
-+        let untilVisible = Math.min(deadline, Date.now() + 2000);
++        const untilVisible = Date.now() + 2000;
 +        await flush(untilVisible);
-+        if (disposed || fallbackStarted || !id || !native) return;
 +        let confirmed = false;
-+        while (!disposed && Date.now() < deadline) {
-+          if (!canShow()) {
-+            let parked = false;
-+            while (!disposed && !canShow() && Date.now() < deadline) {
-+              layout();if (!parked || Object.keys(pending).length) {pending.paused = true;parked = true;}
-+              clearTimeout(controlTimer);controlTimer = null;
-+              if (Object.keys(pending).length) await flush(Math.min(deadline,Date.now()+2000));
-+              if (disposed || fallbackStarted || !id || !native) return;
-+              await new Promise(resolve=>setTimeout(resolve,100));
-+            }
-+            if (disposed) return;
-+            if (!canShow()) throw Error('Standby visibility expired');
-+            layout();Object.assign(pending,{paused:state.paused,rate:state.rate,volume:state.volume,muted:state.muted});
-+            untilVisible = Math.min(deadline,Date.now()+2000);
-+          }
-+          if (Date.now()>=untilVisible) break;
++        while (!disposed && Date.now() < untilVisible) {
 +          if (!controlBusy && Object.keys(pending).length) {
 +            clearTimeout(controlTimer); controlTimer = null;
 +            await flush(untilVisible);
-+            if (disposed || fallbackStarted || !id || !native) return;
++            if (disposed) break;
 +          }
 +          const shown = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
-+          if (shown?.visible && shown.outputReady && shown.revision >= revision && seekLanded(shown) && !controlBusy && !Object.keys(pending).length) {
-+            await request('/' + id + '/activate', {method:'POST'}, untilVisible-Date.now());
-+            // Pause/layout can change while activate is in flight. Re-enter
-+            // the same bounded ACK loop before relinquishing the old owner.
-+            while (!disposed && Date.now() < untilVisible) {
-+              if (!canShow()) {pending.visible = false; pending.paused = true;}
-+              if (!controlBusy && Object.keys(pending).length) {
-+                clearTimeout(controlTimer); controlTimer = null;
-+                await flush(untilVisible);
-+              }
-+              if (disposed || fallbackStarted || !id || !native) return;
-+              const latest = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
-+              if (latest && latest.revision >= revision && seekLanded(latest) && !controlBusy && !Object.keys(pending).length &&
-+                  (canShow() ? latest.visible && latest.outputReady : !latest.visible)) {
-+                confirmed = true; if (latest.visible && latest.outputReady) preparation?.finishRetained?.(); break;
-+              }
-+              await new Promise(resolve => setTimeout(resolve, 20));
-+            }
-+            break;
-+          }
++          if (shown?.visible && shown.outputReady && shown.revision >= revision && !controlBusy && !Object.keys(pending).length) { await request('/' + id + '/activate', {method:'POST'}, untilVisible-Date.now()); confirmed = true; preparation?.finishRetained?.(); break; }
 +          await new Promise(resolve => setTimeout(resolve, 20));
 +        }
-+        if (!disposed && !fallbackStarted && !confirmed) throw Error('Standby activation timed out');
++        if (!disposed && !confirmed) throw Error('Standby activation timed out');
 +      }
 +      if (!disposed) poll(generation);
      } catch {if (!disposed) failPreparation();}
    })();
    return Object.assign(() => {
-@@ -454,7 +566,14 @@
+     if (disposed) return;
      disposed = true; generation++;
-     for (const request of pendingRequests) request.abort();
-     if (creationToken) release('requests/'+creationToken);
 -    delegated?.(); preparation?.dispose(); restore();
 -    const old = id; id = null; release(old);
 +    const retained = typeof desktopRetainPicture === 'function' && desktopRetainPicture(media);

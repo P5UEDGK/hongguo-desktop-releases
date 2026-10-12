@@ -1,2 +1,2 @@
 # Unified diff context lines contain a required leading space, even when empty.
-*.patch text eol=lf -whitespace
+*.patch -whitespace

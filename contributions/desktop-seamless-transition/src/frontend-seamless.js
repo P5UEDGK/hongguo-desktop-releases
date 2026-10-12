@@ -1,6 +1,16 @@
 // One speculative next episode; React still owns episode identity/auto-continue.
 const desktopStandbys = new WeakMap();
 
+function desktopNativeSurfaceRect(media) {
+  const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
+  const stage = media.closest('.player-stage') || media.parentElement;
+  const chrome = stage?.querySelector?.('.player-chrome')?.getBoundingClientRect();
+  const reserved = chrome?.height > 0 ? rect.top + rect.height - chrome.top : 84;
+  const bar = Math.min(Math.max(0, reserved), Math.max(0, rect.height - 1));
+  return [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+    Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
+}
+
 function desktopShouldPrewarm(media) {
   const duration = media.desktopTimelineDuration || media.duration;
   const position = media.currentTime + (media.desktopTimeOrigin || 0);
@@ -14,11 +24,10 @@ function desktopShouldPrewarm(media) {
 function desktopHoldForNext(media) {
   if (!media) return null;
   const existing = desktopStandbys.get(media);
-  if (existing && (!existing.failed || existing.holding)) {existing.hold?.();return existing;}
+  if (existing && !existing.failed) return existing;
   let claimed = false, finished = false, timer;
   const releases = [];
   const holder = {
-    get settings() {return {rate:media.playbackRate || 1,volume:media.volume,muted:media.muted};},
     retain(release) {
       if (finished) {release();return;}
       releases.push(release);
@@ -41,7 +50,7 @@ function desktopHoldForNext(media) {
 
 function desktopRetainPicture(media) {
   const preparation = desktopStandbys.get(media);
-  if (!preparation || preparation.failed && !preparation.holding) return null;
+  if (!preparation || preparation.failed) return null;
   const display = media.desktopDisplayMedia || media;
   let cover = null;
   // Native video is a separate HWND: its session is retained below. HLS can
@@ -61,17 +70,15 @@ function desktopRetainPicture(media) {
   return release => preparation.retain(release);
 }
 
-function desktopPrepareNext(url, currentMedia, windowed = false) {
-  if (!currentMedia || typeof currentMedia.desktopSessionId !== 'function')
-    return {failed:true, dispose() {}, claim: async () => null};
-  const endpoint = w0(url);
-  let parent = currentMedia.desktopSessionId();
-  const stage = currentMedia.closest?.('.player-stage') || currentMedia.parentElement;
+function desktopPrepareNext(url, currentMedia) {
+  if (!currentMedia || !currentMedia.desktopSessionId?.())
+    return {dispose() {}, claim: async () => null};
+  const endpoint = w0(url), parent = currentMedia.desktopSessionId();
   const previous = desktopStandbys.get(currentMedia);
   previous?.dispose();
-  let disposed = false, claimed = false, id = null, controller = null, video = null, creationToken = null;
-  let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null, holdRequested = false;
-  let known = {}, knownDuration = null, failed = false, resumePosition = null, resumeFailed = false, resumeInvalid = false;
+  let disposed = false, claimed = false, id = null, controller = null, video = null;
+  let mode = null, consumer = null, retained = [], retireTimer = null, expiryTimer = null;
+  let known = {}, failed = false;
   const headers = {'x-api-key': endpoint.key};
   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
   const abort = new AbortController();
@@ -102,18 +109,13 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     return fetchJson(endpoint.origin + '/desktop/hls' + path, init, budget);
   }
   async function release() {
-    const targets = [id, creationToken && 'requests/'+creationToken].filter(Boolean);
-    id = creationToken = null;
-    await Promise.all(targets.map(async target => {
-      const local = new AbortController();let timer;
-      try {await Promise.race([
-        fetch(endpoint.origin+'/desktop/hls/'+target,{...options,method:'DELETE',headers,signal:local.signal,keepalive:true}),
-        new Promise(resolve=>{timer=setTimeout(()=>{local.abort();resolve();},15000);})
-      ]);} catch {} finally {clearTimeout(timer);}
-    }));
+    if (!id) return;
+    const old = id; id = null;
+    try {await fetch(endpoint.origin + '/desktop/hls/' + old,
+      {...options, method:'DELETE', headers, keepalive:true});} catch {}
   }
   function finishRetained() {
-    clearTimeout(retireTimer); retireTimer = null; holdRequested = false;
+    clearTimeout(retireTimer); retireTimer = null;
     for (const cleanup of retained.splice(0)) cleanup();
     if (desktopStandbys.get(currentMedia) === preparation) desktopStandbys.delete(currentMedia);
   }
@@ -123,59 +125,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     disposed = true; abort.abort(); controller?.(); video?.remove(); release();
     if (!retainPicture) finishRetained();
   }
-  function rememberResume(position, duration) {
-    if(Number.isFinite(position)&&position>=0&&Number.isFinite(duration)&&duration>0&&position<duration)resumePosition=position;
-  }
-  async function seekToResume(result, position) {
-    const duration = result.mode === 'native' ? result.duration : known.onTimeline?.[0] || video.duration;
-    if (!Number.isFinite(duration) || position >= duration) throw Error('Invalid standby resume position');
-    const until = Math.min(deadline, Date.now() + 2000);
-    if (result.mode === 'native') {
-      const applied = await request('/' + id + '/control', {method:'POST',
-        headers:{'content-type':'application/json'},
-        body:JSON.stringify({seek:position,visible:false,paused:true,muted:true})}, until-Date.now());
-      while (!disposed && !failed && Date.now() < until) {
-        const status = await request('/' + id + '/status', {}, until-Date.now());
-        const frame = status.native;
-        if (status.state === 'failed' || frame?.state === 'failed') break;
-        if (frame?.revision >= applied.revision && frame.outputReady && !frame.seeking &&
-            frame.paused && frame.muted && !frame.visible && Math.abs(frame.time-position) <= .05) return;
-        await new Promise(resolve => setTimeout(resolve, 20));
-      }
-    } else {
-      let targetFrame = false, frameRequest = null;
-      const origin = () => known.onWindowOrigin?.[0] || 0;
-      const seeked = () => {if (!video.requestVideoFrameCallback) targetFrame = true;};
-      const onFrame = (_, metadata) => {
-        targetFrame = Math.abs(metadata.mediaTime + origin() - position) <= .05;
-        if (!targetFrame && !disposed && Date.now() < until)
-          frameRequest = video.requestVideoFrameCallback(onFrame);
-      };
-      video.addEventListener('seeked',seeked);
-      try {
-        if (video.requestVideoFrameCallback) frameRequest = video.requestVideoFrameCallback(onFrame);
-        delete known.onReady;
-        controller.seek(position);
-        while (!disposed && !failed && Date.now() < until) {
-          if (targetFrame && known.onReady && !video.seeking && video.paused && video.readyState >= 2 &&
-              Math.abs(video.currentTime + origin() - position) <= .05) return;
-          await new Promise(resolve => setTimeout(resolve, 20));
-        }
-      } finally {
-        video.removeEventListener('seeked',seeked);
-        if (frameRequest !== null) video.cancelVideoFrameCallback?.(frameRequest);
-      }
-    }
-    throw Error('Standby resume frame timed out');
-  }
   const preparation = {
     get failed() {return failed;},
-    get holding() {return holdRequested;},
-    hold() {holdRequested = true; retireTimer ||= setTimeout(finishRetained,90000);},
-    get settings() {return {rate:currentMedia.playbackRate || 1, volume:currentMedia.volume, muted:currentMedia.muted};},
-    get resumePosition() {return resumePosition;},
-    get resumeFailed() {return resumeFailed;},
-    get resumeInvalid() {return resumeInvalid;},
     dispose() {if (!claimed) cleanup();},
     retain(fn) {
       retained.push(fn);
@@ -185,77 +136,29 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
     finishRetained,
     cancelClaim: cleanup,
     claim: async () => null,
-    async claimRecord(wanted, position = 0, requestedWindowed = false) {
-      if (claimed) return null;
-      if (Date.now() >= deadline) {claimed = true;failed = true;cleanup(holdRequested || retained.length > 0);return null;}
-      if (wanted !== url) {claimed = true;cleanup(true);return null;}
+    async claimRecord(wanted, position) {
+      if (disposed || claimed || Date.now() >= deadline || wanted !== url || position > .05) {preparation.dispose(); return null;}
       claimed = true; clearTimeout(expiryTimer); expiryTimer = null;
-      if (requestedWindowed !== windowed) {cleanup(true);return null;}
-      resumePosition = position;
-      if (!Number.isFinite(position) || position < 0 || position > 86400) {
-        resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
-      }
-      let result, timer, cancelled;
-      try {
-        result = await Promise.race([prepared,new Promise(resolve=>{
-          cancelled=()=>resolve(null);
-          abort.signal.addEventListener('abort',cancelled,{once:true});
-          timer=setTimeout(cancelled,Math.max(0,deadline-Date.now()));
-          if(abort.signal.aborted)cancelled();
-        })]);
-      } finally {clearTimeout(timer);abort.signal.removeEventListener('abort',cancelled);}
-      const duration = result?.mode === 'native' ? result.duration : known.onTimeline?.[0] || knownDuration || video?.duration;
-      if (Number.isFinite(duration) && duration > 0 && position >= duration) {
-        resumeInvalid = resumeFailed = true; resumePosition = 0; cleanup(true); return null;
-      }
-      if (!result || disposed) {
-        // A failed preparation cannot vouch for an unknown saved position.
-        // The cold controller must run its normal duration/EOF validation.
-        if (!(Number.isFinite(duration) && duration > 0)) resumePosition = null;
-        cleanup(true); return null;
-      }
-      if (position > .05) {
-        try {await seekToResume(result,position);} catch {
-          resumeFailed = true;
-          if (!(Number.isFinite(duration) && duration > 0)) resumePosition = null;
-          cleanup(true);return null;
-        }
-        if (disposed) return null;
-      }
-      return {...result, seek:async position=>{
-        const duration=result.mode==='native'?result.duration:known.onTimeline?.[0]||video?.duration;
-        rememberResume(position,duration);
-        return seekToResume(result,position);
-      }, settings:preparation.settings, expiresAt:deadline};
+      const result = await prepared;
+      if (!result || disposed) {cleanup(); return null;}
+      return {...result, settings:{rate:currentMedia.playbackRate || 1,
+        volume:currentMedia.volume,muted:currentMedia.muted}};
     }
   };
-  expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup(holdRequested || retained.length > 0);}}, 90000);
+  expiryTimer = setTimeout(() => {if (!claimed) {failed = true; cleanup();}}, 90000);
   desktopStandbys.set(currentMedia, preparation);
   const callbacks = Object.fromEntries(['onTimeline','onPlayableRange','onComplete','onWindowOrigin',
     'onReady','onError','onAcceptanceHlsTransition'].map(name => [name, (...args) => {
     known[name] = args;
-    if (name === 'onError') {failed = true; if (consumer) finishRetained(); else cleanup(holdRequested || retained.length > 0);}
+    if (name === 'onError') {failed = true; if (!claimed) cleanup();}
     consumer?.[name]?.(...args);
   }]));
   const prepared = (async () => {
     try {
       const capability = await request('/capabilities');
       if (capability.standbyPlayback !== 1 || disposed) return null;
-      const parentUntil=Math.min(deadline,Date.now()+2000);
-      while (!disposed && Date.now()<parentUntil) {
-        const refreshed = currentMedia.desktopSessionId?.();
-        if (/^[a-f0-9]{32}$/.test(refreshed || '')) parent = refreshed;
-        if (/^[a-f0-9]{32}$/.test(refreshed || '') || typeof currentMedia.desktopSessionId !== 'function' && /^[a-f0-9]{32}$/.test(parent || '')) break;
-        if (typeof currentMedia.desktopSessionId === 'function') parent = null;
-        await new Promise(resolve=>setTimeout(resolve,20));
-      }
-      if (disposed || !/^[a-f0-9]{32}$/.test(parent || '')) throw Error('Standby parent unavailable');
-      const sourceUrl = new URL(endpoint.url);
-      creationToken = capability.requestCancellation === 1 ? (Date.now()+30000)+'-'+crypto.randomUUID().replace(/-/g,'') : null;
-      if (creationToken) sourceUrl.searchParams.set('request_token',creationToken);
-      const created = await fetchJson(sourceUrl.href, {method:'POST',
+      const created = await fetchJson(endpoint.url, {method:'POST',
         headers:{'x-desktop-codec-negotiation':'1','x-desktop-prewarm-parent':parent}});
-      creationToken = null;
       const identifier = created.id;
       if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid standby');
       id = identifier;
@@ -263,7 +166,6 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       let value;
       while (!disposed && Date.now() < deadline) {
         value = await request('/' + id + '/status');
-        if (Number.isFinite(value.duration) && value.duration > 0) knownDuration = value.duration;
         if (value.state === 'failed') throw Error('Standby source failed');
         if (value.source) break;
         await new Promise(resolve => setTimeout(resolve, 200));
@@ -271,10 +173,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       if (disposed || !value?.source) throw Error('Standby source timed out');
       mode = capability.nativePlayback === 1 && value.source.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')
         ? 'native' : await desktopSupportsSource(value.source) ? 'copy' : 'h264';
-      const windowContext = mode === 'native' ? await desktopNativeWindowContext() : null;
-      if (disposed) return null;
-      await request('/' + id + '/mode', {method:'POST', headers:{'content-type':'application/json'},
-        body:JSON.stringify({mode, ...(windowContext ? {window:windowContext} : {})})});
+      await request('/' + id + '/mode', {method:'POST', headers:{'content-type':'application/json'},body:JSON.stringify({mode})});
       if (mode === 'native') {
         let placement = null;
         while (!disposed && Date.now() < deadline) {
@@ -285,11 +184,8 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
               body:JSON.stringify({rect:desktopNativeSurfaceRect(currentMedia),
                 visible:false,paused:true,muted:true,rate:currentMedia.playbackRate || 1})})).revision;
           }
-          if (value.native?.outputReady && placement !== null && value.native.revision >= placement) {
-            if (value.native.time > .05 || value.native.paused === false || value.native.muted === false || value.native.visible === true)
-              throw Error('Standby advanced beyond its opening frame');
-            return {id, mode, source:value.source, containerDuration:value.duration, duration:value.native.duration || value.duration, dispose:cleanup};
-          }
+          if (value.native?.outputReady && placement !== null && value.native.revision >= placement)
+            return {id, mode, source:value.source, dispose:cleanup};
           await new Promise(resolve => setTimeout(resolve, 100));
         }
         throw Error('Standby frame timed out');
@@ -298,35 +194,34 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
       video.className = 'validation-video'; video.playsInline = true;
       video.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0';
       video.muted = true; video.volume = 0; video.playbackRate = currentMedia.playbackRate || 1;
-      stage.append(video);
+      (currentMedia.closest('.player-stage') || currentMedia.parentElement).append(video);
       controller = desktopCodecHls(video, url, 0, callbacks,
-        {claim:async()=>id,dispose(){}}, windowed, {paused:true,standbyParent:parent});
+        {claim:async()=>id,dispose(){}}, false, {paused:true,standbyParent:parent});
       while (!disposed && !failed && Date.now() < deadline) {
         if (video.readyState >= 2 && video.videoWidth > 0 && known.onReady) break;
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      if (disposed || failed || video.readyState < 2 || video.videoWidth <= 0 || !known.onReady ||
-          !video.paused || video.currentTime > .05) throw Error('Standby video timed out');
+      if (disposed || failed || video.readyState < 2 || video.videoWidth <= 0 || !known.onReady) throw Error('Standby video timed out');
       id = controller.sessionId?.() || id;
       return {id, mode, dispose:cleanup, adopt(media, handlers, onFailure) {
         if (disposed) return null;
         const saved = new Map(), listeners = [];
-        let closed = false, activationComplete = false, wantsPlayback = true, playGeneration = 0, cancelPlayWait = null;
-        const settings = {rate:media.playbackRate || 1,volume:media.volume,muted:media.muted};
+        let closed = false, activationComplete = false, wantsPlayback = true;
+        const settings = {rate:currentMedia.playbackRate || 1,volume:currentMedia.volume,muted:currentMedia.muted};
         const property = (name, descriptor) => {
           saved.set(name,Object.getOwnPropertyDescriptor(media,name));
           Object.defineProperty(media,name,{configurable:true,...descriptor});
         };
         for (const name of ['currentTime','playbackRate','volume','muted'])
-          property(name,{get:()=>video[name],set:v=>{video[name]=v;if(name==='currentTime')rememberResume(video.currentTime+(known.onWindowOrigin?.[0]||0),known.onTimeline?.[0]||video.duration);}});
+          property(name,{get:()=>video[name],set:v=>{video[name]=v;}});
         for (const name of ['paused','ended','duration','readyState','videoWidth','videoHeight','buffered','seeking','error'])
           property(name,{get:()=>video[name]});
-        property('play',{value:()=>{playGeneration++;wantsPlayback=true;return activationComplete ? video.play() : Promise.resolve();}});
-        property('pause',{value:()=>{playGeneration++;wantsPlayback=false;video.pause();if(activationComplete)finishRetained();}});
+        property('play',{value:()=>{wantsPlayback=true;return activationComplete ? video.play() : Promise.resolve();}});
+        property('pause',{value:()=>{wantsPlayback=false;video.pause();}});
         property('desktopDisplayMedia',{value:video});
-        property('desktopSessionId',{value:()=>controller?.sessionId?.() ?? null});
+        property('desktopSessionId',{value:()=>controller?.sessionId?.() || id});
         for (const name of ['play','playing','pause','ended','timeupdate','waiting','seeking','seeked','progress','volumechange','ratechange','error','loadedmetadata','durationchange']) {
-          const forward=()=>{if(!closed){if(activationComplete&&(name==='pause'||name==='ended'))finishRetained();media.dispatchEvent(new Event(name));}};
+          const forward=()=>{if(!closed)media.dispatchEvent(new Event(name));};
           video.addEventListener(name,forward);listeners.push([name,forward]);
         }
         consumer = handlers;
@@ -338,7 +233,7 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
         const restoreAdoption = () => {
           if (closed) return false;
           const live = {playbackRate:video.playbackRate,volume:video.volume,muted:video.muted};
-          closed=true;consumer=null;cancelPlayWait?.();
+          closed=true;consumer=null;
           for(const [name,fn] of listeners)video.removeEventListener(name,fn);
           for(const [name,descriptor] of saved){if(descriptor)Object.defineProperty(media,name,descriptor);else delete media[name];}
           Object.assign(media,live);
@@ -365,33 +260,22 @@ function desktopPrepareNext(url, currentMedia, windowed = false) {
           if (!disposed && !closed) throw Error('Standby activation timed out');
         })().then(async () => {
           if (disposed || closed || !wantsPlayback) return;
-          const generation=playGeneration;
-          let timer;
-          try {
-            await new Promise((resolve,reject)=>{
-              cancelPlayWait=()=>reject(Error('Standby play cancelled'));
-              timer=setTimeout(()=>reject(Error('Standby play timed out')),Math.max(1,Math.min(deadline-Date.now(),2000)));
-              Promise.resolve(video.play()).then(resolve,reject);
-            });
-          } catch (error) {if (wantsPlayback && generation===playGeneration) throw error;}
-          finally {clearTimeout(timer);cancelPlayWait=null;}
+          try {await video.play();} catch (error) {if (wantsPlayback) throw error;}
         }).then(() => {
           if (disposed) return;
-          if (!wantsPlayback) finishRetained();
-          else if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(finishRetained);
+          if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(finishRetained);
           else requestAnimationFrame(finishRetained);
         }).catch(()=>{
           if (closed || disposed) return;
-          const time = video.currentTime + (known.onWindowOrigin?.[0] || 0);
           restoreAdoption();cleanup(true);
-          if (onFailure) onFailure({paused:!wantsPlayback,time}); else handlers.onError?.();
+          if (onFailure) onFailure(); else handlers.onError?.();
         });
         return Object.assign(() => {
           if(restoreAdoption())cleanup();
-        },{seek:value=>{rememberResume(value,known.onTimeline?.[0]||video.duration);controller?.seek(value);},sessionId:()=>controller?.sessionId?.() ?? null});
+        },{seek:value=>controller?.seek(value),sessionId:()=>controller?.sessionId?.() || id});
       }};
     } catch {
-      failed = true; if (!claimed) cleanup(holdRequested || retained.length > 0); else {release();video?.remove();}
+      failed = true; if (!claimed) cleanup(); else {release();video?.remove();}
       return null;
     }
   })();

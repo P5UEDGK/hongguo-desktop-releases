@@ -8,7 +8,7 @@
 
 对#204公开的frontend-native.js、frontend-codec.js应用两个补丁，再加入src/frontend-seamless.js。沿用w0、desktopLegacyHls、ek和原callbacks契约，不能直接覆盖发行bundle。BASELINES.json记录LF规范化前后SHA。
 
-React保留preparation引用，在timeupdate/倍速变化后检查desktopShouldPrewarm(media)。连播开启且确有紧邻下一集时解析URL，返回后重查当前集身份，再调用desktopPrepareNext(nextUrl, media, windowed)，每集只创建一次。自动切到该集时，将preparation传给desktopNativePlayback(nextMedia, nextUrl, resolvedResumePosition, callbacks, preparation, windowed)。手动跳其他集、换剧、关闭连播或退出时dispose，忽略旧解析回执。
+React保留preparation引用，在timeupdate/倍速变化后检查desktopShouldPrewarm(media)。连播开启且确有紧邻下一集时解析URL，返回后重查当前集身份，再调用desktopPrepareNext(nextUrl, media)，每集只创建一次。自动切到该集时，将preparation传给desktopNativePlayback(nextMedia, nextUrl, 0, callbacks, preparation)。手动跳其他集、换剧、关闭连播或退出时dispose，忽略旧解析回执。
 
 React在确认本集已结束、开启连播且确有下一集时，在旧控制器dispose之前调用desktopHoldForNext(media)。将返回的holder保存在解析流程的ref中，下一播放器接收已准备的preparation或该holder；取消、换剧和关闭时释放它。最后一集不创建holder，沿用现有结束处理。这样无预热或预热失败后的普通加载也能保留末帧；不固定提前截掉片尾。holder不是准备成功的备用，claimRecord/claim返回null，交由正常加载。
 
@@ -34,7 +34,6 @@ HLS接管先保留旧帧，activate成功后清除codec控制器的备用父标�
 if (desktopControlsShouldReveal(event, media, {
   disabled: controls.current.disabled,
   autoContinue: controls.current.autoContinue,
-  hasNext: controls.current.canNext,
   transitioning: controls.current.isTransitioning?.()
 })) revealControls();
 ```
@@ -44,21 +43,6 @@ if (desktopControlsShouldReveal(event, media, {
 ```pwsh
 node contributions/desktop-seamless-transition/tests/test_controls_visibility.cjs
 ```
-
-## 中途续播复用
-
-后台仍从0准备下一集，保持隐藏、暂停、静音，播放位置最多0.05秒；可继续下载和缓冲。codec会阻止备用视频的legacy自动play，直到activate明确完成。超过0.05秒的续播目标不再直接丢弃备用：仅在正式claim后，先在隐藏静音暂停状态跳到该位置，再确认目标帧和回执，随后交接。原生校验revision、outputReady、seeking和目标时间；HLS等待目标视频帧或seeked，并校验完整时间轴位置。不会识别或跳过片源黑帧。
-
-定位等待最多2秒，受原90秒备用寿命限制。无效位置、身份不匹配和过期备用不接管；跳转失败则释放备用，保留旧画面到普通兼容加载ready，并按原目标续播。该次原生跳转失败走普通HLS协商，避免立刻再次加载刚失败的原生路径；不永久禁用原生或修改格式支持判断。preparation提供resumePosition、resumeFailed和实时settings供现有桥接使用，取消仍释放所有资源。定位期间新增的用户暂停意图也必须保留。
-
-接入时还须修改两个既有HLS控制器的“初始续播距结尾不足3秒则回零”分支：仅当callbacks.preserveResumePosition不为true时才执行回零。补丁后的codec只对本次备用接管失败留下的明确续播目标设置该标记；其他场景保留原规则。窗口HLS的restart(0)条件与整集HLS计算初始target的回零条件都需增加此判断，例如：
-
-```js
-if (!explicitSeek && initialPosition > 0 && initialPosition >= duration - 3 &&
-    !callbacks.preserveResumePosition) restart(0);
-```
-
-这是现有宿主HLS owner的接线要求，两个bridge补丁不包含宿主控制器源码；漏接会让片尾续播的失败回退重新从头播放。本机融合候选已修改这两处并做真实窗口HLS回退验收。原生补丁同时移除旧的强制控制栏opacity样式，与跨集隐藏策略一致。
 
 ## 验证与回滚
 
@@ -79,83 +63,3 @@ pwsh -NoProfile -Command "python -I contributions/desktop-seamless-transition/te
 本轮控制栏回归：策略18项及完整公开前端回归通过；候选Tauri无预热原生14项/HLS12项、安装后原生Tauri14项通过。后续并行更新保留相同控制栏owner；当前安装资源隔离Edge/HLS11项通过，切集时未展开且opacity为0。覆盖自动切集、显示/隐藏、手动选集、慢解析、暂停、鼠标事件、焦点与末集。当前整包Tauri/HLS因其他运行实例占用未重启验收，不干扰该实例。
 
 修复8720cb7回执：原生激活等待控制队列清空并确认最新revision，提前刷新新增暂停；HLS接管补发准备阶段记录的onAcceptanceHlsTransition及原参数。两个失败回归修改前失败、修改后通过，完整公开Node/补丁及控制栏18项通过；隔离Edge+真实libmpv原生13项、HLS11项通过，资源槽归零。当前软件仍运行，本批只完成候选，未安装；此前进度条继承修复已安装。
-
-本轮中途续播：本轮公开补丁/Node全部通过，新增32个续播边界用例；最新版候选隔离真实媒体原生/HLS续播、失败回退和控制栏共69项通过，关闭后资源槽归零。预热保持暂停静音隐藏，停在开头0.05秒以内；正式切集时再定位该集续播目标，成功复用会话。定位失败保留旧画面及目标，转普通HLS加载；宿主两个末3秒回零分支须接入preserveResumePosition。软件仍运行，未安装本轮候选；候选Tauri、安装后验证及正常片源画面验收待完成。
-
-用户授权安装后，本机核对源/候选/回滚备份与4032个后端清单文件，候选真实Tauri原生/HLS共25项通过后，已安装本轮候选并回读EXE摘要一致。安装后真实Tauri原生/HLS共89项通过，覆盖中段与极短片尾续播、失败普通加载保留目标、0.05秒预热限制、自动/手动切集的控制栏显隐、暂停/鼠标/焦点/末集，关闭后资源槽归零。观看记录、原片和并行功能保留，后端未改动。
-
-原生起播位置在可见/播放控制提交前检查目标帧，晚到的JavaScript进度另行记录，不混作首帧时间。极短片尾可能在首次JS轮询前播放结束；本轮修正验收脚本跨集事件监听并保留早期采样失败报告。测试使用合成媒体及隔离配置，不代表正常短剧连续像素无闪黑或物理音频无空档；正常片源观感和上游接入发布仍待完成。
-
-修复[失败续播设置继承回执](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/pull/213#discussion_r4241350344)：preparation提供实时settings，native在失败delegate前先写入目标media，既有delegate/restore据此继承倍速、音量和静音；成功接管复用同一设置来源。差异宿主回归修改前失败、修改后通过，完整公开Node/补丁回归通过；候选真实Tauri故障回退26项、安装后正常接管及故障回退53项通过。实际从界面选择3x、音量0.2、静音，并把新宿主故意重置为默认1x/音量1/未静音，回退后仍继承3x/0.2/静音。本机已重新安装本次修复，EXE/回滚备份及4032个后端文件核对一致，关闭后资源槽归零。前一批89项为e54f安装证据，本批只复测受影响的正常/失败路径，控制栏与其他实现未改动；正常片源观感和上游接入发布仍待完成。
-
-## 剩余审查回归（2026-10-11）
-
-无效或超出完整时长的续播位置归零后再冷加载；有效位置的跳转失败仍按原目标回退。失败准备保留上一集画面到冷加载就绪；暂停HLS交接确认后直接释放旧画面。替换会话ID空窗返回null，不暴露已退役ID。原生表面隐藏或零几何时保持隐藏暂停，等待可显示后再开始2秒可见ACK期限，仍受90秒寿命限制。公开补丁及全部前端回归通过；本批本机候选、安装验证尚待完成。
-
-两份前端补丁及BASELINES已同步#204的d2c86d078695570f0dbd6f9870f3b3bbcd87b8ee。预热直接使用原生包的desktopNativeSurfaceRect，隐藏控制栏不预留84像素；移除重复函数。补丁应用/SHA和全部Node交接、续播、几何回归通过，本批安装验收待完成。
-
-最新三条复审已修复：准备失败仍校验已知时长，未知续播位置不跳过冷加载校验；冷HLS终止错误立即释放保帧；activate返回后在同一2秒期限内排空新控制并核验revision。同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516，预热也携带当前Tauri物理客户区上下文。40项原生/HLS续播场景和全部前端交接回归通过，三个新缺陷在旧补丁上均失败。本机安装待完成。
-
-
-## 本轮二次反馈修复
-
-claim 携带原准备 expiresAt；隐藏表面等待与交接沿用这一期限，不重新获得90秒。旧实现的原期限回归失败；修改后的完整前端补丁及原有交接测试通过。
-
-
-## 本轮三次反馈修复
-
-准备会话的control flush失败后立即停止交接，不再请求null会话状态或重复终止回调；隐藏等待和二次flush也使用相同终止门禁。旧回放失败，当前完整交接与前端补丁测试通过。基础原生同步未知时长/失败续播归零和过期窗口绑定回退，原准备expiry、目标帧、音频意图与ACK要求保持。
-
-本机候选与安装仍待完成。
-
-
-本轮审查回归（2026-10-12，第四批）：4242245633/5635/5636/4242315880/5881/5887：activate后隐藏状态停泊；文档传实际resume；创建前刷新parent；HLS预热windowed匹配；未知时长resume失败允许冷路径复核；等待claim期间新设置不被旧快照覆盖。
-
-真实M0组合验收发现，未创建父会话的预热占位结果不能接管末帧holder；该结果现在标记 failed。EOF解析前调用 desktopHoldForNext 后，下一播放器必须优先接收其返回值（endHold || preparation），因为它已经选择有效备用或新冷加载holder，不能再被旧失败/空 preparation 覆盖。窗口HLS宿主同时接入原生包的 desktopAcceptWindowOrigin；保留连续origin检查。新增公开回归与真实候选验收正在进行，尚未安装本批。
-
-
-本轮第六批审查（2026-10-12）：4242530283/0285/0287：windowed不匹配保帧转冷加载，activate失败传最新暂停意图，native显示前隐藏回停泊等待；保留真实M0 holder接线回归。
-
-本轮审查修复：4242708637/8641/8644/8647：unclaimed失败保帧、父替换等待、冷holder继承控制与失败fallback传live seek。
-
-2026-10-12 追加复核：同步native前端入口修复，重放备用桥接且保持既有保帧/ACK控制契约。
-
-`hasNext` 必须由当前剧集和可用下一集计算；不存在下一集或解析失败时传 `false`。只开启自动连播不能压住最终 EOF 的控件。
-
-2026-10-12 第十轮复核：4242853044/3048/3054：activate在途隐藏也暂停；HLS接管前显式seek重放；EOF显隐依赖实际下一集/过渡。
-
-2026-10-12 第十一轮复核：4242904879：未claim备用过期及过期claim仍保留EOF图片，释放备用资源后由cold readiness/error或保帧定时器结束。同步native/codec责任包修复。
-
-2026-10-12 第十二轮复核：4243003130/3133：刷新controls策略摘要并运行公开check_patches；record重放seek更新有效resumePosition供近EOF冷回退使用。
-
-2026-10-12 第十三轮复核：4243056108/6113：claimed准备等待受原deadline/abort约束；公开runner纳入pending/expiry/unclaimed回归；依赖204重新生成native桥接patch。
-
-2026-10-12 第十五轮复核：4243144691：已adopt的HLS终止错误在转交consumer前释放retained picture。
-
-2026-10-12 第十六轮复核：4243201745：claim和seek等待期追踪用户暂停意图。
-
-2026-10-12 第十七轮复核：4243250039/0041：claimed未adopt失败保留前帧；adopt后seek同步更新resumePosition，含currentTime写入。
-
-2026-10-12 第十八轮复核：4243346507/6511/6512：EOF返回preparation即记录hold；native激活前回放并ACKseek；确认delegate已重新同步seek失败后的当前设置并增加回归。
-
-2026-10-12 第十九轮复核：4243425474/5478：URL身份冷降级保留前帧；已激活HLS暂停/ended完成前帧释放；同步直接HLS恢复桥接。
-
-2026-10-12 第二十一轮复核：4243502283/2290/2295：无效进度重置不覆盖claim等待中的新seek；隐藏等待仅提交所需pause修订；续播标记使用已接受的50ms误差。
-
-2026-10-12 第二十二轮复核：4243539029/9033：预热开始即缓存父session ID和stage，后续可用时刷新父ID，异步准备跨越EOF仍可用；同步CSS显隐与续播桥接。
-
-2026-10-12 第二十三轮复核：4243659552/9556：claim返回空时显式seek仍保留近EOF目标；激活等待中的新seek必须落到目标帧后才能释放前帧。
-
-2026-10-12 第二十四轮复核：4243740522：活跃parent accessor返回空时等待替换session，只有teardown accessor消失时使用缓存父ID；同步native补丁。
-
-2026-10-12 第二十五轮复核：4243793594：公开check_patches入口执行cold pending seek新回归；同步native矩形与seek代理补丁。
-
-2026-10-12 第二十六轮复核：4243872809：隐藏activate确认后保留期望播放意图，重新显示恢复播放。
-
-2026-10-12 第二十七轮复核：4243920230/0237：HLS adopt play意图代际隔离迟到拒绝；Windows patch明确LF并实克隆验证。
-
-2026-10-12 第二十八轮复核：4244002751/2757：adoption同步回调取消时清理转接；adopt返回空时回退冷HLS。
-
-2026-10-12 第二十九轮复核：4244052917：adopted HLS play等待有期限并在cleanup时取消。
-
-验证：424项融合后端无跳过、37套播放器前端、267项公开备用组合（1项可选片源跳过）、88项浏览器及真实libmpv字幕位置编辑通过。8项冻结前版反例失败、当前通过；Windows autocrlf实际克隆后的补丁应用通过。评论7组、暂停预加载136项公开组合通过；片源预加载owner未变，复用第28轮16项真实延迟片源检查。候选Tauri原生/HLS播放、裁剪、暂停和退出释放通过。评论及浏览器组件未变，复用第28轮7组评论和88项浏览器证据。本机安装验收随后执行，上游尚未合并发布。
