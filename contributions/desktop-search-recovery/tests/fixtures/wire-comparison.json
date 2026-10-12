@@ -1,0 +1,16 @@
+{
+  "query": "谁说没灵根",
+  "observed_at": "2026-10-12",
+  "POST_JSON": {
+    "http": 200,
+    "code": 6000,
+    "count": 0
+  },
+  "GET_query": {
+    "http": 200,
+    "code": 0,
+    "count": 20,
+    "has_more": true
+  },
+  "scope": "Same reconstructed native search parameters; no service-side attribution."
+}
