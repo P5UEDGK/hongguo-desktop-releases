@@ -1,0 +1,48 @@
+# 宿主接入
+
+图片模块仅负责图片字节，详情签名、地址持久化、鉴权与收藏/历史由现有 owner 负责。将 src/desktop_posters.py 放到宿主 backend 模块目录。
+
+```python
+from desktop_posters import PosterCache
+posters = PosterCache(cache_settings.active_root, fetch_image_bytes)
+```
+
+fetch_image_bytes 复用原图片下载/HEIC 转 JPEG 方法，返回 bytes；宿主设置有限超时和有界下载，不再从本函数触发搜索。每个活动设置缓存根只创建一个实例，同一桌面会话各页面共享。支持 JPEG/PNG/WEBP，单张最多 2 MiB、1600 万像素；图片域名白名单由 cover_url 统一验证。
+
+## 详情地址与批量接口
+
+本包沿用 [#246](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/pull/246) 的 CacheSettings/视频热切 owner，不复制第二套配置或视频实现。patches/library-covers.patch 与 patches/server-posters.patch 是本机关系/服务 owner 的最小改动，适用于已有 backend/desktop_library.py 的宿主，不是可直接应用到当前发行仓库的补丁。接入相同前置模块后用 git apply --check 核对；不同宿主应实现以下契约，避免复制第二套图片缓存：
+
+1. 同一关系数据库新增 poster_urls(series_id PRIMARY KEY, url NOT NULL)，旧 relations 六列不变。详情补齐时只保存 ID 精确匹配的 series_cover，经 cover_url 验证；已有合法关系不能被补图失败覆盖。WAL 本地读取不持远程查询的全局锁。
+2. POST /desktop/library/covers 接收 {seriesIds:[字符串 ID]}，最多 20 张。先对所有 ID 调用 posters.read，本地命中不进入详情查询；对剩余且 ready_to_fetch 的 ID 复用详情 owner 补查地址，再用最多六个线程调用 posters.get。返回 {covers:{ID:dataURL},missing:[],localHits:n}。
+3. 地址下载失败后清除该条已失效地址，保留图片文件与有效关系；冷却过后可重新取得签名地址。没有地址也进入相同失败冷却，防止每张卡片反复查询。
+4. 沿用桌面回环监听、可信 Origin、客户端标志和当前会话 requestToken。GET /desktop/library 取得会话 token；POST 验证 x-desktop-library-token。若普通 API key 中间件免除此路由，只免除精确路径并保留上述检查，不开放整个路径前缀。
+
+本机接线为 LibraryRelations(application_data_root, provider, posters=posters)；关系数据库仍留在应用数据根，provider 复用已有签名 API。补丁包含上述后端方法及路由，不写原生收藏/历史表。默认 fetch 可以调用现有图片 owner，例如 lambda url: api_img(url).body；确认返回的是已转换图像 bytes，并保留原有网络限制。
+
+## 设置目录切换
+
+启动时图片根必须取 cache_settings.active_root。若旧 application_data_root/poster-cache-v1 存在，创建只用于读取的旧 PosterCache，并调用 posters.seed_from(旧实例)；这只复用验证通过的本地图片，不请求上游，不移动数据库或删除旧文件。
+
+在现有视频目录 prepare_change 回调内合并图片准备，不能用新的回调覆盖视频接线：先调用 candidate = posters.prepare_directory(value['directory'])，它将已有有效图片复制到候选根但不激活。原子保存设置成功后，在原有 apply 内依次调用 posters.activate(candidate)、切换当前 posters 引用，并将 library.posters 指向 candidate。新旧实例共享下载锁/冷却；迟到的下载会向已激活新根发布。不能在 prepare 阶段激活，失败保存必须仍消费旧根。
+
+server-posters.patch 包含这部分接线。cache-settings-label.patch 与 frontend-settings-label.patch 仅修正现有选择窗口及标签名称，分别应用到已有后端设置模块及前端可读设置实现；前端源码路径不同则仅迁入同一处文字。保留已有视频路径规范化（video-cache 子目录）、容量规则与视频清理行为，图片根明确为最终设置 directory/poster-cache-v1。此处不扩大为移动收藏/历史或日志。
+
+## 公共前端入口
+
+加载 src/frontend-posters.js，替换已有公共 seriesCover 方法，使所有卡片经过同一入口。request 为宿主现有受保护 JSON 请求函数，负责可信 origin、会话 token 和有限超时；客户端不可保存过期 token。
+
+```javascript
+api.seriesCover = desktopCreatePosterLoader(async seriesIds => {
+  await desktopLibrary.load();
+  return desktopLibrary.request('/covers', {seriesIds});
+});
+```
+
+同一 ID 的在途 promise 合并，一批最多 20 张、最多两批并行。现有可视区域调度和短期内存缓存保留，但内存淘汰后再次显示必须仍读磁盘，不能回退到原生 get_series_cover 的网络恢复链。该适配器不修改卡片外观、归组或播放行为。
+
+## 验收与恢复
+
+先通过公开测试，再验证宿主已有图片无详情/图片上游请求、冷缺图补齐一次、切页/进入合集/返回/重启继续命中、坏图仅修复本条、签名地址过期后冷却恢复，以及合法 token、错误 Origin 和缺失 token。核对原收藏/历史表未变，并确认目录映射后仍复用既有原生文件，并验证设置切换、保存失败及在途下载只向已提交的新根发布。
+
+本机补丁应用、上述业务、鉴权及旧 schema 迁移已有对应测试和真实运行证据。公开 fixture 不能替代维护者私有工程的接入/发布验收。撤回补丁和公共入口接线可恢复旧路径，用户图片和新增地址表保留，不通过清缓存回滚。

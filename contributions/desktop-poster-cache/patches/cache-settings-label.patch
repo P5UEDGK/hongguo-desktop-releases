@@ -1,0 +1,9 @@
+--- a/backend/desktop_cache_settings.py
++++ b/backend/desktop_cache_settings.py
+@@ -177,5 +177,5 @@
+ Add-Type -AssemblyName System.Windows.Forms
+ $dialog=[System.Windows.Forms.FolderBrowserDialog]::new()
+-$dialog.Description='选择视频缓存目录'
++$dialog.Description='选择视频和图片缓存目录'
+ $dialog.UseDescriptionForTitle=$true
+ $dialog.ShowNewFolderButton=$true
