@@ -294,12 +294,15 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     document.addEventListener('scroll',layout,true);
     layout();
   }
+  let pollFailures=0;
   async function poll(ownGeneration) {
     if (disposed || fallbackStarted || ownGeneration !== generation || pollBusy) return;
     pollBusy = true;
     try {
       const result = await request('/' + id + '/status');
       if (disposed || fallbackStarted || ownGeneration !== generation) return;
+      if (!result || typeof result.state !== 'string') throw Error('Invalid native status');
+      pollFailures=0;
       if (result.state === 'failed' || result.native?.state === 'failed') {
         if (result.failureCode === 'source-read' || result.native?.failureCode === 'source-read') failPreparation();
         else delegate(true);
@@ -344,7 +347,10 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         }
       }
       layout();
-    } catch {if (!disposed && ownGeneration === generation) failPreparation();}
+    } catch (error) {
+      const transient=!error.status || error.status===429 || error.status>=500;
+      if (!disposed && ownGeneration===generation && (!transient || ++pollFailures>=3)) failPreparation();
+    }
     finally {
       pollBusy = false;
       if (!disposed && !fallbackStarted && ownGeneration === generation) timer = setTimeout(() => poll(ownGeneration), 250);

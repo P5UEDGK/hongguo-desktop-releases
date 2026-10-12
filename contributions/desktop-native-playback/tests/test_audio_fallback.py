@@ -33,12 +33,13 @@ class AudioFallbackTests(unittest.TestCase):
     def test_pcm_input_uses_aac_output_bitrate_for_budget(self):
         pcm=self.root/'pcm.mkv'
         with av.open(str(self.source)) as reader,av.open(str(pcm),'w') as writer:
-            video=writer.add_stream_from_template(reader.streams.video[0])
+            video=writer.add_stream('libx264',rate=10);video.width=video.height=64;video.pix_fmt='yuv420p'
             audio=writer.add_stream('pcm_s16le',rate=48000);audio.layout='stereo'
             resampler=av.AudioResampler(format='s16',layout='stereo',rate=48000)
             for packet in reader.demux():
                 if packet.stream.type=='video':
-                    if packet.dts is not None:packet.stream=video;writer.mux(packet)
+                    for frame in packet.decode():
+                        for encoded in video.encode(frame):writer.mux(encoded)
                 else:
                     for frame in packet.decode():
                         for converted in resampler.resample(frame):
@@ -46,7 +47,8 @@ class AudioFallbackTests(unittest.TestCase):
             for converted in resampler.resample(None):
                 for encoded in audio.encode(converted):writer.mux(encoded)
             for encoded in audio.encode(None):writer.mux(encoded)
-        with av.open(str(pcm)) as reader:self.assertGreater(reader.streams.audio[0].codec_context.bit_rate,128000)
+            for encoded in video.encode(None):writer.mux(encoded)
+        with av.open(str(pcm)) as reader:self.assertGreater(reader.streams.audio[0].codec_context.bit_rate,128000);self.assertEqual(len(list(reader.decode(video=0))),30)
         target=self.root/'pcm-output';encode_hls(pcm,target,max_output_bytes=512*1024)
         with av.open(str(target/'index.m3u8')) as media:
             self.assertEqual(media.streams.audio[0].codec_context.name,'aac')
