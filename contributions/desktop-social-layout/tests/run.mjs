@@ -65,7 +65,7 @@ function App(){
  b.jsxs('div',{className:'window-controls dark compact',children:['置顶','最小化','最大化','关闭'].map((label,i)=>b.jsx('button',{className:i===0?'window-pin':'','aria-label':label,children:label},label))}),
  b.jsxs('div',{className:'desktop-player',children:[
  b.jsxs('header',{children:[b.jsx('button',{className:'return-button',children:'返回片单'}),b.jsx(Selection,{media}),b.jsx('button',{className:'player-mini-toggle','aria-label':'迷你窗口',children:'小窗'})]}),
- b.jsxs('main',{className:'desktop-player-layout',children:[b.jsxs('div',{className:'player-stage',children:[b.jsx('video',{ref:media}),b.jsx('div',{className:'player-chrome',children:b.jsxs('div',{className:'player-toolbar',children:[b.jsx('button',{'aria-label':'播放或暂停',onClick:()=>window.fixtureToggle(),children:b.jsx('svg',{width:22,height:22,viewBox:'0 0 24 24',children:b.jsx('path',{d:'M5 3L21 12L5 21Z',fill:'currentColor'})})}),...['上一集','下一集'].map(label=>b.jsx('button',{'aria-label':label,children:b.jsx('svg',{width:22,height:22})},label)),b.jsx('span',{className:'player-clock',children:'00:27 / 01:36'}),b.jsx('span',{className:'player-toolbar-spacer'}),b.jsx(social.Controls,{media,sessionKey:session.streamUrl}),b.jsx('select',{'aria-label':'播放速度',children:b.jsx('option',{children:'2x'})}),b.jsx('button',{'aria-label':'静音',children:b.jsx('svg',{width:22,height:22})}),b.jsx('input',{type:'range','aria-label':'音量'}),b.jsx('button',{'aria-label':'剧场模式',onClick:()=>social.set(media.current,{social:false}),children:b.jsx('svg',{width:22,height:22})}),b.jsx('button',{'aria-label':'全屏',children:b.jsx('svg',{width:22,height:22})})]})})]}),
+ b.jsxs('main',{className:'desktop-player-layout',children:[b.jsxs('div',{className:'player-stage',children:[b.jsx('video',{ref:media}),b.jsx('div',{className:'player-chrome',children:b.jsxs('div',{className:'player-toolbar',children:[b.jsx('button',{'aria-label':'播放或暂停',onClick:()=>window.fixtureToggle(),children:b.jsx('svg',{width:22,height:22,viewBox:'0 0 24 24',children:b.jsx('path',{d:'M5 3L21 12L5 21Z',fill:'currentColor'})})}),...['上一集','下一集'].map(label=>b.jsx('button',{'aria-label':label,children:b.jsx('svg',{width:22,height:22})},label)),b.jsx('span',{className:'player-clock',children:'00:27 / 01:36'}),b.jsx('span',{className:'player-toolbar-spacer'}),b.jsx(social.Controls,{media,sessionKey:session.streamUrl}),b.jsx('select',{'aria-label':'播放速度',children:b.jsx('option',{children:'2x'})}),b.jsx('button',{'aria-label':'静音',children:b.jsx('svg',{width:22,height:22})}),b.jsx('input',{type:'range','aria-label':'音量'}),b.jsx('button',{'aria-label':'剧场模式',onClick:()=>social.toggleSidebar(media.current),children:b.jsx('svg',{width:22,height:22})}),b.jsx('button',{'aria-label':'全屏',children:b.jsx('svg',{width:22,height:22})})]})})]}),
  b.jsxs('aside',{children:[b.jsx('div',{className:'episode-fixture',children:'剧集信息 · 1 2 3'}),b.jsx(social.Drawer,{session,media})]})]})]})]});
 }
 ReactDOM.createRoot(document.getElementById('root')).render(b.jsx(App,{}));
@@ -125,24 +125,30 @@ try{
  const narrow=await page.locator('video').boundingBox();
  check(narrow.width<wide.width,'drawer opening narrows video');
  check(JSON.stringify(await page.locator('.desktop-player').boundingBox())===JSON.stringify(initial),'player outer frame remains fixed');
- // Theater is a one-time sidebar close action using the existing state owner.
+ // Theater toggles the existing drawer; reopening always selects episodes.
  async function theaterCloseAndReopen(width){
   await page.setViewportSize({width,height:720});
   const outer=await page.locator('.desktop-player').boundingBox();
   const playback=await page.evaluate(()=>({paused:document.querySelector('video').paused,count:toggleCount,danmaku:localStorage.getItem('hongguo:danmaku')}));
   const requests=(await socialCalls()).length;
+  if(await page.locator('aside').isHidden()){
+   await page.getByRole('button',{name:'剧场模式',exact:true}).click();
+   check(await page.locator('aside').isVisible()&&await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'theater opens selection when starting closed');
+  }
   await page.getByRole('button',{name:'剧场模式',exact:true}).click();
   check(await page.locator('aside').isHidden(),'theater closes the sidebar at '+width+'px');
   const closed=await page.locator('video').boundingBox(),layout=await page.locator('.desktop-player-layout').boundingBox();
   check(Math.abs(closed.width-layout.width)<1,'sidebar close expands video without changing the outer frame at '+width+'px');
+  await page.getByRole('button',{name:'剧场模式',exact:true}).click();
+  check(await page.locator('aside').isVisible()&&await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'second theater click opens selection at '+width+'px');
+  await page.getByRole('button',{name:'剧场模式',exact:true}).click();
   await page.getByRole('button',{name:'打开选集',exact:true}).click();
   check(await page.locator('aside').isVisible()&&await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'selection immediately reopens after theater at '+width+'px');
   check((await page.locator('video').boundingBox()).width<closed.width,'selection restores normal sidebar geometry at '+width+'px');
   check(!await page.locator('.desktop-player').evaluate(n=>n.classList.contains('theater')),'no independent theater state locks the sidebar');
   await page.getByRole('button',{name:'剧场模式',exact:true}).click();
   await page.getByRole('button',{name:'剧场模式',exact:true}).click();
-  check(await page.locator('aside').isHidden(),'repeated theater clicks only close the sidebar');
-  await page.getByRole('button',{name:'打开选集',exact:true}).click();
+  check(await page.locator('aside').isVisible()&&await page.getByRole('tab',{name:'选集',selected:true}).isVisible(),'repeated theater clicks alternate and reopen selection');
   check(JSON.stringify(await page.locator('.desktop-player').boundingBox())===JSON.stringify(outer),'theater does not resize the player outer frame');
   check(JSON.stringify(await page.evaluate(()=>({paused:document.querySelector('video').paused,count:toggleCount,danmaku:localStorage.getItem('hongguo:danmaku')})))===JSON.stringify(playback),'theater leaves playback and danmaku unchanged');
   check((await socialCalls()).length===requests,'closing sidebar and reopening selection do not reload comments');

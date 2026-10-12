@@ -107,6 +107,13 @@ export function installSocialStyles() {
     document.head.append(style);
 }
 
+// Read the drawer owned by the social session; do not keep a second mode state.
+export function toggleSidebar(media, set) {
+  if (!media) return;
+  const drawer = media.closest('.desktop-player-layout')?.querySelector('.desktop-social');
+  set(media, {social: !drawer || drawer.hidden, tab: 'episodes'});
+}
+
 export function createSelection({React: O, jsxRuntime: b, set: desktopSocialSet}) {
 function DesktopSocialSelection({media}) {
   const button = O.useRef(null);

@@ -11,11 +11,11 @@
 bootstrap.mjs 导出 createSocialUI({React,jsxRuntime,resolveEndpoint})，返回 Drawer、Controls、Selection 及依赖对象。它引用 contributions 下其他三个前端包，需共同检出。只调用一次工厂，不要在每次 render 创建新组件类型。
 
 ```js
-const {Drawer,Controls,Selection,set}=createSocialUI({React,jsxRuntime,resolveEndpoint:trustedEndpoint});
+const {Drawer,Controls,Selection,toggleSidebar}=createSocialUI({React,jsxRuntime,resolveEndpoint:trustedEndpoint});
 // 原 header: <Selection media={mediaRef}/>
 // 原 .player-toolbar: <Controls media={mediaRef} sessionKey={session.streamUrl}/>
 // 原 aside（保留选集正文）: <Drawer session={session} media={mediaRef}/>
-// 原剧场按钮及 T 快捷键共用的回调：onTheater: () => set(mediaRef.current, {social:false})
+// 原剧场按钮及 T 快捷键共用的回调：onTheater: () => toggleSidebar(mediaRef.current)
 ```
 
 宿主保留 .app-shell、.desktop-player、header、.desktop-player-layout、.player-stage、.player-toolbar、aside、.window-controls、.window-pin、.player-mini-toggle 类。外框尺寸由现有窗口 owner 固定，layout 使用剩余空间的 grid、min-height:0/min-width:0；不得按评论内容重算窗口大小。抽屉开时右列占空间，视频缩窄；关时恢复。CSS只装一次。
@@ -32,7 +32,7 @@ const {Drawer,Controls,Selection,set}=createSocialUI({React,jsxRuntime,resolveEn
 
 底部控制栏始终单行。按 `.player-stage` 可用宽度使用容器查询缩小按钮、音量滑条和间距，保留全部控制；宽屏图标按钮32×32 CSS像素，窄视频区域缩至28或20像素宽，SVG 与悬停背景居中。宿主需保留 `.player-clock`、`.player-toolbar-spacer`，倍速 select 和音量 range 作为控制栏直接子节点。原生表面按 `.player-chrome` 实际顶部预留空间，并观察控制栏高度变化，避免固定84像素造成遮挡；宿主必须把进度条和按钮放在这个容器内。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
 
-剧场按钮和 T 快捷键只通过现有 `set` 关闭右侧栏。宿主移除独立的剧场状态及 `.theater` 类切换，按钮保持“剧场模式”名称，可将提示改为“收起右侧栏（T）”。点击后“选集”和“评论”仍按原规则打开右侧栏；重复点击只保持关闭。关闭、评论开关和缓存继续由现有侧栏 owner 管理，窗口、播放和弹幕不随此动作改变。浏览器回归覆盖宽窄窗口、评论页及侧栏已关闭的情况。
+剧场按钮和 T 快捷键共用 `toggleSidebar`：右侧栏展开时收起，关闭时打开选集；从评论页收起后再点也进入选集。宿主移除独立的剧场状态及 `.theater` 类切换，按钮保持“剧场模式”名称，提示可用“切换右侧栏（T）”。选集、评论、关闭和缓存继续由现有侧栏 owner 管理，窗口、播放和弹幕不随此动作改变。浏览器回归覆盖二次点击、宽窄窗口、评论页及侧栏已关闭的情况。
 
 tests/run.mjs 是跨包唯一浏览器回归入口，覆盖评论前端和布局，不在两个 PR 重复维护测试。评论关闭时仅隐藏页面，后台读取及会话缓存由评论包统一管理；测试覆盖重开复用、请求合并、分页、刷新和换集取消。真实 Chrome headless 使用匿名 HTTP fixture；不能替代 Tauri 原生 Win32 接入验收。
 
