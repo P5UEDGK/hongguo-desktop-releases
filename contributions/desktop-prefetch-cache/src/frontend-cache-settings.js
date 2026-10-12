@@ -107,7 +107,10 @@ function DesktopCacheSettings() {
   const button = {font:"inherit", padding:"6px 12px", border:"1px solid #dfe1e5", borderRadius:"7px", background:"transparent", color:"inherit", cursor:"pointer"};
   return b.jsxs("div", {"aria-label":"缓存设置", children:[
     b.jsx("style", {children:".settings-page h1{margin-bottom:16px}.settings-page h2{margin-top:18px}.settings-page .settings-row{min-height:48px;gap:16px}"}),
-    b.jsx("h2", {style:{marginBottom:"8px"}, children:"缓存"}),
+    b.jsxs("h2", {style:{marginBottom:"8px", display:"flex", alignItems:"center", gap:"12px", whiteSpace:"nowrap"}, children:[
+      b.jsx("span", {children:"缓存"}),
+      b.jsx("small", {title:"可先手动清理缓存再切换目录", style:{fontSize:"12px", fontWeight:"normal", color:"#8a8f98", minWidth:0, overflow:"hidden", textOverflow:"ellipsis"}, children:"可先手动清理缓存再切换目录"})
+    ]}),
     b.jsxs("div", {style:row, children:[
       b.jsx("label", {htmlFor:"video-cache-directory", style:label, children:"视频缓存目录"}),
       b.jsx("input", {id:"video-cache-directory", value:draftDirectory, onChange:event=>setDraftDirectory(event.target.value), onBlur:()=>setDirectory(draftDirectory), disabled:busy||!loaded, style:{...field, flex:"3 1 280px"}}),
@@ -129,7 +132,6 @@ function DesktopCacheSettings() {
       b.jsx("small", {style:{color:"#8a8f98"}, children:"满额停止缓存"}),
       b.jsx("button", {type:"button", style:button, onClick:clear, disabled:busy||!loaded, children:"手动清理缓存"})
     ]}),
-    b.jsx("p", {style:{fontSize:"12px", margin:"6px 0"}, children:"可先手动清理缓存再切换目录。"}),
     b.jsx("p", {role:"status", title:message, style:{fontSize:"13px", height:"18px", lineHeight:"18px", margin:"6px 0 0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}, children:message || "\u00a0"})
   ]});
 }
