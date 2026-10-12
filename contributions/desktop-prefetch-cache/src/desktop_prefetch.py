@@ -7,7 +7,7 @@ import threading
 import uuid
 
 from desktop_hls import EncodingCancelled
-from desktop_playable_cache import PlayableEpisodeCache, CacheQuotaExceeded, OWNER, plain
+from desktop_playable_cache import PlayableEpisodeCache, OWNER, plain
 
 
 class EpisodePrefetcher:
@@ -22,20 +22,17 @@ class EpisodePrefetcher:
         self.cache = PlayableEpisodeCache(cache_root, encoder=encoder, quota_bytes=quota_bytes, profile_files=profile_files)
         self.ahead, self.status_path = ahead, Path(status_path) if status_path else None
         self.condition = threading.Condition()
-        self.report_revision = 0
-        self.reporter = None
+        self.report_guard = threading.Lock()
         self.generation = 0
         self.foreground = {}
-        self.foreground_directories = {}
-        self.cache_results = {}
         self.busy = None
         self.pending = []
         self.active = None
         self.completed = []
-        self.window_keys = set()
         self.failed = []
         self.current = None
         self.current_complete = False
+        self.current_source_complete = False
         self.current_source = None
         self.playback_mode = None
         self.latest_episodes = []
@@ -63,18 +60,15 @@ class EpisodePrefetcher:
         with self.condition:
             self.generation += 1
             self.foreground[job.id] = self.generation
-            job.source_loader = lambda sid, ep: self.load_source(sid, ep, job=job)
-            if getattr(job, "directory", None) is not None:
-                self.foreground_directories[job.id] = Path(job.directory)
             self.pending = []
             self.download_pending = []
             self.sources = {}
             self.download_completed = []
             self.completed = []
-            self.window_keys = set()
             self.failed = []
             self.current = {"seriesId": str(series_id), "episode": episode}
             self.current_complete = False
+            self.current_source_complete = False
             self.current_source = None
             self.playback_mode = None
             self.latest_episodes = []
@@ -90,8 +84,6 @@ class EpisodePrefetcher:
                     raise EncodingCancelled()
                 if self.busy is None:
                     self.busy = job.id
-                    if getattr(job, "directory", None) is not None:
-                        self.foreground_directories[job.id] = Path(job.directory)
                     return
                 self.condition.wait(0.1)
 
@@ -103,56 +95,35 @@ class EpisodePrefetcher:
         except Exception:
             return False  # Optional status cannot invalidate an acquired source.
 
-    def load_source(self, series_id, episode, *, job=None):
+    def load_source(self, series_id, episode):
         with self.condition:
-            if (self.closed or self.current != {"seriesId": str(series_id), "episode": episode}
-                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation)):
-                raise EncodingCancelled()
             generation = self.generation
         _, metadata = self.episode_loader(series_id)
         items = self._episodes(metadata)
         vid = next((vid for index, vid in items if index == episode), None)
         if vid is None:
             raise ValueError("Episode media identity unavailable")
-        with self.condition:
-            if (generation != self.generation or self.closed
-                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation)
-                    or self.current != {"seriesId": str(series_id), "episode": episode}):
-                raise EncodingCancelled()
         source = self.source_loader(vid)
+        source_complete = self._source_complete(source)
         with self.condition:
             if (generation == self.generation and not self.closed
-                    and (job is None or not job.cancelled.is_set() and self.foreground.get(job.id) == generation)
                     and self.current == {"seriesId": str(series_id), "episode": episode}):
                 self.latest_episodes = items
                 self.sources[vid] = source
                 self.current_source = source
-                future = []
-                window = {vid}
+                self.current_source_complete = source_complete
+                seen = {vid}
                 for index, future_vid in items:
-                    if index > episode and future_vid not in window and len(future) < self.ahead:
-                        future.append((generation, index, future_vid))
-                        window.add(future_vid)
-                self.download_pending = [task for task in self.download_pending
-                                         if task[0] == generation and task[2] in window]
-                seen = {vid, *(key for key, value in self.sources.items() if value is not None)}
-                seen.update(task[2] for task in self.download_pending if task[0] == generation)
-                if self.download_active is not None and self.download_active[0] == generation:
-                    seen.add(self.download_active[2])
-                for task in future:
-                    if task[2] not in seen:
-                        self.sources.pop(task[2],None)
-                        self.download_pending.append(task)
-                        seen.add(task[2])
+                    if index > episode and future_vid not in seen and len(self.download_pending) < self.ahead:
+                        self.download_pending.append((generation, index, future_vid))
+                        seen.add(future_vid)
                 if self.download_pending and (self.downloader is None or not self.downloader.is_alive()):
                     self.downloader = threading.Thread(target=self._download, name="desktop-source-prefetch", daemon=True)
                     try:
                         self.downloader.start()
                     except RuntimeError:
-                        for _, future_episode, future_vid in self.download_pending:
+                        for _, _, future_vid in self.download_pending:
                             self.sources[future_vid] = None
-                            if future_episode not in self.failed:
-                                self.failed.append(future_episode)
                         self.download_pending = []
                         self.downloader = None
                 self.condition.notify_all()
@@ -169,14 +140,6 @@ class EpisodePrefetcher:
                 self.download_active = task
             self._report()
             try:
-                with self.condition:
-                    stale = self.closed or task[0] != self.generation
-                    if stale:
-                        self.download_active = None
-                        self.condition.notify_all()
-                if stale:
-                    self._report()
-                    continue
                 source = self.download_loader(task[2])
             except Exception:
                 source = None
@@ -184,10 +147,7 @@ class EpisodePrefetcher:
                 if task[0] == self.generation and not self.closed:
                     self.sources[task[2]] = source
                     if source is not None:
-                        if task[1] not in self.download_completed:self.download_completed.append(task[1])
-                        if task[1] in self.failed:self.failed.remove(task[1])
-                    elif task[1] not in self.failed:
-                        self.failed.append(task[1])
+                        self.download_completed.append(task[1])
                 self.download_active = None
                 self.condition.notify_all()
             self._report()
@@ -195,22 +155,15 @@ class EpisodePrefetcher:
     def finish(self, job, series_id, episode, source):
         with self.condition:
             expected = self.foreground.get(job.id)
-            cached_result = self.cache_results.pop(job.id, None)
-            self.foreground_directories.pop(job.id, None)
         mode = getattr(job, "video_mode", "h264")
         # Validation hashes source/media bytes. Never hold the scheduling lock for I/O.
         def cancelled():
             with self.condition:
                 return self.closed or job.cancelled.is_set() or expected != self.generation
-        current_complete, current_key = False, None
+        current_complete = False
         try:
             if expected is not None and source is not None and mode != "native" and not job.failed and not cancelled():
-                if cached_result is not None:
-                    current_complete, current_key = cached_result
-                else:
-                    identity = self.cache._identity(source, mode, cancelled)
-                    current_complete = self.cache.contains(source, mode, cancelled=cancelled, _identity_result=identity)
-                    if current_complete: current_key = identity[0]
+                current_complete = self.cache.contains(source, mode, cancelled=cancelled)
         except Exception:
             pass  # Completion bookkeeping still releases the old foreground slot.
         with self.condition:
@@ -230,7 +183,6 @@ class EpisodePrefetcher:
                     self.current_complete = False  # This field describes HLS completeness.
                 else:
                     self.current_complete = current_complete
-                    if current_key is not None:self.window_keys.add(current_key)
                     selected, seen = [], set()
                     current_vid = next((vid for index, vid in self.latest_episodes if index == episode), None)
                     if current_vid:
@@ -270,11 +222,9 @@ class EpisodePrefetcher:
                 self.background_cancelled = threading.Event()
                 cancel = self.background_cancelled
                 source = self.sources[task[2]]
-                protected = set(self.window_keys)
             self._report()
-            failed, cancelled, window_full = False, False, False
+            failed, cancelled = False, False
             temporary = self.cache.root / ("stage-" + uuid.uuid4().hex)
-            stage_started = False
             try:
                 if not self.cache.available:
                     raise EncodingCancelled()
@@ -283,51 +233,36 @@ class EpisodePrefetcher:
                 if cancel.is_set():
                     raise EncodingCancelled()
                 mode = task[3]
-                identity_result = self.cache._identity(source, mode, cancel.is_set)
-                if not self.cache.contains(source, mode, cancelled=cancel.is_set, _identity_result=identity_result):
+                if not self.cache.contains(source, mode, cancelled=cancel.is_set):
                     extra = {"video_mode": "copy"} if mode == "copy" else {}
-                    if temporary.exists():
-                        raise ValueError("Prefetch stage already exists")
-                    stage_started = True
                     self.cache.encoder(source, temporary, cancelled=cancel.is_set, **extra)
                     (temporary / "owner.marker").write_text(OWNER, encoding="ascii")
-                    stored = self.cache.store(source, temporary, cancel.is_set, video_mode=mode, _identity_result=identity_result, protected=protected)
-                    if stored is None:raise OSError("Playable cache store unavailable")
+                    self.cache.store(source, temporary, cancel.is_set, video_mode=mode)
                 if cancel.is_set():
                     raise EncodingCancelled()
-                with self.condition:
-                    if task[0] == self.generation:self.window_keys.add(identity_result[0])
-            except CacheQuotaExceeded:
-                cancelled, window_full = True, True
             except EncodingCancelled:
                 cancelled = True
             except Exception:
                 failed = True
             finally:
                 try:
-                    if stage_started and temporary.exists():
+                    if temporary.exists():
                         if (temporary.parent != self.cache.root or not plain(temporary)
                                 or not re.fullmatch(r"stage-[0-9a-f]{32}", temporary.name)):
                             raise ValueError("Unsafe prefetch stage")
-                        # This nonce path was absent before our encoder call.
-                        # Its known outputs can be unlinked without allocating
-                        # a marker on a full disk; unknown content is retained.
-                        self.cache._remove_fresh_stage(temporary)
+                        (temporary / "owner.marker").write_text(OWNER, encoding="ascii")
+                        self.cache._remove_owned(temporary)
                 except (OSError, ValueError):
                     failed = True
                 with self.condition:
-                    if task[0] == self.generation and window_full:self.pending = []
                     if task[0] == self.generation and not cancelled:
                         if task[1] == self.current["episode"]:
                             self.current_complete = not failed
                             if failed:
-                                if task[1] not in self.failed:
-                                    self.failed.append(task[1])
+                                self.failed.append(task[1])
                                 self.pending = []
                         else:
-                            outcomes = self.failed if failed else self.completed
-                            if task[1] not in outcomes:
-                                outcomes.append(task[1])
+                            (self.failed if failed else self.completed).append(task[1])
                     self.active = None
                     self.busy = None
                     self.condition.notify_all()
@@ -335,13 +270,7 @@ class EpisodePrefetcher:
 
     def encode(self, *args, **kwargs):
         cancelled = kwargs.pop("cancelled", lambda: False)
-        key = []
-        result = self.cache.encode(*args, cancelled=lambda: self.closed or cancelled(), on_cache_key=key.append, **kwargs)
-        directory = Path(args[1] if len(args)>1 else kwargs['directory'])
-        with self.condition:
-            for identifier, target in self.foreground_directories.items():
-                if target == directory: self.cache_results[identifier] = (result, key[0] if key else None)
-        return result
+        return self.cache.encode(*args, cancelled=lambda: self.closed or cancelled(), **kwargs)
 
     def snapshot(self):
         with self.condition:
@@ -371,40 +300,19 @@ class EpisodePrefetcher:
     def _report(self):
         if self.status_path is None:
             return
-        with self.condition:
-            self.report_revision += 1
-            if self.reporter is None or not self.reporter.is_alive():
-                self.reporter = threading.Thread(target=self._write_reports, name="desktop-prefetch-report", daemon=True)
-                try:
-                    self.reporter.start()
-                except RuntimeError:
-                    self.reporter = None  # Diagnostics must not fail playback.
-            self.condition.notify_all()
-
-    def _write_reports(self):
-        # One writer coalesces requests; optional host I/O never occupies an
-        # encoder/downloader worker, and old snapshots cannot publish last.
-        handled = 0
-        while True:
+        try:
             with self.condition:
-                self.condition.wait_for(lambda: self.report_revision > handled)
-                revision = self.report_revision
                 generation = self.generation
-            try:
-                value = self.snapshot()
+            value = self.snapshot()  # Host I/O must not hold the report writer lock either.
+            with self.report_guard:
                 with self.condition:
-                    fresh = revision == self.report_revision and generation == self.generation
-                if fresh:
-                    temporary = self.status_path.with_suffix(".json.tmp")
-                    temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-                    os.replace(temporary, self.status_path)
-            except Exception:
-                pass
-            handled = revision
-            with self.condition:
-                if self.closed and handled == self.report_revision:
-                    self.reporter = None
-                    return
+                    if generation != self.generation:
+                        return  # Do not publish a diagnostic from an older episode.
+                temporary = self.status_path.with_suffix(".json.tmp")
+                temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+                os.replace(temporary, self.status_path)
+        except Exception:
+            pass
 
     def wait_idle(self, timeout=30):
         with self.condition:
@@ -424,6 +332,3 @@ class EpisodePrefetcher:
             self.worker.join(timeout=2)
         if self.downloader and self.downloader is not threading.current_thread():
             self.downloader.join(timeout=2)
-        reporter = self.reporter
-        if reporter and reporter is not threading.current_thread():
-            reporter.join(timeout=2)

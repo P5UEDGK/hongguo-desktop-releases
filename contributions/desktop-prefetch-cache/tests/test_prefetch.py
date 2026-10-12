@@ -4,7 +4,6 @@ from pathlib import Path
 import shutil
 import tempfile
 import threading
-import time
 import unittest
 from unittest.mock import patch
 import uuid
@@ -45,49 +44,6 @@ def encoder(source, directory, on_ready=lambda: None, *, cancelled=lambda: False
 
 
 class PrefetchTests(unittest.TestCase):
-    def test_finish_reuses_the_foreground_identity_without_rehashing(self):
-        with tempfile.TemporaryDirectory() as folder:
-            p=EpisodePrefetcher(lambda _:None,lambda _:({},metadata()),Path(folder)/'cache',encoder=lambda source,directory,on_ready,**kw:complete_output(directory),profile_files=PROFILE_FILES,ahead=0)
-            self.addCleanup(p.close)
-            job=Job('identity',Path(folder)/'out');job.video_mode='h264';job.failed=False
-            p.foreground[job.id]=p.generation;p.busy=job.id;p.current={'seriesId':SERIES,'episode':1};p.latest_episodes=[]
-            p.foreground_directories[job.id]=Path(folder)/'out'
-            source=Path(folder)/'source.mp4';source.write_bytes(b'owned source')
-            self.assertTrue(p.encode(source,p.foreground_directories[job.id]))
-            with patch.object(p.cache,'_identity',side_effect=AssertionError('source rehashed in finish')) as identity:
-                p.finish(job,SERIES,1,source)
-                identity.assert_not_called()
-            self.assertTrue(p.current_complete);self.assertTrue(p.window_keys);self.assertIsNone(p.busy)
-
-
-    def test_stale_download_active_is_reported_after_generation_changes(self):
-        reports=[];value=self.make(ahead=0)
-        with value.condition:value.download_pending=[(value.generation,2,'10000002')]
-        def report():
-            reports.append(value.snapshot())
-            if len(reports)==1:
-                with value.condition:value.generation+=1
-            elif len(reports)==2:
-                with value.condition:value.closed=True;value.condition.notify_all()
-        value._report=report
-        worker=threading.Thread(target=value._download,daemon=True);worker.start()
-        for _ in range(100):
-            if len(reports)>1:break
-            time.sleep(.001)
-        with value.condition:value.closed=True;value.condition.notify_all()
-        worker.join(1)
-        self.assertGreaterEqual(len(reports),2)
-        self.assertIsNone(reports[-1]['downloadActiveEpisode'])
-
-    def test_oversized_future_episode_does_not_drop_smaller_later_episode(self):
-        encoded=[]
-        def varied(source,directory,on_ready=lambda:None,**kw):
-            encoded.append(Path(source).stem);complete_output(directory,b'x'*(128*1024) if Path(source).stem=='10000002' else b'small');on_ready()
-        value=self.make(encode=varied,ahead=2,quota_bytes=100*1024);self.complete(value,1)
-        self.assertTrue(value.wait_idle(3));self.assertEqual(encoded,['10000001','10000002','10000003'])
-        self.assertEqual(value.snapshot()['failedEpisodes'],[2]);self.assertEqual(value.snapshot()['completedEpisodes'],[3])
-        self.assertTrue(value.cache.contains(self.sources['10000001']));self.assertTrue(value.cache.contains(self.sources['10000003']))
-
     def test_close_cancels_running_foreground_encoder(self):
         entered=threading.Event();finished=threading.Event()
         def blocking(source,directory,on_ready=lambda:None,*,cancelled,**kwargs):
@@ -203,17 +159,7 @@ class PrefetchTests(unittest.TestCase):
         self.complete(value, 2)
         self.assertTrue(value.wait_idle(3))
         value._report()
-        deadline = time.monotonic() + 2
-        while True:
-            try:
-                snapshot = json.loads((self.root / "status.json").read_text())
-                if snapshot["completedEpisodes"] == [4, 5]:
-                    break
-            except (OSError, ValueError):
-                pass
-            if time.monotonic() >= deadline:
-                self.fail('latest diagnostic was not published')
-            time.sleep(.01)
+        snapshot = json.loads((self.root / "status.json").read_text())
         self.assertEqual(snapshot["failedEpisodes"], [3])
         self.assertEqual(snapshot["completedEpisodes"], [4, 5])
         self.assertNotIn("private", (self.root / "status.json").read_text())
@@ -361,16 +307,6 @@ class PrefetchTests(unittest.TestCase):
 
 
 class PlayableCacheTests(unittest.TestCase):
-    def test_invalid_mode_is_rejected_even_when_cache_is_unavailable(self):
-        from unittest.mock import Mock
-        for available in (False,True):
-            self.cache.available=available
-            for mode in ('native','typo',None):
-                self.cache.encoder=Mock()
-                with self.subTest(available=available,mode=mode),self.assertRaises(ValueError):
-                    self.cache.encode(self.source,self.root/'invalid-mode-output',video_mode=mode)
-                self.cache.encoder.assert_not_called()
-
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
@@ -380,29 +316,6 @@ class PlayableCacheTests(unittest.TestCase):
         self.cache = PlayableEpisodeCache(self.root / "cache", encoder=encoder, profile_files=PROFILE_FILES)
         self.output = self.root / "original-output"
         complete_output(self.output)
-
-    def test_lru_cancellation_after_destructive_commit_keeps_valid_result(self):
-        for cancel_after in ('file','directory'):
-            with self.subTest(cancel_after=cancel_after):
-                self.cache.quota_bytes=512*1024
-                first=self.cache.store(self.source,self.output)
-                other=self.root/('other-'+cancel_after+'.mp4');other.write_bytes(cancel_after.encode())
-                first_bytes=sum(p.stat().st_size for p in first.iterdir())
-                output_bytes=sum(p.stat().st_size for p in self.output.iterdir())
-                self.cache.quota_bytes=first_bytes+output_bytes+65536-1
-                cancelled=threading.Event();unlink=Path.unlink;rmdir=Path.rmdir
-                def remove_file(path,*a,**kw):
-                    result=unlink(path,*a,**kw)
-                    if path.parent==first and cancel_after=='file':cancelled.set()
-                    return result
-                def remove_dir(path,*a,**kw):
-                    result=rmdir(path,*a,**kw)
-                    if path==first and cancel_after=='directory':cancelled.set()
-                    return result
-                with patch.object(Path,'unlink',remove_file),patch.object(Path,'rmdir',remove_dir):
-                    result=self.cache.store(other,self.output,cancelled.is_set)
-                self.assertTrue(cancelled.is_set());self.assertTrue(result.is_dir());self.assertTrue(self.cache.contains(other))
-                self.cache._remove_owned(result)
 
     def test_incomplete_and_corrupted_cache_are_not_hits(self):
         artifact = self.cache.store(self.source, self.output)

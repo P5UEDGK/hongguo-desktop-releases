@@ -21,17 +21,10 @@ prefetch = EpisodePrefetcher(
     source_status=source_progress,  # 渐进源模块的共享状态回调
 
 )
-# 现有 HlsJobs 保留默认source_loader=prefetch.load_source、encoder=prefetch.encode；
-# worker必须优先使用begin绑定到job.source_loader的加载器。
+# 现有 HlsJobs 使用：source_loader=prefetch.load_source，encoder=prefetch.encode
 ```
 
-在创建 job 后、启动线程前调用 `prefetch.begin(job, series_id, episode)`。worker 的 try 内先执行下方绑定调用，再做 duration/seek 和播放模式选择。`begin` 会将当前 job 的取消与代际令牌绑定到 `job.source_loader`；不能用无 job 的默认加载器替代。
-
-```python
-source = job.source_loader(series_id, episode)
-```
-
-原生播放直接启动 native，不占编码槽；只有 HLS 编码前才调用 `prefetch.before_work(job)`，然后 `prefetch.encode(...)`。源下载不得占住编码槽，过期请求返回后先重查 job.cancelled 和代际。worker 的 finally 必须在所有成功、异常、取消路径调用 `prefetch.finish(job, series_id, episode, source_or_none)`；失败/取消标志须先写入 job。
+在创建 job 后、启动线程前调用 `prefetch.begin(job, series_id, episode)`。worker 的 try 内先 `prefetch.load_source(...)`，再做 duration/seek 和播放模式选择。原生播放直接启动 native，不占编码槽；只有 HLS 编码前才调用 `prefetch.before_work(job)`，然后 `prefetch.encode(...)`。源下载不得占住编码槽，过期请求返回后先重查 job.cancelled 和代际。worker 的 finally 必须在所有成功、异常、取消路径调用 `prefetch.finish(job, series_id, episode, source_or_none)`；失败/取消标志须先写入 job。
 
 若 Thread.start 或 begin 抛异常：设置 job.failed=True，调用 finish（source=None），移除未启动 job 并重新抛出；不得留下 foreground 占位。finish 的可选账本错误不得覆盖宿主主错误。应用关闭调用 prefetch.close；原片 loader 中已开始的请求不强杀，依赖宿主超时退出。
 

@@ -14,9 +14,6 @@ from desktop_hls import EncodingCancelled
 
 OWNER = "desktop-playable-cache-v1"
 
-class CacheQuotaExceeded(OSError):
-    pass
-
 
 def plain(path):
     try:
@@ -48,12 +45,9 @@ class PlayableEpisodeCache:
         profile_files = tuple(profile_files) if profile_files is not None else (
             module / name for name in ("desktop_hls.py", "desktop_hls_budget.py", "desktop_codec.py")
             if name != "desktop_codec.py" or (module / name).is_file())
-        digest = hashlib.sha256(b"playable-hls-full-v2")
-        for path in profile_files:
-            path = Path(path);name = path.name.encode("utf8");data = path.read_bytes()
-            digest.update(len(name).to_bytes(4,"big"));digest.update(name)
-            digest.update(len(data).to_bytes(8,"big"));digest.update(data)
-        self.profile = digest.hexdigest()
+        self.profile = hashlib.sha256(b"playable-hls-full-v1" + b"".join(
+            Path(path).read_bytes() for path in profile_files
+        )).hexdigest()
 
     def _identity(self, source, video_mode="h264", cancelled=lambda: False):
         if cancelled():
@@ -92,32 +86,6 @@ class PlayableEpisodeCache:
                 digest.update(block)
         return digest.hexdigest()
 
-    def _remove_fresh_stage(self, directory):
-        """Only for the caller's newly allocated encoder nonce, never quota scans."""
-        if (directory.parent.resolve() != self.root or not plain(self.root)
-                or not plain(directory) or not directory.is_dir()
-                or not re.fullmatch(r'stage-[0-9a-f]{32}', directory.name)):
-            raise ValueError('Unsafe fresh encoder stage')
-        files = list(directory.iterdir())
-        if any(not plain(file) or not file.is_file() or not (
-                file.name in {'init.mp4','index.m3u8','index.m3u8.tmp','complete.marker','owner.marker'}
-                or re.fullmatch(r'seg[0-9]{6}\.m4s', file.name)) for file in files):
-            raise ValueError('Unknown fresh encoder stage content')
-        for file in sorted(files, key=lambda file: file.name == "owner.marker"):
-            file.unlink()
-        self._rmdir_with_owner(directory)
-
-    @staticmethod
-    def _rmdir_with_owner(directory):
-        owner = directory / "owner.marker"
-        try:
-            directory.rmdir()
-        except OSError:
-            if plain(directory) and directory.is_dir() and not owner.exists():
-                with owner.open("x", encoding="ascii") as stream:
-                    stream.write(OWNER)
-            raise
-
     @staticmethod
     def _copy(source, destination, cancelled=lambda: False):
         with source.open("rb") as reader, destination.open("wb") as writer:
@@ -145,15 +113,7 @@ class PlayableEpisodeCache:
         lines = text.splitlines()
         if not lines or lines[0] != "#EXTM3U":
             raise ValueError("Artifact playlist header is invalid")
-        types = [line for line in lines if line.startswith('#EXT-X-PLAYLIST-TYPE')]
-        if len(types)>1 or types and types[0] not in ('#EXT-X-PLAYLIST-TYPE:EVENT','#EXT-X-PLAYLIST-TYPE:VOD'):
-            raise ValueError("Invalid artifact playlist type")
         parameters = {}
-        sequences = [line for line in lines if line.startswith('#EXT-X-MEDIA-SEQUENCE')]
-        if (len(sequences) > 1 or sequences and
-                (not re.fullmatch(r'#EXT-X-MEDIA-SEQUENCE:[0-9]{1,20}', sequences[0])
-                 or int(sequences[0].split(':', 1)[1]) > 2**64 - 1)):
-            raise ValueError("Invalid artifact media sequence")
         for tag, minimum in (("TARGETDURATION", 1), ("VERSION", 6)):
             prefix = "#EXT-X-" + tag + ":"
             values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
@@ -165,20 +125,8 @@ class PlayableEpisodeCache:
         if "#EXT-X-ENDLIST" not in lines:
             raise ValueError("Artifact playlist is incomplete")
         mapped, ended, segments, pending = False, False, [], None
-        supported_tags={'#EXTM3U','#EXTINF','#EXT-X-VERSION','#EXT-X-TARGETDURATION',
-                        '#EXT-X-MEDIA-SEQUENCE','#EXT-X-PLAYLIST-TYPE','#EXT-X-MAP',
-                        '#EXT-X-ENDLIST','#EXT-X-INDEPENDENT-SEGMENTS'}
         for line in lines:
-            if line.startswith('#EXT') and line.split(':',1)[0] not in supported_tags:
-                raise ValueError('Unsupported local artifact HLS tag')
-            if line.startswith(('#EXT-X-STREAM-INF', '#EXT-X-I-FRAME-STREAM-INF',
-                                '#EXT-X-MEDIA:', '#EXT-X-SESSION-DATA', '#EXT-X-SESSION-KEY', '#EXT-X-CONTENT-STEERING')):
-                raise ValueError("Master playlist tag in local media artifact")
-            if line.startswith(('#EXT-X-DISCONTINUITY', '#EXT-X-START')):
-                raise ValueError("Unsupported local artifact timeline")
-            if line.startswith('#EXT-X-MEDIA-SEQUENCE') and segments:
-                raise ValueError("Late artifact media sequence")
-            if line.startswith(("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY", "#EXT-X-SKIP", "#EXT-X-PART", "#EXT-X-PRELOAD-HINT", "#EXT-X-RENDITION-REPORT")) or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
+            if line in ("#EXT-X-GAP", "#EXT-X-I-FRAMES-ONLY") or line.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:", "#EXT-X-BYTERANGE:")):
                 raise ValueError("Unsupported local artifact HLS tag")
             if line.startswith("#EXT-X-MAP:"):
                 if line != '#EXT-X-MAP:URI="init.mp4"':
@@ -203,7 +151,7 @@ class PlayableEpisodeCache:
                 segments.append(line)
                 pending = None
         if pending is not None or not segments or len(set(segments)) != len(segments) or any(
-                name != f"seg{index:06d}.m4s" for index,name in enumerate(segments)):
+                not re.fullmatch(r"seg[0-9]{6}\.m4s", name) for name in segments):
             raise ValueError("Invalid artifact segment names")
         # The marker is the commit signal, including when restoring a session.
         names = ["index.m3u8", "init.mp4", *segments, "complete.marker"]
@@ -213,11 +161,11 @@ class PlayableEpisodeCache:
                 raise ValueError("Artifact fragment is unavailable")
         return names
 
-    def _validated(self, source, video_mode="h264", cancelled=lambda: False, identity_result=None):
+    def _validated(self, source, video_mode="h264", cancelled=lambda: False):
         if not self.available:
             return None
         try:
-            key, identity = identity_result or self._identity(source, video_mode, cancelled)
+            key, identity = self._identity(source, video_mode, cancelled)
             directory = self.root / key
             manifest_path = directory / "cache.json"
             if not plain(directory) or not plain(manifest_path):
@@ -241,13 +189,13 @@ class PlayableEpisodeCache:
         except Exception:
             return None
 
-    def contains(self, source, video_mode="h264", *, cancelled=lambda: False, _identity_result=None):
+    def contains(self, source, video_mode="h264", *, cancelled=lambda: False):
         with self.guard:
-            return self._validated(source, video_mode, cancelled, _identity_result) is not None
+            return self._validated(source, video_mode, cancelled) is not None
 
-    def restore(self, source, directory, cancelled=lambda: False, *, video_mode="h264", _identity_result=None):
+    def restore(self, source, directory, cancelled=lambda: False, *, video_mode="h264"):
         with self.guard:
-            artifact = self._validated(source, video_mode, cancelled, _identity_result)
+            artifact = self._validated(source, video_mode, cancelled)
             if artifact is None:
                 return False
             cached, names = artifact
@@ -270,22 +218,9 @@ class PlayableEpisodeCache:
                     raise EncodingCancelled()
                 return True
             except BaseException:
-                # Revoke the commit signal before removing any referenced data.
-                # Preserve the original failure and continue past cleanup errors.
-                marker_removed = True
-                for path in reversed(created):
-                    if not marker_removed:
-                        break  # Leave intact data if the commit signal is locked.
-                    try:
-                        path.unlink(missing_ok=True)
-                    except OSError:
-                        if path.name == "complete.marker":
-                            marker_removed = False
-                if marker_removed:
-                    try:
-                        directory.rmdir()
-                    except OSError:
-                        pass
+                for path in created:
+                    path.unlink(missing_ok=True)
+                directory.rmdir()
                 raise
 
     def _owned_children(self, directory):
@@ -313,15 +248,21 @@ class PlayableEpisodeCache:
             raise EncodingCancelled()
         # Keep proof of ownership through every cancellable/fallible file removal.
         owner.unlink()
-        self._rmdir_with_owner(directory)
+        try:
+            directory.rmdir()
+        except OSError:
+            if plain(directory) and directory.is_dir() and not owner.exists():
+                with owner.open("x", encoding="ascii") as stream:
+                    stream.write(OWNER)
+            raise
 
-    def _reserve(self, needed, *, replacing=None, cancelled=lambda: False, protected=()):
+    def _reserve(self, needed, *, replacing=None, cancelled=lambda: False):
         if cancelled():
             raise EncodingCancelled()
         if not self.available:
             raise OSError("Playable cache is unavailable")
         if not 0 <= needed <= self.quota_bytes:
-            raise CacheQuotaExceeded("Playable cache reservation cannot fit")
+            raise OSError("Playable cache reservation cannot fit")
         if replacing is not None:
             self._owned_children(replacing)
         entries = []
@@ -360,37 +301,30 @@ class PlayableEpisodeCache:
                         modified = (directory / "cache.json").stat().st_mtime_ns
                     except FileNotFoundError:
                         modified = directory.stat().st_mtime_ns
-                    if directory.name not in protected:entries.append((modified, directory, size))
+                    entries.append((modified, directory, size))
             except (OSError, UnicodeError):
                 continue
         if total + needed - sum(size for _, _, size in entries) > self.quota_bytes:
-            raise CacheQuotaExceeded("Playable cache reservation cannot fit")
-        committing = False
+            raise OSError("Playable cache reservation cannot fit")
         for _, directory, size in sorted(entries):
-            if not committing and cancelled():
+            if cancelled():
                 raise EncodingCancelled()
             if total + needed <= self.quota_bytes:
-                return committing
-            # The first victim removal starts the store transaction. From here
-            # finish eviction and publication even if the caller is cancelled.
-            committing = True
-            self._remove_owned(directory)
+                return
+            self._remove_owned(directory, cancelled)
             total -= size
         if total + needed > self.quota_bytes:
-            raise CacheQuotaExceeded("Playable cache budget is exhausted")
-        return committing
+            raise OSError("Playable cache budget is exhausted")
 
-    def store(self, source, directory, cancelled=lambda: False, *, video_mode="h264", _identity_result=None, protected=()):
+    def store(self, source, directory, cancelled=lambda: False, *, video_mode="h264"):
         if cancelled():
             raise EncodingCancelled()
         if not self.available:
             return None
         with self.guard:
-            key, identity = _identity_result or self._identity(source, video_mode, cancelled)
+            key, identity = self._identity(source, video_mode, cancelled)
             names = self._media_files(Path(directory))
             directory = Path(directory)
-            if sum((directory / name).stat().st_size for name in names) + 65536 > self.quota_bytes:
-                raise ValueError("Playable artifact exceeds cache quota")
             adopt = (directory.parent == self.root
                      and re.fullmatch(r"stage-[0-9a-f]{32}", directory.name)
                      and plain(directory)
@@ -404,16 +338,7 @@ class PlayableEpisodeCache:
             stage = directory if adopt else self.root / ("stage-" + uuid.uuid4().hex)
             if not adopt:
                 stage.mkdir()
-                try:
-                    (stage / "owner.marker").write_text(OWNER, encoding="ascii")
-                except OSError:
-                    # Only this fresh directory and its partial marker are ours.
-                    # Never recurse into unexpected content without ownership proof.
-                    owner = stage / "owner.marker"
-                    if plain(owner) and owner.is_file():
-                        owner.unlink()
-                    stage.rmdir()
-                    raise
+                (stage / "owner.marker").write_text(OWNER, encoding="ascii")
             try:
                 files = {}
                 for name in names:
@@ -430,63 +355,48 @@ class PlayableEpisodeCache:
                 if cancelled():
                     raise EncodingCancelled()
                 target = self.root / key
-                target_present = os.path.lexists(target)
-                if target_present:
+                if target.exists():
                     self._owned_children(target)  # Protect unrelated LRU before reservation.
                 # Stage bytes are already counted. Evict only at commit, after
                 # all cancellable copying/hashing and manifest construction.
                 metadata_bytes = sum((stage / name).stat().st_size for name in ("owner.marker", "cache.json"))
-                committing = self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target_present else None,
-                                           cancelled=cancelled, protected=protected)
-                if not committing and cancelled():
+                self._reserve(max(0, 65536 - metadata_bytes), replacing=target if target.exists() else None,
+                              cancelled=cancelled)
+                if cancelled():
                     raise EncodingCancelled()
-                # Once destructive replacement starts, finish this commit even
-                # if the episode generation changes during removal.
-                if target_present:
-                    self._remove_owned(target)
+                if target.exists():
+                    self._remove_owned(target, cancelled)
+                if cancelled():
+                    raise EncodingCancelled()
                 os.replace(stage, target)
                 return target
             finally:
                 if stage.exists():
-                    try:self._remove_owned(stage)
-                    except OSError:
-                        if cancelled():raise EncodingCancelled()
-                        raise
+                    self._remove_owned(stage)
 
     def encode(self, source, directory, on_ready=lambda: None, *, cancelled=lambda: False,
-               start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264", on_cache_key=lambda key: None):
-        if video_mode not in ("h264", "copy"):raise ValueError("Invalid cache video mode")
-        restored, identity_result = False, None
-        try:
-            if self.available:
-                identity_result = self._identity(source, video_mode, cancelled)
-                restored = self.restore(source, directory, cancelled, video_mode=video_mode,
-                                        _identity_result=identity_result)
-        except EncodingCancelled:
-            raise
-        except Exception:
-            if os.path.lexists(directory):raise
-        if restored:
-            if cancelled():raise EncodingCancelled()
-            if start_seconds: on_window(0, None)  # Full artifact; host keeps its source duration.
-            if cancelled():raise EncodingCancelled()
-            on_ready()
-            on_cache_key(identity_result[0])
-            return True
+               start_seconds=0, on_window=lambda origin, duration: None, video_mode="h264"):
+        if not start_seconds:
+            restored = False
+            try:
+                restored = self.restore(source, directory, cancelled, video_mode=video_mode)
+            except EncodingCancelled:
+                raise
+            except Exception:
+                pass
+            if restored:
+                on_ready()
+                return
         if start_seconds:
             extra = {"video_mode": "copy"} if video_mode == "copy" else {}
             self.encoder(source, directory, on_ready, cancelled=cancelled,
                          start_seconds=start_seconds, on_window=on_window, **extra)
-            return False
-        extra = {"video_mode": "copy"} if video_mode == "copy" else {}
-        self.encoder(source, directory, on_ready, cancelled=cancelled, **extra)
-        try:
-            cached = identity_result is not None and self.store(source, directory, cancelled, video_mode=video_mode,
-                                                               _identity_result=identity_result) is not None
-            if cancelled():raise EncodingCancelled()
-            if cached: on_cache_key(identity_result[0])
-            return cached
-        except EncodingCancelled:
-            raise
-        except Exception:
-            return False
+        else:
+            extra = {"video_mode": "copy"} if video_mode == "copy" else {}
+            self.encoder(source, directory, on_ready, cancelled=cancelled, **extra)
+            try:
+                self.store(source, directory, cancelled, video_mode=video_mode)
+            except EncodingCancelled:
+                raise
+            except Exception:
+                pass
