@@ -65,7 +65,7 @@
                      self.busy = job.id
                      if getattr(job, "directory", None) is not None:
                          self.foreground_directories[job.id] = Path(job.directory)
-@@ -103,7 +123,7 @@
+@@ -103,10 +123,10 @@
          except Exception:
              return False  # Optional status cannot invalidate an acquired source.
  
@@ -73,17 +73,29 @@
 +    def load_source(self, series_id, episode, *, job=None, prepared_source=None):
          with self.condition:
              if (self.closed or self.current != {"seriesId": str(series_id), "episode": episode}
-                     or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation)):
-@@ -119,7 +139,7 @@
-                     or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation)
+-                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation)):
++                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != self.generation and getattr(job,"_prefetch_metadata_generation",None) != self.generation)):
+                 raise EncodingCancelled()
+             generation = self.generation
+         _, metadata = self.episode_loader(series_id)
+@@ -116,13 +136,13 @@
+             raise ValueError("Episode media identity unavailable")
+         with self.condition:
+             if (generation != self.generation or self.closed
+-                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation)
++                    or job is not None and (job.cancelled.is_set() or self.foreground.get(job.id) != generation and getattr(job,"_prefetch_metadata_generation",None) != generation)
                      or self.current != {"seriesId": str(series_id), "episode": episode}):
                  raise EncodingCancelled()
 -        source = self.source_loader(vid)
 +        source = prepared_source if prepared_source is not None else self.source_loader(vid)
          with self.condition:
              if (generation == self.generation and not self.closed
-                     and (job is None or not job.cancelled.is_set() and self.foreground.get(job.id) == generation)
-@@ -147,6 +167,98 @@
+-                    and (job is None or not job.cancelled.is_set() and self.foreground.get(job.id) == generation)
++                    and (job is None or not job.cancelled.is_set() and (self.foreground.get(job.id) == generation or getattr(job,"_prefetch_metadata_generation",None) == generation))
+                     and self.current == {"seriesId": str(series_id), "episode": episode}):
+                 self.latest_episodes = items
+                 self.sources[vid] = source
+@@ -147,6 +167,100 @@
          self._report()
          return source
  
@@ -151,6 +163,7 @@
 +    def _load_promoted(self, job, series_id, episode, generation):
 +        with self.condition:
 +            invalid = self.closed or job.cancelled.is_set() or generation != self.generation
++            if not invalid: job._prefetch_metadata_generation = generation
 +            finish_cancelled = invalid and (getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native")
 +            if invalid and finish_cancelled and self.foreground.get(job.id) == generation:
 +                self.foreground.pop(job.id, None)
@@ -171,6 +184,7 @@
 +            # Activation must retain its existing encoding slot until the
 +            # actual worker finishes. If it finished during metadata loading,
 +            # refresh bookkeeping now that the episode list is available.
++            job._prefetch_metadata_generation = None
 +            finish_now = getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native"
 +            if finish_now and generation == self.generation:
 +                self.foreground[job.id] = generation
@@ -182,7 +196,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -181,6 +293,8 @@
+@@ -181,6 +295,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -191,7 +205,7 @@
              expected = self.foreground.get(job.id)
              cached_result = self.cache_results.pop(job.id, None)
              self.foreground_directories.pop(job.id, None)
-@@ -202,6 +316,9 @@
+@@ -202,6 +318,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -201,7 +215,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -355,6 +472,7 @@
+@@ -355,6 +474,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

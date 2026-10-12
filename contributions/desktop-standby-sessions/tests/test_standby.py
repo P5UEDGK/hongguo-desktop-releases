@@ -20,6 +20,17 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_promoted_metadata_survives_encoder_finishing_during_load(self):
+        source=self.root/'promoted.mp4';source.write_bytes(b'owned')
+        job=SimpleNamespace(id='a'*32,cancelled=threading.Event(),failed=False,video_mode='h264',source=source,directory=self.root)
+        def metadata(_):
+            p.finish(job,'1234567890123456',2,source)
+            return {},[{'index':2,'vid':'123456780002'},{'index':3,'vid':'123456780003'}]
+        p=EpisodePrefetcher(lambda _:source,metadata,self.root/'metadata-race',encoder=lambda *_:None,ahead=0);self.addCleanup(p.close)
+        p.begin(job,'1234567890123456',2);p._load_promoted(job,'1234567890123456',2,p.generation)
+        self.assertIs(p.current_source,source);self.assertEqual(p.latest_episodes,[(2,'123456780002'),(3,'123456780003')]);self.assertNotIn(job.id,p.foreground)
+
+
     def test_healthy_prefetch_owner_may_take_more_than_fifteen_seconds(self):
         from unittest.mock import patch
         vid='123456780002';source=object();clock=[0];waits=[]

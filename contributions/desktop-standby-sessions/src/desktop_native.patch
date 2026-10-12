@@ -118,7 +118,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -645,6 +724,7 @@
+@@ -646,6 +725,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
