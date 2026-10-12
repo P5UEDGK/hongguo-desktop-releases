@@ -146,5 +146,12 @@ try:
             positioned.apply(player);assert not positioned.failed and float(player.get('secondary-sub-pos'))==75
         positioned.close(player)
         assert float(player.get('sub-pos'))==75 and float(player.get('secondary-sub-pos'))==15
-        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, simultaneous caption/option switch, repeated secondary-position polls and subtitle restoration and sub-speed timing; no pixel or Win32 claim'}))
+        player.command('set','sid','no');player.command('set','secondary-sid',replacement)
+        nonpromoted=DanmakuTrack();nonpromoted.update({'danmaku':[{'text':'secondary clear before primary switch','offset_ms':0,'lane':0}]});nonpromoted.apply(player)
+        assert not nonpromoted.failed and not nonpromoted.promoted
+        player.command('set','secondary-sid','no');nonpromoted.apply(player)
+        player.command('set','sid',secondary);nonpromoted.apply(player)
+        assert not nonpromoted.failed and player.get('secondary-sid')==secondary
+        nonpromoted.close(player);assert player.get('sid')==secondary and player.get('secondary-sid')=='no'
+        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, simultaneous caption/option switch, repeated secondary-position polls, nonpromoted secondary clear/primary switch and subtitle restoration and sub-speed timing; no pixel or Win32 claim'}))
 finally:player.close()

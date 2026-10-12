@@ -102,7 +102,7 @@ class DanmakuTrack:
                 raise RuntimeError('Both subtitle slots are in use')
             if self.promoted and str(secondary) == str(self.saved[0]):
                 player.command('set', 'secondary-sid', self.saved[1])
-            self.saved = (live, self.saved[1], self.saved[2])
+            self.saved = (live, player.get('secondary-sid') or 'no', self.saved[2])
             self.promoted = False
             if not self.modified_options:self.capture_options(player)
             player.command('set', 'sid', self.track_id)

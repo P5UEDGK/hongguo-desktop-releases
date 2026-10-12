@@ -27,4 +27,4 @@
 +    updateDanmaku();
      layout();
    }
-   async function poll(ownGeneration) {
+   let pollFailures=0;

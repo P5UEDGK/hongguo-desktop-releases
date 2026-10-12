@@ -19,6 +19,20 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_nonpromoted_caption_switch_preserves_cleared_secondary(self):
+        p=Player();p.properties.update({'sid':'no','secondary-sid':'7'})
+        track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        p.command('set','secondary-sid','no');track.apply(p)
+        p.command('set','sid','8');track.apply(p);self.assertFalse(track.failed)
+        track.close(p);self.assertEqual(p.get('sid'),'8');self.assertEqual(p.get('secondary-sid'),'no')
+
+    def test_quantized_zero_duration_rows_cannot_consume_ass_budget(self):
+        group={'color':(255,255,255),'alpha':1,'paths':[[(0,0),(1,0),(1,1)]]}
+        p=Player();track=DanmakuTrack(assets={'[x]':{'drawing':[group]*7,'resolution':1}})
+        rows=[{'text':'[x]','offset_ms':0,'motion_start_ms':-3999,'lane':0} for _ in range(293)]+[{'text':'visible late row','offset_ms':10000,'lane':0}]
+        track.update({'danmaku':rows,'danmakuSettings':dict(DEFAULT_SETTINGS,duration=4)});track.apply(p)
+        self.assertFalse(track.failed);self.assertEqual(track.document.count('Dialogue:'),1);self.assertTrue(track.snapshot(10)['danmakuVisible']);track.close(p)
+
     def test_promoted_secondary_position_survives_repeated_polls_and_restores(self):
         p=Player();p.properties.update({'sid':'7','sub-pos':'90','secondary-sub-pos':'15'})
         track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)

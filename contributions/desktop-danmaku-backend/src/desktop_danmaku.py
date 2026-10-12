@@ -73,7 +73,7 @@ def ass_document(items, settings=None, *, assets=None, subtitle_speed=1, on_emit
             continue
         origin = row.get('motion_start_ms', row['offset_ms'])
         start, end = max(0, origin), origin + duration * 1000
-        if end <= start:
+        if round(end / subtitle_speed / 10) <= round(start / subtitle_speed / 10):
             continue
         # ASS syntax cannot be supplied by comment text. Fullwidth equivalents
         # preserve readability, including literal backslashes and braces.

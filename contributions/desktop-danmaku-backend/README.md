@@ -8,9 +8,9 @@
 
 ## 接入与行为
 
-将 src 的两个模块加入后端 import 路径，依次应用 patches/native-danmaku.patch、patches/native-events.patch。补丁基于公开 #204 的 desktop_native.py/frontend-native.js；集成到私有源码时按同名契约接线，先检查上下文。
+唯一补丁基线：#204 `d83728b9378dde1d9897d8ca936198c452550daa`。按下列顺序应用本包与 #210 的四份桥补丁，并执行 `git apply --check`。
 
-补丁已重定位到 #204 的 `c7bfbc2`，保留播放器复用、持续丢帧检测和播放意图追踪。随后可应用 #210 的原生布局补丁；应用前仍应执行 `git apply --check`，不要用旧播放器文件覆盖新修复。
+将 src 的两个模块加入后端 import 路径，依次应用 patches/native-danmaku.patch、patches/native-events.patch。补丁基于公开 #204 的 desktop_native.py/frontend-native.js；集成到私有源码时按同名契约接线，先检查上下文。
 
 DanmakuTrack 只在日程/设置变化时创建有绝对视频时间的 ASS 轨道。普通 time-pos 轮询不清空或重建；libass 在视频呈现时钟上移动字幕，因此暂停冻结、seek 与倍速跟随原播放器。替换时先 add/select 新轨道，再 remove 本包拥有的旧轨道，不移除其他轨道。MPV_EVENT_FILE_LOADED(8) 后重新加载。
 
@@ -50,8 +50,6 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 
 无Dialogue事件的ASS作为空日程处理，不选择空字幕轨；已有owned轨会按原清理流程移除并恢复原字幕。14项Python与真实libmpv的原字幕保留/恢复通过，旧空日程回归失败。所用libmpv及[当前手册](https://mpv.io/manual/stable/#options-secondary-sub-ass-override)支持secondary-sub-ass-override的no/yes/scale/force/strip枚举，实际scale设置与恢复成功；不按旧版布尔限制改写当前枚举。
 
-原生内核和事件补丁同步 6223e50a7f470065f6cbd5d4dc520690c2e8e516。弹幕更新保留在命令循环内，暂停、音频、seek和解除暂停仍按原生owner的新顺序执行；四份社交补丁精确组合、校验函数和Node桥接回归通过。本机安装待完成。
-
 
 ## 本轮二次反馈修复
 
@@ -59,8 +57,6 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 
 
 ## 本轮三次反馈修复
-
-关闭弹幕先恢复字幕并清理当前轨道，再重试旧的待移除ID，旧ID清理失败不能挡住关闭。保存主/副字幕可见性，弹幕占用的主槽设为可见，提升的字幕沿用原可见状态，关闭后恢复。两个旧回放失败；当前22项与实际libmpv检查通过。原生事件补丁对齐 #204 c7bfbc2ea269af4013ab971467d9ef68dc207b9a。
 
 本机候选与安装仍待完成。
 
@@ -82,8 +78,6 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 
 2026-10-12 第十八轮复核：4243346915/6920：清除失败后重新获取用户字幕选项；按live sub-speed补偿ASS时间并保留用户字幕设置。 ASS总事件预算为2048，相邻非资源表情按普通文本合并。
 
-2026-10-12 第二十一轮复核：4243494524：捕获用户运行期字幕选项变更供还原，并在干净返回前重新应用弹幕的中性选项；同步native补丁基线。 四份桥接补丁已按当前#204 3b1890dea4037576ec53e97e97962d29a4559115 组合核验。
-
 2026-10-12 第二十二轮复核：同步原生桥接依赖并保留字幕与弹幕事件接线。 4243648186/8189：运行期sub-pos同步至提升字幕；清空提升字幕时立即归还secondary槽位选项。
 
 2026-10-12 第二十三轮复核：同步native输入目标重定向后的社交桥接补丁基线。
@@ -94,4 +88,6 @@ pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/ver
 
 2026-10-12 第二十七轮复核：4243921456/1462：提升字幕位置编辑跨连续poll保留；仅为实际生成ASS事件的行记录visibility。
 
-验证：413项融合后端无跳过、34套播放器前端、260项公开备用组合（1项可选片源跳过）、88项浏览器及真实libmpv字幕位置编辑通过。8项冻结前版反例失败、当前通过；Windows autocrlf实际克隆后的补丁应用通过。候选Tauri原生/HLS播放、裁剪、暂停和退出释放通过。暂停预加载和评论代码未变，复用上一轮通过证据。本机安装验收随后执行，上游尚未合并发布。
+2026-10-12 第二十九轮复核：4244058040/8044/8047：非promoted切字幕同步live secondary；ASS按厘秒量化拒绝零时长；README只保留唯一精确native基线。
+
+验证：424项融合后端无跳过、37套播放器前端、267项公开备用组合（1项可选片源跳过）、88项浏览器及真实libmpv字幕位置编辑通过。8项冻结前版反例失败、当前通过；Windows autocrlf实际克隆后的补丁应用通过。评论7组、暂停预加载136项公开组合通过；片源预加载owner未变，复用第28轮16项真实延迟片源检查。候选Tauri原生/HLS播放、裁剪、暂停和退出释放通过。评论及浏览器组件未变，复用第28轮7组评论和88项浏览器证据。本机安装验收随后执行，上游尚未合并发布。
