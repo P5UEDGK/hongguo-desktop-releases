@@ -23,10 +23,6 @@ def aac_lc(context):
             and getattr(context, "profile", None) in (None, "LC"))
 
 
-def actual_bitrate(value):
-    return value if type(value) is int and value > 0 else 0
-
-
 def describe_streams(media):
     if len(media.streams.video) != 1:
         return {"copyEligible": False}
@@ -38,9 +34,8 @@ def describe_streams(media):
         return {"copyEligible": False}
     video = {"contentType": f'video/mp4; codecs="{codec}"', "width": context.width,
              "height": context.height, "framerate": rate,
-             "bitrate": actual_bitrate(context.bit_rate)}
-    tag = getattr(context, "codec_tag", None)
-    copy_eligible = video["bitrate"] > 0 and tag == {"h264":"avc1", "hevc":"hvc1"}.get(context.name)
+             "bitrate": max(1, context.bit_rate or 2000000)}
+    copy_eligible = True
     audio = []
     for track in media.streams.audio:
         c = track.codec_context
@@ -50,11 +45,9 @@ def describe_streams(media):
             copy_eligible = False
             audio.append({"codec": c.name, "profile": getattr(c, "profile", None)})
             continue
-        bitrate = actual_bitrate(c.bit_rate)
-        if not bitrate: copy_eligible = False
         audio.append({"contentType": 'audio/mp4; codecs="mp4a.40.2"',
                       "channels": str(len(c.layout.channels)), "samplerate": c.sample_rate,
-                      "bitrate": bitrate})
+                      "bitrate": max(1, c.bit_rate or 128000)})
     return {"copyEligible": copy_eligible, "video": video, "audio": audio}
 
 
@@ -65,7 +58,7 @@ def copy_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fals
         raise ValueError("Packet copy requires a full source window")
     import av
     from desktop_hls import EncodingCancelled
-    from desktop_hls_budget import EncodingBudgetExceeded, OutputBudget
+    from desktop_hls_budget import EncodingBudgetExceeded
 
     directory = Path(directory)
     directory.mkdir(parents=False, exist_ok=False)
@@ -86,8 +79,7 @@ def copy_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fals
             raise ValueError("Unsupported desktop movie clock")
         options.update(avoid_negative_ts="disabled",
                        hls_segment_options=f"avoid_negative_ts=disabled:movie_timescale={clock}")
-        budget = OutputBudget(directory,max_output_bytes,cancelled)
-        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options,io_open=budget.open) as writer:
+        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options) as writer:
             streams = {}
             for stream in reader.streams:
                 if stream.type not in ("video", "audio"):
@@ -112,7 +104,6 @@ def copy_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fals
                 if not ready and (directory / "index.m3u8").is_file():
                     ready = True
                     on_ready()
-    budget.check()  # FFmpeg may suppress a callback error while writing trailers.
     if cancelled():
         raise EncodingCancelled()
     playlist = (directory / "index.m3u8").read_text(encoding="utf-8")

@@ -6,9 +6,8 @@ session keys, or upstream protocol handling belong in this module.
 from pathlib import Path
 from fractions import Fraction
 import math
-import struct
 from desktop_stream import open_media
-from desktop_hls_budget import EncodingBudgetExceeded, video_budget_options, OutputBudget
+from desktop_hls_budget import EncodingBudgetExceeded, video_budget_options
 from desktop_codec import aac_lc
 
 
@@ -35,6 +34,7 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
     # Never overwrite an existing session or mix segments from different encodes.
     directory.mkdir(parents=False, exist_ok=False)
     ready = False
+    packets_seen = 0
     with open_media(source, cancelled=cancelled) as reader:
         if len(reader.streams.video) != 1:
             raise ValueError("Expected one video track")
@@ -73,14 +73,10 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
             if movie_clock > 2147483647:
                 raise ValueError("Unsupported desktop movie clock")
             options["hls_segment_options"] = f"movie_timescale={movie_clock}"
-        budget = OutputBudget(directory,max_output_bytes,cancelled)
-        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options,io_open=budget.open) as writer:
+        with av.open((directory / "index.m3u8").as_posix(), "w", format="hls", options=options) as writer:
             video = writer.add_stream("libx264", rate=rate)
-            width, height = original.codec_context.width, original.codec_context.height
-            video.width = width + width % 2
-            video.height = height + height % 2
-            # yuv420p needs even coded dimensions; retain the source display ratio.
-            video.codec_context.sample_aspect_ratio = (original.sample_aspect_ratio or Fraction(1)) * Fraction(width * video.height, height * video.width)
+            video.width = original.codec_context.width
+            video.height = original.codec_context.height
             video.pix_fmt = "yuv420p"
             # Average rate can differ from actual presentation intervals.
             # Preserve the source clock instead of rounding frames to 1/rate.
@@ -92,12 +88,9 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
             }
             video.codec_context.options.update(video_budget_options(
                 max(0, full_duration - start_seconds) if full_duration else None,
-                [stream.codec_context.bit_rate for stream in reader.streams.audio
-                 if aac_lc(stream.codec_context)],
-                max_output_bytes, fixed_audio_bitrates=[128000 for stream in reader.streams.audio
-                                                       if not aac_lc(stream.codec_context)]))
+                [stream.codec_context.bit_rate for stream in reader.streams.audio],
+                max_output_bytes))
             buffered_video = None
-            display_configured = False
             def push_video(encoded):
                 nonlocal buffered_video
                 if buffered_video is not None:
@@ -117,8 +110,7 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
                     audio[stream.index] = writer.add_stream_from_template(stream)
                 else:
                     output = writer.add_stream("aac", rate=48000)
-                    layout = stream.codec_context.layout
-                    output.layout = {1:"mono",2:"stereo"}.get(len(layout.channels),layout.name)
+                    output.layout = stream.codec_context.layout.name
                     output.bit_rate = 128000
                     output.codec_context.options = {"profile": "aac_low"}
                     audio[stream.index] = output
@@ -162,20 +154,16 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
             for packet in reader.demux():
                 if cancelled():
                     raise EncodingCancelled("Desktop encode cancelled")
-                budget.check()
+                packets_seen += 1
+                if packets_seen % 32 == 0:
+                    # A bounded overshoot of at most 32 demux packets is possible.
+                    # Include unfinished .tmp data; never silently drop frames.
+                    if sum(p.stat().st_size for p in directory.iterdir() if p.is_file()) > max_output_bytes - len(b"desktop-hls-v1\n"):
+                        raise EncodingBudgetExceeded("Desktop segment budget exceeded")
                 if packet.stream.index == original.index:
                     for frame in packet.decode():
                         if cancelled():
                             raise EncodingCancelled("Desktop encode cancelled")
-                        if not display_configured:
-                            matrix=frame.side_data.get('DISPLAYMATRIX')
-                            if matrix is not None:video.set_display_matrix(struct.unpack('=9i',bytes(matrix)))
-                            elif original.metadata.get('rotate'):
-                                video.set_display_rotation(-float(original.metadata['rotate']))
-                            display_configured=True
-                            if window_origin is not None:
-                                for queued in pending_audio:push_audio(queued)
-                                pending_audio.clear()
                         if start_seconds:
                             if frame.pts is None:
                                 raise ValueError("Missing desktop video timestamp")
@@ -193,7 +181,7 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
                         for encoded in video.encode(frame):
                             push_video(encoded)
                 elif packet.stream.index in audio and (packet.dts is not None or packet.stream.index in resamplers):
-                    if window_origin is None or not display_configured:
+                    if window_origin is None:
                         if len(pending_audio) >= 4096:
                             raise ValueError("Desktop audio preroll exceeded")
                         pending_audio.append(packet)
@@ -218,7 +206,6 @@ def encode_hls(source, directory, on_ready=lambda: None, *, cancelled=lambda: Fa
                 if not buffered_video.duration:
                     buffered_video.duration = max(1, round(float(1 / rate / buffered_video.time_base)))
                 writer.mux(buffered_video)
-    budget.check()
     playlist = (directory / "index.m3u8").read_text(encoding="utf-8")
     if "#EXT-X-ENDLIST" not in playlist or not (directory / "seg000000.m4s").is_file():
         raise ValueError("No complete desktop segments")

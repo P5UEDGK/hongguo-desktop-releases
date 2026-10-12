@@ -2,39 +2,36 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync(require('node:path').join(__dirname,'../src/frontend-codec.js'),'utf8');
 const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
 (async()=>{
-  let supported=true,smooth=true,containerDuration=null,calls=[],controllers=[],timers=new Map(),tid=0;
-  const c={crypto:require('node:crypto').webcrypto,URL,Headers,Number,Math,Date,queueMicrotask,AbortController,
+  let supported=true,calls=[],controllers=[],timers=new Map(),tid=0;
+  const c={URL,Headers,Number,Math,Date,queueMicrotask,
     setTimeout:(fn,delay)=>{timers.set(++tid,{fn,delay});return tid},clearTimeout:id=>timers.delete(id),
-    MediaSource:{isTypeSupported:()=>supported},navigator:{mediaCapabilities:{decodingInfo:async()=>({supported,smooth})}},
+    MediaSource:{isTypeSupported:()=>supported},navigator:{mediaCapabilities:{decodingInfo:async()=>({supported})}},
     fetch:async(url,init={})=>{
       calls.push([url,init]);
-      if(url.endsWith('/mode'))return {ok:true,clone(){return this},json:async()=>JSON.parse(init.body)};
-      const body={source:{copyEligible:true,video:{contentType:'video/mp4; codecs="hvc1.1.6.L120.B0"'},audio:[]},videoMode:null,startSeconds:0,duration:containerDuration};
+      if(url.endsWith('/mode'))return {ok:true,json:async()=>JSON.parse(init.body)};
+      const body={source:{copyEligible:true,video:{contentType:'video/mp4; codecs="hvc1.1.6.L120.B0"'},audio:[]},videoMode:null,startSeconds:0};
       return {ok:true,clone(){return this},json:async()=>body};
     }};
-  const fake=(media,url,target,callbacks,prep,transport,kind="window")=>{
+  const fake=(media,url,target,callbacks,prep,transport)=>{
     const index=controllers.length;
     media.pause?.(); // Existing windowed controller pauses synchronously at construction.
-    const dispose=()=>{};dispose.seek=value=>{controllers[index].seekTarget=value;media.currentTime=value;media.pause?.();callbacks.onReady();media.play?.();};
-    controllers.push({target,callbacks,transport,kind});
-    transport.durationKnown=()=>true;
+    const dispose=()=>{};dispose.seek=()=>{media.pause?.();callbacks.onReady();media.play?.();};
+    controllers.push({target,callbacks,transport});
     // The wrapper must preserve selected transport and callback ownership.
     transport.usedCopy=()=>index===0;
     return dispose;
   };
-  c.ek=fake;c.desktopLegacyHls=(m,u,t,cb,p,a,f)=>fake(m,u,t,cb,p,f,"legacy");
+  c.ek=fake;c.desktopLegacyHls=(m,u,t,cb,p,a,f)=>fake(m,u,t,cb,p,f);
   vm.createContext(c);vm.runInContext(source,c);
   const desc={copyEligible:true,video:{contentType:'video/mp4; codecs="hvc1.1.6.L120.B0"'},audio:[]};
   assert.equal(await c.desktopSupportsSource(desc),true);
   assert.equal(await c.desktopSupportsSource({...desc,copyEligible:false,audio:[{codec:'aac',profile:'HE-AACv2'}]}),false);
   supported=false;assert.equal(await c.desktopSupportsSource(desc),false);supported=true;
-  smooth=false;assert.equal(await c.desktopSupportsSource(desc),false,'non-smooth HEVC must use H264');smooth=true;
   const fetcher=c.desktopCreateCodecFetch();
   await fetcher('http://127.0.0.1:4567/desktop/hls',{method:'POST'});
   assert.equal(calls.at(-1)[1].headers.get('x-desktop-codec-negotiation'),'1');
   const status='http://127.0.0.1:4567/desktop/hls/'+'a'.repeat(32)+'/status';
-  await fetcher(status);assert.equal(fetcher.usedCopy(),true);assert.equal(fetcher.durationKnown(),false);
-  containerDuration=90;await fetcher(status);assert.equal(fetcher.durationKnown(),true);containerDuration=null;
+  await fetcher(status);assert.equal(fetcher.usedCopy(),true);
   fetcher.close();await assert.rejects(fetcher(status));
   await assert.rejects(c.desktopCreateCodecFetch()('https://example.com/desktop/hls'));
   for(const windowed of [false,true]){
@@ -57,33 +54,11 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     controllers[0].callbacks.onError();assert.equal(errors,0);
     controllers[1].callbacks.onError();assert.equal(errors,1);assert.equal(controllers.length,2);
     dispose();assert.deepEqual(Object.keys(listeners),[]);
-    controllers=[];timers.clear();media.currentTime=0;
-    const closeUnknown=c.desktopCodecHls(media,'http://127.0.0.1',0,{onReady(){},onError(){throw Error('unexpected copy recovery failure');}},null,windowed);
-    controllers[0].transport.durationKnown=()=>false;controllers[0].callbacks.onReady();
-    media.currentTime=37;listeners.timeupdate();controllers[0].callbacks.onError();
-    assert.equal(controllers[1].target,0,'unknown-duration copy fallback starts from zero');
-    assert.equal(controllers[1].kind,'legacy','unknown duration cannot use a nonzero windowed encode');
-    controllers[1].callbacks.onReady();await flush();
-    assert.equal(controllers[1].seekTarget,37,'copy recovery carries playback as a pending seek');closeUnknown();
-    controllers=[];timers.clear();media.videoWidth=1920;
-    media.getVideoPlaybackQuality=()=>({totalVideoFrames:0});
+    controllers=[];timers.clear();media.videoWidth=0;
     const end=c.desktopCodecHls(media,'http://127.0.0.1',0,{onReady(){},onError(){}},null,windowed);
     controllers[0].callbacks.onReady();
     [...timers.values()].find(t=>t.delay===8000).fn();
     assert.equal(controllers.length,2,'audio-only success must fall back');end();
-    for(const proof of ['quality','callback','paused','stale-counter']){
-      controllers=[];timers.clear();let frame;
-      let frames=proof==='stale-counter'?7:0;
-      media.getVideoPlaybackQuality=()=>({totalVideoFrames:frames});
-      media.requestVideoFrameCallback=fn=>{frame=fn;return 1;};media.cancelVideoFrameCallback=()=>{};
-      const close=c.desktopCodecHls(media,'http://127.0.0.1',0,{onReady(){},onError(){}},null,windowed);
-      controllers[0].callbacks.onReady();
-      if(proof==='quality')frames=1;
-      if(proof==='callback')frame();
-      if(proof==='paused')media.pause();
-      [...timers.values()].find(t=>t.delay===8000).fn();
-      assert.equal(controllers.length,proof==='stale-counter'?2:1,proof+' must verify frames from this playback');close();
-    }
   }
   controllers=[];
   const preparingEvents={};let loadingPauses=0;
@@ -115,21 +90,13 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   await explicit.play();await flush();
   assert.equal(explicitPauses,seekPauses,'play immediately after synchronous seek/onReady is explicit user intent');
   closeExplicit();assert.equal(explicit.play,explicitPlay);
-  controllers=[];timers.clear();
-  const closeReadyPlay=c.desktopCodecHls(explicit,'http://127.0.0.1',0,{onReady(){explicit.play();},onError(){}},null);
-  explicit.pause();const readyPauses=explicitPauses;
-  controllers[0].callbacks.onReady();await flush();
-  assert.equal(explicitPauses,readyPauses,'host onReady explicit play overrides the previous pause');
-  explicit.pause();closeReadyPlay.seek(24);const afterSeekPauses=explicitPauses;await flush();
-  assert.equal(explicitPauses,afterSeekPauses,'host onReady play during synchronous seek also overrides pause');
-  closeReadyPlay();
   console.log('PASS: codec detection, negotiation, position/rate/pause, one retry, stale callbacks and missing video');
   // HLS audio copy restrictions must not prevent native HEVC selection.
   const nativeCalls=[],nativeTimers=new Map(),nativeStyles=[];let delegated=0,nativeTid=0;
   const stage={classList:{add(){},remove(){}}};
   const nativeMedia={playbackRate:2,volume:1,muted:false,closest:()=>stage,
     dispatchEvent(){},getBoundingClientRect:()=>({left:0,top:0,width:800,height:500})};
-  const nc={URL,Event,Number,Math,Date,DOMException,AbortController,queueMicrotask,
+  const nc={URL,Event,Number,Math,Date,DOMException,
     window:{devicePixelRatio:1},ResizeObserver:class{observe(){}disconnect(){}},
     document:{hidden:false,head:{append(node){nativeStyles.push(node.textContent)}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
     setTimeout:(fn,delay)=>{nativeTimers.set(++nativeTid,{fn,delay});return nativeTid},clearTimeout:id=>nativeTimers.delete(id),
@@ -214,25 +181,23 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   assert(seeks.length>0&&seeks.every(value=>value===25),'play must not replace the accepted target with seek(0)');
   assert.equal(nativeMedia.currentTime,25);stopAfterEof();await flush();
   console.log('PASS: EOF seek preserves the selected target when play resumes');
-  for (const kind of ['pause-native','pause-hls','committed-hls','mode-conflict','committed-window-seek','conflict-window-seek']) {
-    nativeCalls.length=0;nativeTimers.clear();delegated=0;let selected=false,delegatedArgs,activeEnd;
-    const windowSeek=kind.endsWith('window-seek');
+  for (const kind of ['pause-native','pause-hls','committed-hls','mode-conflict']) {
+    nativeCalls.length=0;nativeTimers.clear();delegated=0;let selected=false,delegatedArgs;
     nc.desktopCodecHls=(...args)=>{delegated++;delegatedArgs=args;return ()=>{}};
     nativeMedia.pause=function(){this.paused=true};nativeMedia.play=function(){this.paused=false;return Promise.resolve()};
     nc.fetch=async(url,init={})=>{
       url=String(url);nativeCalls.push([url,init]);let body;
       if(url.endsWith('/capabilities'))body={nativePlayback:1};
       else if(init.method==='DELETE')return {ok:true,status:204};
-      else if(url.endsWith('/mode')){selected=true;if(kind==='mode-conflict'||kind==='conflict-window-seek')return {ok:false,status:409};body={mode:'native'}}
+      else if(url.endsWith('/mode')){selected=true;if(kind==='mode-conflict')return {ok:false,status:409};body={mode:'native'}}
       else if(url.endsWith('/control'))body={revision:1};
-      else if(init.method==='POST'){body={id:'d'.repeat(32)};if(windowSeek)activeEnd.seek(20);}
-      else body={state:'complete',duration:120,source:kind==='pause-hls'?{...desc,video:{contentType:'video/mp4; codecs="avc1.64001f"'}}:desc,
-        videoMode:kind==='committed-hls'||kind==='committed-window-seek'||(kind==='mode-conflict'||kind==='conflict-window-seek')&&selected?'h264':null,
-        startSeconds:windowSeek?90:0,windowOrigin:windowSeek?90:0,
+      else if(init.method==='POST')body={id:'d'.repeat(32)};
+      else body={state:'complete',source:kind==='pause-hls'?{...desc,video:{contentType:'video/mp4; codecs="avc1.64001f"'}}:desc,
+        videoMode:kind==='committed-hls'||kind==='mode-conflict'&&selected?'h264':null,
         native:selected?{state:'ready',outputReady:true,width:1920,height:1080,time:0,duration:90,paused:true,revision:100}:null};
       return {ok:true,status:200,json:async()=>body};
     };
-    const end=nc.desktopNativePlayback(nativeMedia,'http://127.0.0.1',windowSeek?90:0,{onReady(){}},null);activeEnd=end;
+    const end=nc.desktopNativePlayback(nativeMedia,'http://127.0.0.1',0,{onReady(){}},null);
     nativeMedia.pause();await flush();
     for(let n=0;n<2;n++){const entries=[...nativeTimers];nativeTimers.clear();for(const [,entry] of entries)await entry.fn();await flush()}
     if(kind==='pause-native') {
@@ -240,11 +205,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
       assert(controls.some(c=>c.paused===true));assert(!controls.some(c=>c.paused===false));
     } else {
       assert.equal(delegated,1,kind);assert.equal(delegatedArgs[6].paused,true);
-      if(windowSeek){
-        assert.equal(delegatedArgs[2],20,'latest seek target is retained');
-        assert.equal(delegatedArgs[4],null,'window before target must be rebuilt instead of transferring old session');
-        assert(nativeCalls.some(([,init])=>init.method==='DELETE'),'unusable committed window is released');
-      }else if(kind!=='pause-hls') {
+      if(kind!=='pause-hls') {
         assert.equal(await delegatedArgs[4].claim(),'d'.repeat(32));
         assert(!nativeCalls.some(([,init])=>init.method==='DELETE'),'committed HLS job must be transferred');
       }

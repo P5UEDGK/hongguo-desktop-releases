@@ -36,7 +36,7 @@ def validate_control(body):
     if "rect" in body:
         rect = body["rect"]
         if (not isinstance(rect, list) or len(rect) != 4
-                or any(type(v) is not int or not (-32768 if i < 2 else 1) <= v <= 32768 for i, v in enumerate(rect))
+                or any(type(v) is not int or not 0 <= v <= 32768 for v in rect)
                 or rect[2] < 1 or rect[3] < 1):
             raise ValueError("Invalid native rectangle")
     return dict(body)
@@ -99,9 +99,6 @@ class NativeHost:
         self.parent_pid = os.getppid() if parent_pid is None else parent_pid
         self.sessions = {}
         self.guard = threading.RLock()
-        self.prepare_lock = threading.Lock()
-        self.preparing = set()
-        self.closed = threading.Event()
         self.available = False
         self.engine_pool = EnginePool(self._close_engine, self._pump_engine)
         if os.name != "nt":
@@ -176,114 +173,53 @@ class NativeHost:
             resources.clear()
 
     def close(self):
-        self.closed.set()
         with self.guard:
             sessions = list(self.sessions.items())
         for identifier, session in sessions:
             self.release(identifier)
         return self.engine_pool.close()
 
-    def windows(self):
+    def parent_window(self):
         windows = []
         @self.enum_callback
         def collect(hwnd, _):
             pid = W.DWORD()
             self.user.GetWindowThreadProcessId(hwnd, C.byref(pid))
-            if pid.value == self.parent_pid:
-                rect, origin = W.RECT(), W.POINT(0, 0)
-                if (self.user.GetClientRect(hwnd, C.byref(rect))
-                        and self.user.ClientToScreen(hwnd, C.byref(origin))
-                        and rect.right > 100 and rect.bottom > 100):
-                    windows.append((hwnd, (origin.x, origin.y, rect.right, rect.bottom),
-                                    bool(self.user.GetWindow(hwnd, 4))))
+            if pid.value == self.parent_pid and not self.user.GetWindow(hwnd, 4):
+                rect = W.RECT()
+                if self.user.GetClientRect(hwnd, C.byref(rect)) and rect.right > 100 and rect.bottom > 100:
+                    windows.append((bool(self.user.IsWindowVisible(hwnd)), rect.right * rect.bottom, hwnd))
             return True
-        previous = self.user.SetThreadDpiAwarenessContext(C.c_void_p(-4))
-        try:
-            self.user.EnumWindows(collect, 0)
-        finally:
-            if previous:
-                self.user.SetThreadDpiAwarenessContext(previous)
-        return windows
-
-    def bind_window(self, context):
-        # The authenticated desktop sends physical client geometry from its
-        # Tauri window API, never an HWND. Only this parent process is eligible.
-        if (not isinstance(context, dict) or set(context) != {"rect"}
-                or not isinstance(context["rect"], list) or len(context["rect"]) != 4
-                or any(type(v) is not int or not -32768 <= v <= 32768 for v in context["rect"])
-                or min(context["rect"][2:]) <= 100):
-            raise ValueError("Invalid native window context")
-        matches = [hwnd for hwnd, rect, _ in self.windows() if rect == tuple(context["rect"])]
-        if len(matches) != 1:
-            raise ValueError("Native window context is not unique")
-        return matches[0]
-
-    def parent_window(self, job=None):
-        parent = getattr(job, "native_parent", None)
-        if parent is not None:
-            pid = W.DWORD()
-            self.user.GetWindowThreadProcessId(parent, C.byref(pid))
-            if self.user.IsWindow(parent) and pid.value == self.parent_pid:
-                return parent
-            raise RuntimeError("Bound desktop parent window unavailable")
-        # Compatibility for a single-window host. Multiple windows require an
-        # explicit binding; neither foreground status nor area is identity.
-        windows = [hwnd for hwnd, _, owned in self.windows() if not owned]
-        if len(windows) != 1:
-            raise RuntimeError("Desktop parent window context required")
-        return windows[0]
+        self.user.EnumWindows(collect, 0)
+        if not windows:
+            raise RuntimeError("Desktop parent window unavailable")
+        return max(windows, key=lambda item: item[:2])[2]
 
     def prepare(self, job):
-        if not self.available or self.closed.is_set() or job.cancelled.is_set():
+        if not self.available or job.cancelled.is_set():
             raise RuntimeError("Native player unavailable")
         with self.guard:
             if job.cancelled.is_set():
                 raise RuntimeError("Native job cancelled")
-            self.preparing.add(job.id)
-        acquired = False
-        try:
-            while not self.prepare_lock.acquire(timeout=.05):
-                if self.closed.is_set() or job.cancelled.is_set():
+            for identifier, previous in list(self.sessions.items()):
+                if previous.close() is False:
+                    raise RuntimeError("Previous native session is stopping")
+                self.sessions.pop(identifier, None)
+            session = NativeSession(self, job, self.parent_window())
+            self.sessions[job.id] = session
+            try:
+                session.thread.start()
+                if job.cancelled.is_set():
                     raise RuntimeError("Native job cancelled")
-            acquired = True
-            while True:
-                if self.closed.is_set() or job.cancelled.is_set():
-                    raise RuntimeError("Native job cancelled")
-                with self.guard:
-                    previous_sessions = list(self.sessions.items())
-                if not previous_sessions:
-                    break
-                for identifier, previous in previous_sessions:
-                    # close can join a slow Range reader. Keep status/control/
-                    # cancellation available while waiting for its owner.
-                    if previous.close() is not False:
-                        with self.guard:
-                            if self.sessions.get(identifier) is previous:
-                                self.sessions.pop(identifier)
-                job.cancelled.wait(.05)
-            with self.guard:
-                if self.closed.is_set() or job.cancelled.is_set():
-                    raise RuntimeError("Native job cancelled")
-                session = NativeSession(self, job, self.parent_window(job))
-                self.sessions[job.id] = session
-                try:
-                    session.thread.start()
-                    if job.cancelled.is_set():
-                        raise RuntimeError("Native job cancelled")
-                except BaseException:
-                    if session.close() is not False:
-                        self.sessions.pop(job.id, None)
-                    raise
-        finally:
-            if acquired:
-                self.prepare_lock.release()
-            with self.guard:
-                self.preparing.discard(job.id)
+            except BaseException:
+                if session.close() is not False:
+                    self.sessions.pop(job.id, None)
+                raise
 
     def snapshot(self, identifier):
         with self.guard:
             session = self.sessions.get(identifier)
-            return session.snapshot() if session else ({"state": "preparing"} if identifier in getattr(self, "preparing", ()) else {"state": "failed", "failureCode": "native-unavailable"})
+            return session.snapshot() if session else {"state": "failed", "failureCode": "native-unavailable"}
 
     def control(self, identifier, body):
         body = validate_control(body)
@@ -304,43 +240,23 @@ class NativeHost:
         return True
 
 
-class OutputLossWatch:
-    """Only a continuous, unbuffered output loss can trigger decoder retry."""
-    def __init__(self):
-        self.since = None
-        self.ever_ready = False
-
-    def buffering(self, cache_paused, reading, ready):
-        return cache_paused or (not self.ever_ready and not ready and reading)
-
-    def observe(self, now, ready, buffering):
-        if ready: self.ever_ready = True
-        if ready or buffering:
-            self.since = None
-            return False
-        if self.since is None: self.since = now
-        return now - self.since > 10
-
-
 class FrameDropWatch:
     def __init__(self):
         self.samples=deque()
         self.growth=None
 
-    def observe(self, now, output_drops, decoder_drops, fps, rate, active, display_fps=0):
-        decoder,output=max(0,decoder_drops),max(0,output_drops)
-        capacity = display_fps if display_fps > 0 and math.isfinite(display_fps) else max(1,fps)
-        if not active or self.samples and (decoder<self.samples[-1][1] or output<self.samples[-1][2] or rate!=self.samples[-1][3] or capacity!=self.samples[-1][4]):
+    def observe(self, now, output_drops, decoder_drops, fps, rate, active):
+        total=max(0,output_drops)+max(0,decoder_drops)
+        if not active or self.samples and total < self.samples[-1][1]:
             self.samples.clear();self.growth=None
-        if not active:return False
-        if self.samples and (decoder>self.samples[-1][1] or output>self.samples[-1][2]):self.growth=now
-        self.samples.append((now,decoder,output,rate,capacity))
+        if not active:
+            return False
+        if self.samples and total>self.samples[-1][1]:self.growth=now
+        self.samples.append((now,total))
         while len(self.samples)>2 and self.samples[1][0]<=now-2:self.samples.popleft()
-        first=self.samples[0];elapsed=now-first[0]
-        # Discount output frames that cannot fit the display, while counting decoder loss.
-        loss=max(decoder-first[1],output-first[2]-max(0,max(1,fps)*max(.25,rate)-capacity)*elapsed)
+        elapsed=now-self.samples[0][0]
         return (elapsed>=2 and self.growth is not None and now-self.growth<=.5
-                and loss>=max(10,max(1,fps)*max(.25,rate)*elapsed*.5))
+                and total-self.samples[0][1]>=max(10,max(1,fps)*max(.25,rate)*elapsed*.5))
 
 
 class NativeSession:
@@ -359,7 +275,6 @@ class NativeSession:
         self.thread = (pool.task(self) if pool else
                        threading.Thread(target=self.run, name="desktop-native-player", daemon=True))
         self.input_hooks = {}
-        self.input_target = None
         self.queued_state = {"paused": True, "rate": 1, "volume": 1, "muted": False}
 
     def forward_input(self, container):
@@ -387,16 +302,12 @@ class NativeSession:
         if not widgets or not surfaces:
             return False
         widget = widgets[0]
-        self.input_target = widget
-        for surface in tuple(self.input_hooks):
-            if not user.IsWindow(surface):self.input_hooks.pop(surface)
         for surface in surfaces:
             if surface in self.input_hooks:
                 continue
             original = [None]
             @self.host.window_callback
-            def procedure(hwnd, message, wparam, lparam, previous=original):
-                target = self.input_target
+            def procedure(hwnd, message, wparam, lparam, target=widget, previous=original):
                 if message == 0x0084 and hwnd == container:  # WM_NCHITTEST
                     # STATIC defaults to HTTRANSPARENT without SS_NOTIFY.
                     # Own the hit so Windows delivers real pointer input here.
@@ -453,7 +364,6 @@ class NativeSession:
         frame_ready = False
         requested_position = self.job.start_seconds
         drop_watch = FrameDropWatch()
-        output_watch = OutputLossWatch()
         progressive = isinstance(self.job.source, ProgressiveSource)
         media_uri = str(self.job.source) if not progressive else self.job.stream_url
         # Starting paused allows the frontend to place the surface and apply
@@ -465,14 +375,12 @@ class NativeSession:
                 raise RuntimeError("Software decoding failed")
             retried = True
             frame_ready = False
-            output_watch.since = None
-            output_watch.ever_ready = False
             position = requested_position if no_frame else player.number("time-pos", self.job.start_seconds)
             drop_watch.samples.clear();drop_watch.growth=None
             player.command("set", "hwdec", "no")
             player.command("set", "start", position)
             player.command("loadfile", media_uri)
-            for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute"), ("paused", "pause")):
+            for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
                 value = desired[key]
                 player.command("set", option, "yes" if value is True else "no" if value is False else value * 100 if key == "volume" else value)
             initial = last_progress = time.monotonic()
@@ -513,8 +421,8 @@ class NativeSession:
             per_file = {"start": self.job.start_seconds, "pause": "yes", "speed": 1,
                         "volume": 100, "mute": "yes" if desired["muted"] else "no",
                         "hwdec": "auto-safe" if self.host.hardware else "no",
-                        "cache": "yes" if progressive else "auto", "cache-secs": "10",
-                        "demuxer-readahead-secs": "10", "demuxer-max-bytes": "32MiB",
+                        "cache": "yes" if progressive else "auto", "cache-secs": "12",
+                        "demuxer-readahead-secs": "12", "demuxer-max-bytes": "32MiB",
                         "cache-on-disk": "no", "cache-pause": "yes", "cache-pause-wait": "1",
                         "http-header-fields": "x-api-key: " + self.job.stream_key if progressive and self.job.stream_key else "",
                         "demuxer-lavf-format": "mov" if progressive else "",
@@ -542,7 +450,7 @@ class NativeSession:
                         if fields[0] == 4 or fields[1] < 0:
                             if progressive and self.job.source.network_failed.is_set():
                                 raise SourceReadError("Native media input unavailable")
-                            retry_software(no_frame=not frame_ready)
+                            retry_software()
                 for _ in range(64):
                     try:
                         revision, command = self.commands.get_nowait()
@@ -553,15 +461,11 @@ class NativeSession:
                         client = W.RECT()
                         if not user.GetClientRect(self.parent, C.byref(client)):
                             raise RuntimeError("Desktop parent unavailable")
-                        # WS_CHILD clips all four edges to the parent client area.
-                        # Keep the original video geometry instead of resizing it.
+                        width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
                         user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                     if "visible" in command:
                         user.ShowWindow(hwnd, 4 if command["visible"] else 0)
-                    if command.get("paused") is True:
-                        desired["paused"] = True
-                        player.command("set", "pause", "yes")
-                    for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
+                    for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
                         if key in command:
                             value = command[key]
                             desired[key] = value
@@ -575,12 +479,7 @@ class NativeSession:
                         requested_position = target
                         frame_ready = False
                         initial = time.monotonic()
-                        output_watch.since = None
                         grace = initial + 3
-                    if command.get("paused") is False:
-                        desired["paused"] = False
-                        player.command("set", "pause", "no")
-                        grace = time.monotonic() + 3
                     with self.guard:
                         self.data["revision"] = revision
                 if progressive and self.job.source.network_failed.is_set():
@@ -596,7 +495,7 @@ class NativeSession:
                 seeking = player.get("seeking") == "yes"
                 eof = player.get("eof-reached") == "yes"
                 output_ready = frame_ready and width > 0 and height > 0 and player.get("current-vo") == "gpu" and player.get("video-out-params") is not None and audio_output_ready(getattr(self.job, "source_description", None), player)
-                if output_ready:
+                if output_ready and not self.input_hooks:
                     # Native renderer must not cover the existing trusted UI
                     # input surface without restoring click/key forwarding.
                     output_ready = self.forward_input(hwnd)
@@ -604,8 +503,8 @@ class NativeSession:
                     retry_software(no_frame=True)
                     continue
                 avsync = player.number("avsync")
-                buffering = progressive and output_watch.buffering(
-                    player.get("paused-for-cache") == "yes", self.job.source.reading.is_set(), output_ready)
+                buffering = progressive and (player.get("paused-for-cache") == "yes"
+                                             or not output_ready and self.job.source.reading.is_set())
                 buffer_start, buffer_end = 0.0, self.job.duration or 0.0
                 if progressive:
                     buffer_start = position
@@ -623,19 +522,18 @@ class NativeSession:
                 frame_drops=player.number("frame-drop-count")
                 decoder_drops=player.number("decoder-frame-drop-count")
                 dropping=drop_watch.observe(now,frame_drops,decoder_drops,
-                    player.number("container-fps",30),desired["rate"],unstable,player.number("display-fps",0))
+                    player.number("container-fps",30),desired["rate"],unstable)
                 if buffering:
                     last_progress = now
                 if unstable and abs(avsync) > .2:
                     slow_since = slow_since or now
                 else:
                     slow_since = None
-                missing_output = output_watch.observe(now, output_ready, buffering)
                 if (unstable and (dropping or now - last_progress > 3 or slow_since and now - slow_since > 2)
-                        or missing_output):
+                        or not output_ready and not buffering and now - initial > 10):
                     if progressive and self.job.source.network_failed.is_set():
                         raise SourceReadError("Native media input timed out")
-                    retry_software(no_frame=not frame_ready)
+                    retry_software()
                     continue
                 with self.guard:
                     self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",

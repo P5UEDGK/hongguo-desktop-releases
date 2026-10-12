@@ -10,8 +10,6 @@ HEVC 先实际尝试硬解，失败后只重试一次软解；软解失败或持
 
 宿主只在后台解析媒体，返回已完成本地 Path 或 `ProgressiveSource(url, request=authorized_request, identity=stable_id, key=authorized_content_key)`。本包不实现上游 API 或密钥获取。复用完整原片前必须确认写入已完成；不能把后台正在写的非空文件当缓存，也不要等待旧下载锁才能启动新选的一集。Range 内存16MiB、原生包内存32MiB；第三方临时磁盘缓存由后续暂停补丁开启。
 
-源缺少 ETag 和 Last-Modified 时，不拼接多次 Range 响应：丢弃探测块，从单次完整响应写入临时文件，再供同一源的 reader 读取。文件最多为已校验的输入长度（上限2GiB），取消、短读或超长响应会丢弃未完成文件。这种源需要先完成下载，不能承诺渐进首帧。宿主若长期保留 source，最后一个使用者退出后调用 `source.close()`；共享源仍有 reader/job 时不能提前关闭。
-
 用 `NativeHost(parent_pid=owned_desktop_pid, dll_path=verified_dll)` 创建原生宿主，交给 `HlsJobs(..., native=native)`；`make_router` 必须使用宿主会话鉴权并仅监听本机回环。source接口、控制、status、DELETE都属于该job。所有成功、失败、切集、超时和退出路径必须释放原生音频/窗口、Range源及会话目录。不得接收客户端指定进程、HWND、文件、设备、mpv命令或解密密钥。
 
 需共同接入 #187 的两个模块。渐进当前源使用 `source_loader`；后三集使用完整文件 `download_loader`，并传 `source_status=desktop_stream.source_progress`。source加载、描述轨道及native模式选择都发生在编码槽之前；原生播放不占编码槽。只有copy/h264编码前取得槽，finally始终调用finish，取消旧会话先于启动新会话。
@@ -29,7 +27,6 @@ Windows x64、Python3.11、Node18+。安装 `requirements-test.txt`；将 #187 �
 ```pwsh
 pwsh -NoProfile -Command "python -I contributions/desktop-native-playback/tests/run.py --prefetch-package <prefetch-contribution-dir>"
 pwsh -NoProfile -Command "node contributions/desktop-native-playback/tests/test_frontend.cjs"
-pwsh -NoProfile -Command "node contributions/desktop-native-playback/tests/test_native_geometry.cjs"
 ```
 
 Node覆盖轨道协商、位置/暂停/倍速恢复、只回退一次、旧回执与源失败不误转码。新增真实合成Opus输入转AAC-LC、seek共同时间原点、取消和预算回归；已有AAC继续直拷。新增两个确定性取消竞争测试，防止DELETE后prepare注册残留会话。公开fixture是合成媒体及公开测试密钥，不含提供方视频。硬解失败由受控驱动测试，未人为破坏真实GPU。
@@ -67,57 +64,3 @@ HLS准备中的播放器自动暂停不改变用户意图；显式暂停调用�
 画面单击修复：输入桥同时接管外层 STATIC 与渲染子窗口，外层 WM_NCHITTEST 返回 HTCLIENT，避免默认 HTTRANSPARENT 让真实点击穿透。事件仍转交宿主已有 WebView 播放处理。Python 53 项中 52 通过、1 项可选样例跳过；真实 Windows SendInput 验证暂停、继续及窗口模式通过，桌面社交组合回归 81 项通过。
 
 控制栏自动显隐修复：移除原生激活时强制控制栏永久显示的样式及其节点，沿用宿主已有的鼠标、暂停与键盘聚焦状态。Node 回归通过；候选 WebView2 91 项通过，覆盖真实鼠标移动显示、播放静止后隐藏、暂停显示、键盘聚焦，以及普通和播放窗口的置顶状态。社交布局补丁需使用 #210 同步适配后的版本。
-
-本轮继续修复：宿主 `onReady` 内显式播放生效；copy watchdog 使用本轮解码帧或帧回调，旧画面的尺寸和计数不能证明新视频已显示。无首帧超时重试保留请求位置，协商中向前面的时间点 seek 会释放不覆盖该位置的 HLS 窗口。PCM 等非直拷音频按 AAC 输出码率规划预算，单/双声道布局规范化。copy 与编码输出均由 I/O sink 在每次写盘前限制总预算，包含超大单包及 trailer；失败不产生完整标记。
-
-原生表面通过 `desktopNativeSurfaceRect` 读取实际控制栏位置和可见状态，隐藏后填满媒体区域；观察尺寸、class/style/hidden 与 transitionend，恢复播放或全屏时沿用同一算法。#213 和 #210 的下游补丁需同步适配本轮基线，避免覆盖此几何算法。
-
-本轮公开 Python 61 项均有通过记录（默认全量中1项 HEVC 可选测试另以已有自有素材补测通过），两组 Node 回归通过；五个缺陷输入和前端回归在旧 HEAD 失败。新改动尚待完整下游组合、本机候选和安装验证，不能据此宣称发行版已修复。
-
-
-本轮窗口与交接复审：前端使用当前 Tauri 窗口的物理客户区坐标，后端只匹配同一宿主 PID 的唯一客户区，支持 owned 播放窗口，不接收任意 HWND；未提供上下文且存在多个候选窗口时拒绝猜测。旧会话慢退出时，新准备在可取消队列等待，关闭会话不占宿主状态锁，也不误报解码失败。首轮 onReady 同步入队的 seek 等待实际控制 revision，期间保留请求位置；静音、音量、倍速和 seek 先于解除暂停，软件重试沿用相同顺序。冷启动在已知时长后检查保存的片尾进度，越界时先释放旧 job，再创建零起点会话，保留协商期间的新 seek。
-
-
-未知时长续播与窗口快照回退：保存位置为非零，但容器时长未知、越界或准备失败码为 start-position 时，先释放该会话，再用零起点重建，保留协商期间用户另行提交的 seek。窗口在物理坐标查询后移动或缩放造成 native mode 返回400时，改走既有 HLS 协商路径。三个旧回放均失败；当前全部前端回归通过，Python 模块本轮未改。完整待机174项、Chrome84项及实际libmpv字幕检查通过；本机候选与安装仍待完成。
-
-
-本轮审查回归（2026-10-12，第四批）：4242306703/6707：连续无输出单独计时并ready重置；协商期间发生新seek时未知时长旧job仍归零重建，保留新意图。
-
-完整缓存恢复可返回 windowOrigin=0。窗口HLS宿主的 status 起点守卫须调用 desktopAcceptWindowOrigin(status, requestedStart)，替代单独 origin<requestedStart 的拒绝；连续窗口的 origin 不变检查仍保留。只有 complete、playlistReady 且 playableRange 精确覆盖 [0,duration] 的零起点响应才能例外通过。
-
-
-本轮第六批审查（2026-10-12）：4242527452/7457/7461：copy要求smooth，曾就绪后的输出丢失不被持续读取掩盖，预算按磁盘extent而非累计清单重写收费；保留未提交真实origin helper回归。
-
-2026-10-12 追加复核：4242725623/5627：无原生DLL的未知时长续播也先验证零起点，保留待应用seek；首帧前play控制包含当前倍速、音量和静音。
-
-2026-10-12 第十一轮复核：4242926461/6467/6470/6473：未知时长copy与迟发native解码失败从零降级并保留seek；退出等待持续捕获currentTime，瞬态DELETE错误在原截止内重试。
-
-2026-10-12 第十三轮复核：4243068989/8994/8999/9007/9015：弱或无效validator固定完整响应；AAC转码固定码率预算；END_FILE首帧前重试保留起点；排除VO倍速丢帧；初始native POST有界且可取消。
-
-2026-10-12 第十六轮复核：4243213170/3173/3176：几何IPC失败降级；创建请求取消回收含先取消后创建；奇数尺寸编码保持显示比例。
-
-2026-10-12 第十七轮复核：依赖#187：Job提供owner绑定source_loader，源线程优先调用该callback；保留原普通source_loader契约。
-
-2026-10-12 第十八轮复核：4243361641/1646：VO掉帧按速率折扣仍识别正常速率过载；强制H264降级释放未转移preparation。
-
-2026-10-12 第十九轮复核：4243434997/5002：成功源读取清理过往network_failed；直接HLS未知duration非零续播start-position失败回零并保持pending seek。
-
-2026-10-12 第二十一轮复核：4243502886/2893/2897/2900：输出目录删除失败明确pending；Last-Modified仅在响应日期足够分离时作强校验；掉帧扣除显示刷新容量限制；重新枚举并挂接重建的原生子窗口。 启动预读目标收紧至10秒以覆盖包级预读余量，实测未完成缓存8.5秒；暂停补丁不再在EOF清除历史网络失败。
-
-2026-10-12 第二十二轮复核：4243543195/3198/3202：直接HLS已知无效续播回零丢弃越界seek；原生窗口跟随CSS显隐；未知实际码率不认证copy。
-
-2026-10-12 第二十三轮复核：4243668889/8892：mode响应丢失后回读已提交模式；输入回调读取当前WebView HWND，不保留旧目标；显式seek意图传入HLS续播契约。
-
-2026-10-12 第二十四轮复核：4243750629/0634：codec模式协商限时并回读丢失响应；首次布局恢复同步记忆音量、静音及倍速。
-
-2026-10-12 第二十五轮复核：4243806211/6216/6218：初始协商拦截currentTime写入；packet-copy仅接受安全原sample-entry；保留负child坐标并依赖Win32父客户区裁剪，完全离屏隐藏。
-
-2026-10-12 第二十六轮复核：4243885385/5389/5392/5393/5397：内部恢复seek保留播放意图；缓存命中不能抹去网络失败；直接HLS创建使用token并取消丢失响应任务；未提交模式重试或降级。
-
-2026-10-12 第二十七轮复核：4243932108/2109：capture scroll即时同步native几何并清理监听；绝对native control对丢失/超时响应有界重试并合并更新意图。
-
-带显示矩阵的 H.264 回退使用 PyAV 18.1+ 的 `set_display_matrix` 保留旋转及镜像变换；本机依赖为 18.1.0。
-
-2026-10-12 第二十九轮复核：4244018994/8995/8999：运行期native状态GET按连续失败预算恢复；H264转码保留display matrix；移除每32包累积目录扫描。
-
-验证：424项融合后端无跳过、37套播放器前端、267项公开备用组合（1项可选片源跳过）、88项浏览器及真实libmpv字幕位置编辑通过。8项冻结前版反例失败、当前通过；Windows autocrlf实际克隆后的补丁应用通过。评论7组、暂停预加载136项公开组合通过；片源预加载owner未变，复用第28轮16项真实延迟片源检查。候选Tauri原生/HLS播放、裁剪、暂停和退出释放通过。评论及浏览器组件未变，复用第28轮7组评论和88项浏览器证据。本机安装验收随后执行，上游尚未合并发布。

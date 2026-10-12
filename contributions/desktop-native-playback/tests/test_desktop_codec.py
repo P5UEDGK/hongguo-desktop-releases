@@ -9,8 +9,6 @@ import urllib.request
 import urllib.error
 from fractions import Fraction
 from types import SimpleNamespace
-from contextlib import contextmanager
-from unittest.mock import patch
 
 import av
 from fastapi import FastAPI
@@ -23,25 +21,6 @@ from desktop_playable_cache import PlayableEpisodeCache
 
 
 class CodecTests(unittest.TestCase):
-    def test_inband_sample_entries_are_not_advertised_as_packet_copy(self):
-        context=SimpleNamespace(name='h264',extradata=bytes.fromhex('01640028ffe100'),width=64,height=64,bit_rate=2000000)
-        media=SimpleNamespace(streams=SimpleNamespace(video=[SimpleNamespace(codec_context=context,average_rate=30)],audio=[]))
-        for codec,tag in [('h264','avc3'),('hevc','hev1')]:
-            context.name=codec;context.codec_tag=tag
-            context.extradata=bytes.fromhex('01640028ffe100') if codec=='h264' else bytes.fromhex('010160000000b0000000000078')+bytes(10)
-            description=describe_streams(media);self.assertIn('video',description);self.assertFalse(description['copyEligible'])
-
-    def test_actual_avc3_source_is_rejected_before_packet_copy(self):
-        source=self.root/'inband.mp4'
-        with av.open(str(self.source)) as reader,av.open(str(source),'w',format='mp4') as writer:
-            track=writer.add_stream_from_template(reader.streams.video[0]);track.codec_context.codec_tag='avc3'
-            for packet in reader.demux(video=0):
-                if packet.dts is not None:packet.stream=track;writer.mux(packet)
-        with av.open(str(source)) as reader:
-            self.assertEqual(reader.streams.video[0].codec_context.codec_tag,'avc3');self.assertFalse(describe_streams(reader)['copyEligible'])
-        with self.assertRaisesRegex(ValueError,'Unsupported packet copy'):encode_hls(source,self.root/'relabelled',video_mode='copy')
-
-
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -58,18 +37,6 @@ class CodecTests(unittest.TestCase):
                 f.pts, f.time_base = n, Fraction(1, 10)
                 for p in v.encode(f): out.mux(p)
             for p in v.encode(): out.mux(p)
-
-    def test_unknown_stream_bitrate_does_not_certify_packet_copy(self):
-        video=SimpleNamespace(codec_context=SimpleNamespace(name='h264',codec_tag='avc1',extradata=bytes.fromhex('01640028ffe100'),width=64,height=64,bit_rate=None),average_rate=30)
-        media=SimpleNamespace(streams=SimpleNamespace(video=[video],audio=[]))
-        for bitrate in (None,0,-1,float('nan'),True):
-            video.codec_context.bit_rate=bitrate
-            with self.subTest(bitrate=bitrate):
-                description=describe_streams(media);self.assertFalse(description['copyEligible']);self.assertIn('video',description)
-        video.codec_context.bit_rate=2000000
-        audio=SimpleNamespace(codec_context=SimpleNamespace(name='aac',extradata=bytes.fromhex('1210'),profile='LC',layout=SimpleNamespace(channels=[1,2]),sample_rate=48000,bit_rate=None))
-        media.streams.audio=[audio];self.assertFalse(describe_streams(media)['copyEligible'])
-        audio.codec_context.bit_rate=128000;self.assertTrue(describe_streams(media)['copyEligible'])
 
     def test_codec_profiles_and_unknown(self):
         self.assertEqual(video_codec_string('h264', bytes.fromhex('01640028ffe100')), 'avc1.640028')
@@ -116,30 +83,6 @@ class CodecTests(unittest.TestCase):
             encode_hls(self.source, self.root / 'budget', video_mode='copy', max_output_bytes=1)
         with self.assertRaises(ValueError):
             encode_hls(self.source, self.root / 'window', video_mode='copy', start_seconds=1)
-    def test_packet_copy_never_writes_past_the_hard_disk_limit(self):
-        target=self.root/'hard-limit';limit=1000
-        with self.assertRaises(EncodingBudgetExceeded):
-            encode_hls(self.source,target,video_mode='copy',max_output_bytes=limit)
-        self.assertLessEqual(sum(p.stat().st_size for p in target.iterdir() if p.is_file()),limit)
-        self.assertFalse((target/'complete.marker').exists())
-    def test_one_giant_copy_packet_is_rejected_before_disk_growth(self):
-        @contextmanager
-        def reader(*args,**kwargs):
-            with av.open(str(self.source)) as source:
-                def packets():
-                    for packet in source.demux():
-                        if packet.dts is not None:
-                            large=av.Packet(bytes(packet)*1000)
-                            large.pts,large.dts,large.time_base=packet.pts,packet.dts,packet.time_base
-                            large.stream=packet.stream;large.is_keyframe=packet.is_keyframe
-                            yield large
-                        else:yield packet
-                yield SimpleNamespace(streams=source.streams,duration=source.duration,demux=packets)
-        target=self.root/'large-packet';limit=10000
-        with patch('desktop_codec.open_media',reader),self.assertRaises(EncodingBudgetExceeded):
-            encode_hls(self.source,target,video_mode='copy',max_output_bytes=limit)
-        self.assertLessEqual(sum(p.stat().st_size for p in target.iterdir() if p.is_file()),limit)
-        self.assertFalse((target/'complete.marker').exists())
         self.assertFalse((self.root / 'cancel/complete.marker').exists())
         self.assertFalse((self.root / 'budget/complete.marker').exists())
 
@@ -214,14 +157,10 @@ class CodecTests(unittest.TestCase):
         self.assertFalse(job.directory.exists())
 
     @unittest.skipUnless(os.environ.get('DESKTOP_HEVC_TEST_SOURCE'), 'local HEVC fixture not specified')
-    def test_actual_hevc_sample_entry_admission_and_packet_identity(self):
+    def test_actual_hevc_audio_video_packet_identity(self):
         source = Path(os.environ['DESKTOP_HEVC_TEST_SOURCE'])
         target = self.root / 'hevc'
         with av.open(str(source)) as media:
-            if media.streams.video[0].codec_context.codec_tag == 'hev1':
-                self.assertFalse(describe_streams(media)['copyEligible'])
-                with self.assertRaisesRegex(ValueError,'Unsupported packet copy'):encode_hls(source,target,video_mode='copy')
-                return
             self.assertTrue(describe_streams(media)['copyEligible'])
             expected = [(p.stream.type, bytes(p)) for p in media.demux() if p.dts is not None]
         encode_hls(source, target, video_mode='copy')

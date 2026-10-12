@@ -1,13 +1,4 @@
 // Inserted into the recovered bundle; original HLS controllers keep their lifecycle.
-function desktopAcceptWindowOrigin(status, start) {
-  const {windowOrigin:origin,duration,playableRange:range}=status;
-  if (!Number.isFinite(origin) || origin<0 || !Number.isFinite(start) || start<0 ||
-      (duration!=null && (!Number.isFinite(duration) || duration<0)) ||
-      (duration>0 && origin>=duration)) return false;
-  return origin>=start || (origin===0 && duration>0 && status.state==='complete' && status.playlistReady===true &&
-    Array.isArray(range) && range.length===2 && range[0]===0 && range[1]===duration);
-}
-
 async function desktopSupportsSource(source) {
   try {
     if (!source?.copyEligible || !source.video || !Array.isArray(source.audio) || source.audio.length > 1) return false;
@@ -20,42 +11,13 @@ async function desktopSupportsSource(source) {
       navigator.mediaCapabilities.decodingInfo(config),
       new Promise(resolve => setTimeout(() => resolve({supported: false}), 2000))
     ]);
-    return info?.supported === true && info?.smooth === true;
+    return info?.supported === true;
   } catch { return false; }
 }
 
 function desktopCreateCodecFetch(forceH264 = false) {
-  let closed = false, usedCopy = false, failureCode = null, knownDuration = false;
-  const pending = new Map(), selecting = new Set(), creations = new Set();
-  async function selection(input, init, cleanup = false) {
-    const control = new AbortController(), parent = init.signal;
-    const abort = () => control.abort();
-    if (closed && !cleanup || parent?.aborted) throw Error('Expired codec selection');
-    parent?.addEventListener('abort', abort, {once:true}); selecting.add(control);
-    let timer;
-    try {
-      return await Promise.race([
-        fetch(input, {...init, signal:control.signal}).then(async response => ({response, body:response.ok && response.status !== 204 ? await response.clone().json() : null})),
-        new Promise((resolve,reject) => {timer=setTimeout(() => {control.abort();reject(Error('Codec selection timed out'));},15000);})
-      ]);
-    } finally {clearTimeout(timer); selecting.delete(control); parent?.removeEventListener('abort',abort);}
-  }
-  function cancelCreation(record) {
-    if (record.cancelled) return record.cancelled;
-    record.cancelled=(async()=>{
-      const deadline=Date.now()+15000;
-      do {
-        try {
-          const result=await selection(record.url.origin+'/desktop/hls/requests/'+record.token,
-            {method:'DELETE',headers:record.headers,credentials:'omit',redirect:'error',cache:'no-store'},true);
-          if (result.response.ok && result.body?.released !== false) return;
-        } catch {}
-        if (Date.now()>=deadline) return;
-        await new Promise(resolve=>setTimeout(resolve,100));
-      } while(Date.now()<deadline);
-    })();
-    return record.cancelled;
-  }
+  let closed = false, usedCopy = false, failureCode = null;
+  const pending = new Map();
   const request = async (input, init = {}) => {
     const url = new URL(input);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' ||
@@ -64,68 +26,43 @@ function desktopCreateCodecFetch(forceH264 = false) {
     const headers = new Headers(init.headers);
     if (!forceH264 && init.method === 'POST' && url.pathname === '/desktop/hls')
       headers.set('x-desktop-codec-negotiation', '1');
-    let response;
-    if (init.method==='POST' && url.pathname==='/desktop/hls') {
-      const token=(Date.now()+30000)+'-'+crypto.randomUUID().replace(/-/g,'');
-      url.searchParams.set('request_token',token);
-      const record={url,token,headers};creations.add(record);
-      try {
-        const result=await selection(url.href,{...init,headers});response=result.response;
-        if (closed || init.signal?.aborted) throw Error('Expired codec creation');
-      } catch(error) {await cancelCreation(record);throw error;}
-      finally {creations.delete(record);}
-    } else response = await fetch(input, {...init, headers});
+    const response = await fetch(input, {...init, headers});
     if (!response.ok || init.method === 'DELETE' || !/\/desktop\/hls\/[a-f0-9]{32}\/status$/.test(url.pathname))
       return response;
     const status = await response.clone().json();
     failureCode = status.failureCode || null;
-    knownDuration = Number.isFinite(status.duration) && status.duration > 0;
     if (closed || init.signal?.aborted) return response;
     if (status.videoMode) usedCopy = status.videoMode === 'copy';
     if (!forceH264 && status.source && status.videoMode === null) {
       if (!pending.has(url.pathname)) pending.set(url.pathname, (async () => {
         const copy = !status.startSeconds && await desktopSupportsSource(status.source);
         if (closed || init.signal?.aborted) return;
-        let selected;
-        for (let attempt=0;attempt<2 && !selected;attempt++) {
-          try {
-            const result = await selection(url.href.replace(/\/status$/, '/mode'), {
-              method:'POST', headers:new Headers([...headers, ['content-type','application/json']]),
-              body:JSON.stringify({mode:copy ? 'copy' : 'h264'}),
-              credentials:'omit', redirect:'error', cache:'no-store', signal:init.signal
-            });
-            if (result.response.ok) selected = result.body.mode;
-            else if (result.response.status !== 409) throw Object.assign(Error('Codec selection failed'),{status:result.response.status});
-          } catch (error) {if (closed || init.signal?.aborted || error.status) throw error;}
-          if (!selected) {
-            const result = await selection(url.href, {headers,credentials:'omit',redirect:'error',cache:'no-store',signal:init.signal});
-            if (!result.response.ok || result.body.state === 'failed') throw Error('Codec reconciliation failed');
-            selected = result.body.videoMode;
-          }
-        }
-        if (!['copy','h264'].includes(selected)) throw Error('Codec selection unavailable');
-        usedCopy = selected === 'copy';
+        const selected = await fetch(url.href.replace(/\/status$/, '/mode'), {
+          method: 'POST', headers: new Headers([...headers, ['content-type', 'application/json']]),
+          body: JSON.stringify({mode: copy ? 'copy' : 'h264'}),
+          credentials: 'omit', redirect: 'error', cache: 'no-store', signal: init.signal
+        });
+        if (selected.ok) usedCopy = (await selected.json()).mode === 'copy';
+        else if (selected.status !== 409) throw Error('Codec selection failed');
       })());
-      try {await pending.get(url.pathname);} finally {pending.delete(url.pathname);}
+      await pending.get(url.pathname);
     }
     return response;
   };
   request.usedCopy = () => usedCopy;
-  request.durationKnown = () => knownDuration;
   request.failureCode = () => failureCode;
-  request.close = () => {closed = true; for (const control of selecting) control.abort(); for (const record of creations) cancelCreation(record);};
+  request.close = () => {closed = true;};
   return request;
 }
 
 function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
   let disposed = false, retried = false, epoch = 0, controller, transport;
-  let pendingSeek = null, zeroOriginRecovery = false;
   let position = initialPosition || 0, origin = 0, ready = false, wantedPlaying = initialState?.paused !== true;
-  let rate = media.playbackRate || 1, watchdog, frameToken, watchPlayback = () => {}, pauseUntil = 0, internalPause = false, internalPlay = false;
+  let rate = media.playbackRate || 1, watchdog, pauseUntil = 0, internalPause = false, internalPlay = false;
   const savedPause = Object.getOwnPropertyDescriptor(media, "pause"), originalPause = media.pause;
   const savedPlay = Object.getOwnPropertyDescriptor(media, "play"), originalPlay = media.play;
   const play = function(...args) {
-    if (!internalPause && !internalPlay) {wantedPlaying = true; pauseUntil = 0; if (ready) watchPlayback();}
+    if (!internalPause && !internalPlay) {wantedPlaying = true; pauseUntil = 0;}
     return originalPlay.apply(media, args);
   };
   if (typeof originalPlay === "function") Object.defineProperty(media, "play", {configurable:true, writable:true, value:play});
@@ -141,7 +78,6 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (!ready || internalPlay) return;
     if (Date.now() < pauseUntil) {media.pause(); return;}
     wantedPlaying = true;
-    watchPlayback();
   };
   const onPause = () => {if (ready && !internalPause) wantedPlaying = false;};
   const onPreparingPlaying = () => {
@@ -149,22 +85,17 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
   };
   const onRateChange = () => {rate = media.playbackRate || rate;};
   function fallback() {
-    const invalidStart = transport?.failureCode?.() === 'start-position' && position > 0;
-    if (disposed || retried || !transport || !transport.usedCopy() && !invalidStart || transport.failureCode?.() === 'source-read') return false;
+    if (disposed || retried || !transport?.usedCopy() || transport.failureCode?.() === 'source-read') return false;
     retried = true;
     rememberTime();
     const resume = position;
     rate = media.playbackRate || rate;
-    zeroOriginRecovery = invalidStart || !transport.durationKnown();
-    if (zeroOriginRecovery) pendingSeek = invalidStart && transport.durationKnown() ? null : resume;
-    start(true, zeroOriginRecovery ? 0 : Math.max(0, resume));
+    start(true, Math.max(0, resume));
     return true;
   }
   function start(force, target) {
     const ownEpoch = ++epoch;
     clearTimeout(watchdog);
-    if (frameToken !== undefined) media.cancelVideoFrameCallback?.(frameToken);
-    frameToken = undefined;
     ready = false;
     transport?.close();
     internalPause = true;
@@ -173,46 +104,24 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     origin = 0;
     transport = desktopCreateCodecFetch(force);
     const active = () => !disposed && epoch === ownEpoch;
-    let decoded = false;
-    const frameCount = () => {
-      try {return media.getVideoPlaybackQuality?.().totalVideoFrames ?? media.webkitDecodedFrameCount ?? 0;}
-      catch {return media.webkitDecodedFrameCount || 0;}
-    };
-    const previousFrames = frameCount();
-    watchPlayback = () => {
-      clearTimeout(watchdog);
-      if (transport.usedCopy()) watchdog = setTimeout(() => {
-        const frames = frameCount();
-        const newFrames = frames > 0 && frames !== previousFrames;
-        if (active() && wantedPlaying && !decoded && !newFrames) fallback();
-      }, 8000);
-    };
     const wrapped = {...callbacks,
-      preserveResumePosition: callbacks.preserveResumePosition === true,
       onReady() {
         if (!active()) return;
-        if (pendingSeek !== null) {
-          const target = pendingSeek;pendingSeek = null;
-          queueMicrotask(()=>{if (active()) {internalPause=true;try {controller?.seek(target);} finally {internalPause=false;internalPlay=false;}}});
-          return;
-        }
         ready = true;
-        media.playbackRate = rate;
-        const preparingPause = internalPause;
-        internalPause = false;
-        try {callbacks.onReady();} finally {internalPause = preparingPause;}
-        // Only the legacy controller's following startup play is internal;
-        // explicit play inside the host callback must update user intent.
+        // The legacy controller invokes play synchronously after onReady.
         internalPlay = true;
         queueMicrotask(() => {internalPlay = false;});
+        media.playbackRate = rate;
+        callbacks.onReady();
         if (!wantedPlaying) {
           pauseUntil = Date.now() + 500;
           queueMicrotask(() => {if (active() && !wantedPlaying) media.pause();});
         }
         // A media element can play audio while silently failing video decoding.
-        if (frameToken !== undefined) media.cancelVideoFrameCallback?.(frameToken);
-        frameToken = media.requestVideoFrameCallback?.(() => {if (active()) decoded = true;});
-        watchPlayback();
+        clearTimeout(watchdog);
+        if (transport.usedCopy()) watchdog = setTimeout(() => {
+          if (active() && !media.videoWidth) fallback();
+        }, 8000);
       },
       onWindowOrigin(value) {if (active()) {origin = value; callbacks.onWindowOrigin?.(value);}},
       onAcceptanceHlsTransition(event) {
@@ -235,12 +144,15 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     }
     internalPause = true;
     try {
-      controller = windowed && !zeroOriginRecovery ? ek(media, url, target, wrapped, force ? null : preparation, transport)
+      controller = windowed ? ek(media, url, target, wrapped, force ? null : preparation, transport)
         : desktopLegacyHls(media, url, target, wrapped, force ? null : preparation, false, transport);
     } finally {internalPause = false;}
   }
   const onError = event => {
-    if (fallback()) event.stopImmediatePropagation();
+    if (!disposed && !retried && transport?.usedCopy() && transport.failureCode?.() !== 'source-read') {
+      event.stopImmediatePropagation();
+      fallback();
+    }
   };
   media.addEventListener('play', onPlay);
   media.addEventListener('pause', onPause);
@@ -253,7 +165,6 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     if (disposed) return;
     disposed = true; epoch++;
     clearTimeout(watchdog);
-    if (frameToken !== undefined) media.cancelVideoFrameCallback?.(frameToken);
     transport?.close(); controller?.(); preparation?.dispose();
     media.removeEventListener('play', onPlay);
     media.removeEventListener('pause', onPause);
@@ -264,9 +175,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
     media.removeEventListener('error', onError, true);
     media.removeEventListener('timeupdate', rememberTime);
   }, {seek(value) {if (!disposed) {
-      position = value;
-      if (pendingSeek !== null) {pendingSeek = value;return;}
-      internalPause = true;
+      position = value; internalPause = true;
       try {controller?.seek(value);} finally {internalPause = false; internalPlay = false;}
     }}});
 }

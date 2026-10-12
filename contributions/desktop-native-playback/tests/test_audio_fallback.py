@@ -12,47 +12,6 @@ from desktop_codec import aac_lc
 
 
 class AudioFallbackTests(unittest.TestCase):
-    def test_odd_source_dimensions_encode_with_original_display_ratio(self):
-        odd=self.root/'odd.mkv'
-        with av.open(str(odd),'w') as writer:
-            video=writer.add_stream('ffv1',rate=10);video.width=33;video.height=35;video.pix_fmt='yuv444p'
-            video.codec_context.sample_aspect_ratio=Fraction(4,3)
-            for n in range(10):
-                frame=av.VideoFrame(33,35,'yuv444p');frame.pts=n;frame.time_base=Fraction(1,10)
-                for plane in frame.planes:plane.update(bytes(plane.buffer_size))
-                for packet in video.encode(frame):writer.mux(packet)
-            for packet in video.encode():writer.mux(packet)
-        with av.open(str(odd)) as source:expected=Fraction(source.streams.video[0].width,source.streams.video[0].height)*(source.streams.video[0].sample_aspect_ratio or Fraction(1))
-        target=self.root/'odd-output';encode_hls(odd,target)
-        with av.open(str(target/'index.m3u8')) as media:
-            stream=media.streams.video[0];frames=list(media.decode(video=0))
-            self.assertEqual((stream.width,stream.height),(34,36));self.assertEqual(len(frames),10)
-            self.assertEqual(Fraction(stream.width,stream.height)*stream.sample_aspect_ratio,expected)
-        self.assertTrue((target/'complete.marker').is_file())
-
-    def test_pcm_input_uses_aac_output_bitrate_for_budget(self):
-        pcm=self.root/'pcm.mkv'
-        with av.open(str(self.source)) as reader,av.open(str(pcm),'w') as writer:
-            video=writer.add_stream('libx264',rate=10);video.width=video.height=64;video.pix_fmt='yuv420p'
-            audio=writer.add_stream('pcm_s16le',rate=48000);audio.layout='stereo'
-            resampler=av.AudioResampler(format='s16',layout='stereo',rate=48000)
-            for packet in reader.demux():
-                if packet.stream.type=='video':
-                    for frame in packet.decode():
-                        for encoded in video.encode(frame):writer.mux(encoded)
-                else:
-                    for frame in packet.decode():
-                        for converted in resampler.resample(frame):
-                            for encoded in audio.encode(converted):writer.mux(encoded)
-            for converted in resampler.resample(None):
-                for encoded in audio.encode(converted):writer.mux(encoded)
-            for encoded in audio.encode(None):writer.mux(encoded)
-            for encoded in video.encode(None):writer.mux(encoded)
-        with av.open(str(pcm)) as reader:self.assertGreater(reader.streams.audio[0].codec_context.bit_rate,128000);self.assertEqual(len(list(reader.decode(video=0))),30)
-        target=self.root/'pcm-output';encode_hls(pcm,target,max_output_bytes=512*1024)
-        with av.open(str(target/'index.m3u8')) as media:
-            self.assertEqual(media.streams.audio[0].codec_context.name,'aac')
-            self.assertTrue(list(media.decode(audio=0)))
     def test_only_qualified_aac_lc_can_be_copied(self):
         self.assertTrue(aac_lc(SimpleNamespace(name='aac',extradata=b'\x12\x10',profile='LC')))
         for extra,profile in ((b'',None),(b'\x12',None),(b'\x2b\x92','HE-AAC'),

@@ -50,138 +50,6 @@ def source_for(data, **kwargs):
 
 
 class StreamTests(unittest.TestCase):
-    def test_other_readers_do_not_clear_an_unrecovered_range_failure(self):
-        payload=b'x'*(3*65536);source,_=source_for(payload);self.addCleanup(source.close)
-        source.block(0,lambda:False)
-        with patch.object(source,'_range',side_effect=RuntimeError('offline')):
-            with self.assertRaises(SourceReadError):source.block(1,lambda:False)
-        self.assertTrue(source.network_failed.is_set())
-        source.block(0,lambda:False)
-        self.assertTrue(source.network_failed.is_set(),'another cached reader cannot recover the failed block')
-        source.block(2,lambda:False)
-        self.assertTrue(source.network_failed.is_set(),'a different successful network read cannot recover the failed block')
-        source.block(1,lambda:False)
-        self.assertFalse(source.network_failed.is_set(),'the failed range itself recovered')
-
-    def test_last_modified_needs_response_date_separation_before_stitching(self):
-        from email.utils import formatdate
-        payload=b'x'*150000
-        for separation in (None,0,1,59,60,120):
-            calls=[]
-            def request(*args,**kwargs):
-                headers=kwargs['headers'];calls.append(headers)
-                if 'Range' not in headers:
-                    response=Response(payload,0,len(payload)-1);response.status_code=200;response.headers={'Content-Length':str(len(payload))};return response
-                start,end=map(int,headers['Range'][6:].split('-'));response=Response(payload,start,min(end,len(payload)-1));response.headers.pop('ETag')
-                response.headers['Last-Modified']=formatdate(1000000000,usegmt=True)
-                if separation is not None:response.headers['Date']=formatdate(1000000000+separation,usegmt=True)
-                return response
-            source=ProgressiveSource('https://fixture.invalid/media',request=request,identity='date')
-            try:
-                source.block(0,lambda:False);source.block(1,lambda:False)
-                if separation is None or separation<60:
-                    self.assertTrue(source.validator.startswith('pinned-sha256:'));self.assertNotIn('Range',calls[1])
-                else:self.assertIn('If-Range',calls[1]);self.assertFalse(source.validator.startswith('pinned-sha256:'))
-            finally:source.close()
-
-    def test_successful_source_retry_clears_previous_network_failure(self):
-        payload=b'x'*131072;source,_=source_for(payload)
-        with patch.object(source,'_range',side_effect=[requests.exceptions.ConnectionError()]*3+[(payload[:65536],len(payload),'"fixture"')]):
-            with self.assertRaises(SourceReadError):source.block(0,lambda:False)
-            self.assertTrue(source.network_failed.is_set())
-            self.assertEqual(source.block(0,lambda:False),payload[:65536]);self.assertFalse(source.network_failed.is_set())
-        with patch.object(source,'_range',side_effect=RuntimeError('offline')):
-            with self.assertRaises(SourceReadError):source.block(1,lambda:False)
-            self.assertTrue(source.network_failed.is_set())
-            self.assertEqual(source.block(2,lambda:False),b'');self.assertTrue(source.network_failed.is_set(),'EOF is not recovered input')
-            self.assertEqual(source.block(0,lambda:False),payload[:65536]);self.assertTrue(source.network_failed.is_set(),'a cached probe cannot recover another failed range')
-        source.close()
-
-
-    def test_lost_validator_after_a_cached_block_rejects_new_representation(self):
-        payload = b'x' * 131072
-        first = Response(payload, 0, 65535)
-        changed = Response(b'y' * 131072, 65536, 131071)
-        changed.headers.pop('ETag')
-        source = ProgressiveSource('https://fixture.invalid/changed',
-                                   request=lambda *a, **k: next(responses), identity='changed')
-        responses = iter((first, changed))
-        self.assertEqual(source.block(0, lambda: False), payload[:65536])
-        with self.assertRaises(SourceReadError):
-            source.block(1, lambda: False)
-        self.assertTrue(changed.closed)
-        self.assertIsNone(source.pinned)
-
-    def test_validatorless_complete_response_checks_bounds_and_closes_partial_file(self):
-        for payload in (b'x' * 65535, b'x' * 65537):
-            initial = Response(b'x' * 65536, 0, 65535)
-            initial.headers.pop('ETag')
-            full = Response(payload, 0, len(payload) - 1)
-            full.status_code = 200
-            full.headers = {}
-            responses = iter((initial, full))
-            source = ProgressiveSource('https://fixture.invalid/unversioned',
-                                       request=lambda *a, **k: next(responses), identity='bounded')
-            with self.assertRaises(SourceReadError):
-                source.block(0, lambda: False)
-            self.assertTrue(initial.closed and full.closed)
-            self.assertIsNone(source.pinned)
-            self.assertFalse(source.snapshot()['complete'])
-
-    def test_validatorless_ranges_pin_one_complete_representation(self):
-        old=b'a'*131072;pinned=b'b'*131072;calls=[];responses=[]
-        def request(*args,**kwargs):
-            headers=kwargs['headers'];calls.append(dict(headers))
-            if 'Range' in headers:
-                start,end=map(int,headers['Range'][6:].split('-'))
-                response=Response(old,start,min(end,len(old)-1));response.headers.pop('ETag')
-            else:
-                response=Response(pinned,0,len(pinned)-1);response.status_code=200
-                response.headers={'Content-Length':str(len(pinned))}
-            responses.append(response);return response
-        source=ProgressiveSource('https://fixture.invalid/no-validator',request=request,identity='stable')
-        try:
-            self.assertEqual(source.block(0,lambda:False),pinned[:65536])
-            self.assertEqual(source.block(1,lambda:False),pinned[65536:])
-            self.assertEqual(len(calls),2);self.assertNotIn('Range',calls[1])
-            self.assertTrue(source.snapshot()['complete']);self.assertEqual(source.snapshot()['receivedBytes'],len(pinned))
-            self.assertTrue(all(r.closed for r in responses))
-        finally:
-            if hasattr(source,'close'):source.close()
-
-    def test_weak_or_invalid_validator_pins_complete_response(self):
-        for validator in ({'ETag':'W/"fixture"'},{'Last-Modified':'invalid-date'},{'ETag':'not-quoted'}):
-            old=b'a'*131072;pinned=b'b'*131072;calls=[];responses=[]
-            def request(*args,**kwargs):
-                headers=kwargs['headers'];calls.append(dict(headers))
-                if 'Range' in headers:
-                    start,end=map(int,headers['Range'][6:].split('-'))
-                    response=Response(old,start,min(end,len(old)-1));response.headers={'Content-Range':response.headers['Content-Range'],**validator}
-                else:
-                    response=Response(pinned,0,len(pinned)-1);response.status_code=200
-                    response.headers={'Content-Length':str(len(pinned))}
-                responses.append(response);return response
-            source=ProgressiveSource('https://fixture.invalid/no-validator',request=request,identity='stable')
-            try:
-                self.assertEqual(source.block(0,lambda:False),pinned[:65536])
-                self.assertEqual(source.block(1,lambda:False),pinned[65536:])
-                self.assertEqual(len(calls),2);self.assertNotIn('Range',calls[1])
-                self.assertTrue(source.snapshot()['complete']);self.assertEqual(source.snapshot()['receivedBytes'],len(pinned))
-                self.assertTrue(all(r.closed for r in responses))
-            finally:
-                if hasattr(source,'close'):source.close()
-
-    def test_validatorless_full_input_cancel_discards_partial_pin(self):
-        stopped=threading.Event();partial=Response(b'x'*131072,0,65535);partial.headers.pop('ETag')
-        full=Response(b'x'*131072,0,131071);full.status_code=200;full.headers={}
-        def chunks(_):
-            yield b'x'*65536;stopped.set();yield b'x'*65536
-        full.iter_content=chunks
-        responses=iter((partial,full))
-        source=ProgressiveSource('https://fixture.invalid/no-validator',request=lambda *a,**k:next(responses),identity='cancel')
-        with self.assertRaises(InterruptedError):source.block(0,stopped.is_set)
-        self.assertTrue(partial.closed and full.closed);self.assertFalse(source.network_failed.is_set())
-        self.assertIsNone(source.pinned)
 
     def test_real_http_stall_over_old_three_second_timeout(self):
         payload = b'x' * 65536
@@ -247,14 +115,11 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(request.call_count,2);self.assertTrue(first.closed and second.closed)
         self.assertEqual(source.received,65536);self.assertFalse(source.network_failed.is_set())
 
-    def test_weak_etag_pins_without_range_stitching(self):
+    def test_weak_etag_is_compared_but_not_sent_as_if_range(self):
         for date in (None,'invalid','Wed, 21 Oct 2015 07:28:00 GMT'):
             headers=[];payload=b'x'*150000
             def request(*args,**kwargs):
                 headers.append(dict(kwargs['headers']))
-                if 'Range' not in kwargs['headers']:
-                    response=Response(payload,0,len(payload)-1);response.status_code=200
-                    response.headers={'Content-Length':str(len(payload))};return response
                 start,end=map(int,kwargs['headers']['Range'][6:].split('-'))
                 response=Response(payload,start,min(end,len(payload)-1))
                 response.headers['ETag']='W/"version"'
@@ -262,9 +127,8 @@ class StreamTests(unittest.TestCase):
                 return response
             source=ProgressiveSource('https://fixture.invalid/media',request=request,identity='weak')
             source.block(0,lambda:False);source.block(1,lambda:False)
-            self.assertTrue(source.validator.startswith('pinned-sha256:'))
-            self.assertNotIn('Range',headers[1]);self.assertNotIn('If-Range',headers[1])
-            source.close()
+            self.assertEqual(source.validator,'W/"version"')
+            self.assertEqual(headers[1].get('If-Range'),date if date and date!='invalid' else None)
             self.assertFalse(source.network_failed.is_set())
 
     def test_persistent_timeout_is_bounded_and_sanitized(self):
