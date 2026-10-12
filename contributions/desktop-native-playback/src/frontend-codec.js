@@ -26,19 +26,35 @@ async function desktopSupportsSource(source) {
 
 function desktopCreateCodecFetch(forceH264 = false) {
   let closed = false, usedCopy = false, failureCode = null, knownDuration = false;
-  const pending = new Map(), selecting = new Set();
-  async function selection(input, init) {
+  const pending = new Map(), selecting = new Set(), creations = new Set();
+  async function selection(input, init, cleanup = false) {
     const control = new AbortController(), parent = init.signal;
     const abort = () => control.abort();
-    if (closed || parent?.aborted) throw Error('Expired codec selection');
+    if (closed && !cleanup || parent?.aborted) throw Error('Expired codec selection');
     parent?.addEventListener('abort', abort, {once:true}); selecting.add(control);
     let timer;
     try {
       return await Promise.race([
-        fetch(input, {...init, signal:control.signal}).then(async response => ({response, body:response.ok ? await response.json() : null})),
+        fetch(input, {...init, signal:control.signal}).then(async response => ({response, body:response.ok && response.status !== 204 ? await response.clone().json() : null})),
         new Promise((resolve,reject) => {timer=setTimeout(() => {control.abort();reject(Error('Codec selection timed out'));},15000);})
       ]);
     } finally {clearTimeout(timer); selecting.delete(control); parent?.removeEventListener('abort',abort);}
+  }
+  function cancelCreation(record) {
+    if (record.cancelled) return record.cancelled;
+    record.cancelled=(async()=>{
+      const deadline=Date.now()+15000;
+      do {
+        try {
+          const result=await selection(record.url.origin+'/desktop/hls/requests/'+record.token,
+            {method:'DELETE',headers:record.headers,credentials:'omit',redirect:'error',cache:'no-store'},true);
+          if (result.response.ok && result.body?.released !== false) return;
+        } catch {}
+        if (Date.now()>=deadline) return;
+        await new Promise(resolve=>setTimeout(resolve,100));
+      } while(Date.now()<deadline);
+    })();
+    return record.cancelled;
   }
   const request = async (input, init = {}) => {
     const url = new URL(input);
@@ -48,7 +64,17 @@ function desktopCreateCodecFetch(forceH264 = false) {
     const headers = new Headers(init.headers);
     if (!forceH264 && init.method === 'POST' && url.pathname === '/desktop/hls')
       headers.set('x-desktop-codec-negotiation', '1');
-    const response = await fetch(input, {...init, headers});
+    let response;
+    if (init.method==='POST' && url.pathname==='/desktop/hls') {
+      const token=(Date.now()+30000)+'-'+crypto.randomUUID().replace(/-/g,'');
+      url.searchParams.set('request_token',token);
+      const record={url,token,headers};creations.add(record);
+      try {
+        const result=await selection(url.href,{...init,headers});response=result.response;
+        if (closed || init.signal?.aborted) throw Error('Expired codec creation');
+      } catch(error) {await cancelCreation(record);throw error;}
+      finally {creations.delete(record);}
+    } else response = await fetch(input, {...init, headers});
     if (!response.ok || init.method === 'DELETE' || !/\/desktop\/hls\/[a-f0-9]{32}\/status$/.test(url.pathname))
       return response;
     const status = await response.clone().json();
@@ -61,19 +87,21 @@ function desktopCreateCodecFetch(forceH264 = false) {
         const copy = !status.startSeconds && await desktopSupportsSource(status.source);
         if (closed || init.signal?.aborted) return;
         let selected;
-        try {
-          const result = await selection(url.href.replace(/\/status$/, '/mode'), {
-            method:'POST', headers:new Headers([...headers, ['content-type','application/json']]),
-            body:JSON.stringify({mode:copy ? 'copy' : 'h264'}),
-            credentials:'omit', redirect:'error', cache:'no-store', signal:init.signal
-          });
-          if (result.response.ok) selected = result.body.mode;
-          else if (result.response.status !== 409) throw Object.assign(Error('Codec selection failed'),{status:result.response.status});
-        } catch (error) {if (closed || init.signal?.aborted || error.status) throw error;}
-        if (!selected) {
-          const result = await selection(url.href, {headers,credentials:'omit',redirect:'error',cache:'no-store',signal:init.signal});
-          if (!result.response.ok || result.body.state === 'failed') throw Error('Codec reconciliation failed');
-          selected = result.body.videoMode;
+        for (let attempt=0;attempt<2 && !selected;attempt++) {
+          try {
+            const result = await selection(url.href.replace(/\/status$/, '/mode'), {
+              method:'POST', headers:new Headers([...headers, ['content-type','application/json']]),
+              body:JSON.stringify({mode:copy ? 'copy' : 'h264'}),
+              credentials:'omit', redirect:'error', cache:'no-store', signal:init.signal
+            });
+            if (result.response.ok) selected = result.body.mode;
+            else if (result.response.status !== 409) throw Object.assign(Error('Codec selection failed'),{status:result.response.status});
+          } catch (error) {if (closed || init.signal?.aborted || error.status) throw error;}
+          if (!selected) {
+            const result = await selection(url.href, {headers,credentials:'omit',redirect:'error',cache:'no-store',signal:init.signal});
+            if (!result.response.ok || result.body.state === 'failed') throw Error('Codec reconciliation failed');
+            selected = result.body.videoMode;
+          }
         }
         if (!['copy','h264'].includes(selected)) throw Error('Codec selection unavailable');
         usedCopy = selected === 'copy';
@@ -85,7 +113,7 @@ function desktopCreateCodecFetch(forceH264 = false) {
   request.usedCopy = () => usedCopy;
   request.durationKnown = () => knownDuration;
   request.failureCode = () => failureCode;
-  request.close = () => {closed = true; for (const control of selecting) control.abort();};
+  request.close = () => {closed = true; for (const control of selecting) control.abort(); for (const record of creations) cancelCreation(record);};
   return request;
 }
 
@@ -165,7 +193,7 @@ function desktopCodecHls(media, url, initialPosition, callbacks, preparation, wi
         if (!active()) return;
         if (pendingSeek !== null) {
           const target = pendingSeek;pendingSeek = null;
-          queueMicrotask(()=>{if (active()) controller?.seek(target);});
+          queueMicrotask(()=>{if (active()) {internalPause=true;try {controller?.seek(target);} finally {internalPause=false;internalPlay=false;}}});
           return;
         }
         ready = true;

@@ -3,12 +3,12 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../src/fronten
 const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
 (async()=>{
   let supported=true,smooth=true,containerDuration=null,calls=[],controllers=[],timers=new Map(),tid=0;
-  const c={URL,Headers,Number,Math,Date,queueMicrotask,AbortController,
+  const c={crypto:require('node:crypto').webcrypto,URL,Headers,Number,Math,Date,queueMicrotask,AbortController,
     setTimeout:(fn,delay)=>{timers.set(++tid,{fn,delay});return tid},clearTimeout:id=>timers.delete(id),
     MediaSource:{isTypeSupported:()=>supported},navigator:{mediaCapabilities:{decodingInfo:async()=>({supported,smooth})}},
     fetch:async(url,init={})=>{
       calls.push([url,init]);
-      if(url.endsWith('/mode'))return {ok:true,json:async()=>JSON.parse(init.body)};
+      if(url.endsWith('/mode'))return {ok:true,clone(){return this},json:async()=>JSON.parse(init.body)};
       const body={source:{copyEligible:true,video:{contentType:'video/mp4; codecs="hvc1.1.6.L120.B0"'},audio:[]},videoMode:null,startSeconds:0,duration:containerDuration};
       return {ok:true,clone(){return this},json:async()=>body};
     }};

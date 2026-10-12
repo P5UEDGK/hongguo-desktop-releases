@@ -409,6 +409,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
         const latest = await request('/' + id + '/status');
         if (latest.state === 'failed') throw error;
         if (['h264', 'copy'].includes(latest.videoMode)) {delegateCommittedHls(latest); return;}
+        if (latest.videoMode == null) {delegate(false); return;}
         if (latest.videoMode !== 'native') throw error;
       }
       if (disposed) return;

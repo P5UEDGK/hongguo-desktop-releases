@@ -48,6 +48,7 @@ class ProgressiveSource:
         self.pinned = None
         self.closed = threading.Event()
         self.network_failed = threading.Event()
+        self.failed_blocks = set()
         self.reading = threading.Event()
 
     def __repr__(self):
@@ -77,7 +78,6 @@ class ProgressiveSource:
             with self.guard:
                 if index in self.blocks:
                     self.blocks.move_to_end(index)
-                    self.network_failed.clear()
                     return self.blocks[index]
             start = index * self.block_size
             if self.size and start >= self.size:
@@ -85,7 +85,8 @@ class ProgressiveSource:
             if self.pinned is not None:
                 self.pinned.seek(start)
                 value=self.pinned.read(self.block_size)
-                self.network_failed.clear()
+                self.failed_blocks.discard(index)
+                if not self.failed_blocks:self.network_failed.clear()
                 return value
             end = start + self.block_size - 1
             headers = {"Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"}
@@ -122,11 +123,13 @@ class ProgressiveSource:
                         self.received += len(value)
                     while len(self.blocks) > self.max_blocks:
                         self.blocks.popitem(last=False)
-                self.network_failed.clear()
+                self.failed_blocks.discard(index)
+                if not self.failed_blocks:self.network_failed.clear()
                 return value
             except InterruptedError:
                 raise
             except Exception:
+                self.failed_blocks.add(index)
                 self.network_failed.set()
                 raise SourceReadError("Media range read failed") from None
             finally:

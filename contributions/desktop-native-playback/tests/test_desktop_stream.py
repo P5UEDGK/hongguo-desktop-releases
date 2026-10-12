@@ -50,6 +50,19 @@ def source_for(data, **kwargs):
 
 
 class StreamTests(unittest.TestCase):
+    def test_other_readers_do_not_clear_an_unrecovered_range_failure(self):
+        payload=b'x'*(3*65536);source,_=source_for(payload);self.addCleanup(source.close)
+        source.block(0,lambda:False)
+        with patch.object(source,'_range',side_effect=RuntimeError('offline')):
+            with self.assertRaises(SourceReadError):source.block(1,lambda:False)
+        self.assertTrue(source.network_failed.is_set())
+        source.block(0,lambda:False)
+        self.assertTrue(source.network_failed.is_set(),'another cached reader cannot recover the failed block')
+        source.block(2,lambda:False)
+        self.assertTrue(source.network_failed.is_set(),'a different successful network read cannot recover the failed block')
+        source.block(1,lambda:False)
+        self.assertFalse(source.network_failed.is_set(),'the failed range itself recovered')
+
     def test_last_modified_needs_response_date_separation_before_stitching(self):
         from email.utils import formatdate
         payload=b'x'*150000
@@ -81,7 +94,7 @@ class StreamTests(unittest.TestCase):
             with self.assertRaises(SourceReadError):source.block(1,lambda:False)
             self.assertTrue(source.network_failed.is_set())
             self.assertEqual(source.block(2,lambda:False),b'');self.assertTrue(source.network_failed.is_set(),'EOF is not recovered input')
-            self.assertEqual(source.block(0,lambda:False),payload[:65536]);self.assertFalse(source.network_failed.is_set(),'successful cached probe may reuse source after a failed reader')
+            self.assertEqual(source.block(0,lambda:False),payload[:65536]);self.assertTrue(source.network_failed.is_set(),'a cached probe cannot recover another failed range')
         source.close()
 
 
