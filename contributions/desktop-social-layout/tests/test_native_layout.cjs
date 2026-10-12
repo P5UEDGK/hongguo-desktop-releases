@@ -4,14 +4,18 @@ const source=fs.readFileSync(process.argv[2],'utf8');
 const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
 (async()=>{
   const commands=[],timers=new Map(),observed=[],listeners=new Map();let tick=0,selected=false;
-  let chromeTop=450,revision=0;
-  const chrome={getBoundingClientRect:()=>({top:chromeTop,height:550-chromeTop})};
-  const stage={classList:{add(){},remove(){}},querySelector:s=>s==='.player-chrome'?chrome:null};
+  let chromeTop=450,revision=0,shown=true,panel=null,observer;
+  const chromeListeners=new Map();
+  const chrome={getBoundingClientRect:()=>({left:20,top:chromeTop,width:800,height:550-chromeTop}),
+    matches:()=>shown,addEventListener:(n,fn)=>chromeListeners.set(n,fn),removeEventListener:n=>chromeListeners.delete(n)};
+  const stage={classList:{add(){},remove(){}},querySelector:s=>s==='.player-chrome'?chrome:s==='.desktop-danmaku-panel'?panel:null};
   const media={playbackRate:1,volume:1,muted:false,closest:()=>stage,
     play:()=>Promise.resolve(),pause(){},dispatchEvent(){},
     addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name),
     getBoundingClientRect:()=>({left:20,top:50,width:800,height:500})};
   const context={URL,Event,DOMException,Number,Math,Date,window:{devicePixelRatio:1.5},
+    getComputedStyle:()=>({opacity:shown?'1':'0',display:'block',visibility:'visible'}),
+    MutationObserver:class{constructor(fn){this.fn=fn;observer=this;}observe(){}disconnect(){observer=null;}},
     ResizeObserver:class{constructor(fn){this.fn=fn;context.resize=this;}observe(node){observed.push(node);}disconnect(){observed.length=0;}},
     document:{hidden:false,head:{append(){}},createElement:()=>({remove(){}}),addEventListener(){},removeEventListener(){}},
     setTimeout:(fn,delay)=>{timers.set(++tick,{fn,delay});return tick;},clearTimeout:id=>timers.delete(id),
@@ -30,10 +34,19 @@ const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
   vm.createContext(context);vm.runInContext(source,context);
   const stop=context.desktopNativePlayback(media,'http://127.0.0.1',0,{onReady(){}},null);
   await settle();
-  assert.deepEqual(commands.find(c=>c.rect).rect,[30,75,1200,600],'native surface ends at actual control band, including DPI');
+  assert.deepEqual(commands.find(c=>c.rect).rect,[30,75,1200,750],'full video height, including DPI');
+  assert.deepEqual(commands.find(c=>c.rect).occlusion,[0,600,1200,150],'existing controls are revealed without resizing video');
   assert(observed.includes(chrome),'control band height changes are observed');
   chromeTop=400;context.resize.fn();await settle();
-  assert.deepEqual(commands.filter(c=>c.rect).at(-1).rect,[30,75,1200,525],'resized toolbar updates native geometry immediately');
+  assert.deepEqual(commands.filter(c=>c.rect).at(-1).rect,[30,75,1200,750],'toolbar resize does not rescale video');
+  assert.deepEqual(commands.filter(c=>c.rect).at(-1).occlusion,[0,525,1200,225]);
+  shown=false;observer.fn();await settle();
+  assert.deepEqual(commands.filter(c=>c.rect).at(-1).rect,[30,75,1200,750]);
+  assert.deepEqual(commands.filter(c=>c.rect).at(-1).occlusion,[],'idle restores the complete video region');
+  shown=true;panel={getBoundingClientRect:()=>({left:100,top:200,width:250,height:260})};
+  observer.fn();await settle();
+  assert.deepEqual(commands.filter(c=>c.rect).at(-1).occlusion,[0,525,1200,225,120,225,375,390],
+    'settings and controls each have their own bounded cutout');
   async function flushControls(){
     for(const [id,entry] of [...timers])if(entry.delay===250){timers.delete(id);await entry.fn();}
     await settle();
@@ -45,5 +58,11 @@ const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
   assert(listeners.has('desktopsociallayout'));
   stop();await settle();
   assert.equal(observed.length,0);assert.equal(listeners.size,0,'cleanup removes resize and social listeners');
-  console.log('PASS native measured toolbar/DPI/resize, pause/resume commands and cleanup');
+  assert.equal(observer,null);assert.equal(chromeListeners.size,0,'cleanup removes control visibility observer and events');
+  if(process.argv[3]){
+    const standby=fs.readFileSync(process.argv[3],'utf8');vm.runInContext(standby,context);
+    assert.deepEqual(Array.from(context.desktopNativeSurfaceRect(media)),[30,75,1200,750],
+      'next episode prewarms at the same full video dimensions');
+  }
+  console.log('PASS full native video/DPI, overlay visibility/resize/settings, pause/resume and cleanup');
 })().catch(error=>{console.error(error);process.exitCode=1;});

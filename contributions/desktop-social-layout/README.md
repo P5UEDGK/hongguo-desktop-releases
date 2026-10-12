@@ -24,13 +24,15 @@ const {Drawer,Controls,Selection,toggleSidebar}=createSocialUI({React,jsxRuntime
 
 宿主窗口控制组件应在普通窗口始终渲染已有置顶按钮，不要用 `dark || pinned` 决定是否渲染；`dark` 只决定配色，`pinned` 决定图标及按下状态。继续调用原窗口 owner 的查询和切换 API，避免新增第二套置顶状态。迷你模式沿用宿主原有窗口控制策略。验收同时检查普通窗口及播放窗口的按钮可见性、置顶/取消置顶的实际窗口状态和顶部边界。
 
-原生模式依次应用 patches/native-layout.patch、patches/native-layout-events.patch（前提为弹幕后端两个补丁）。rect/occlusion 改动立即 flush，忙碌时下一轮不延迟250ms；设置弹层在现有原生表面切出可见区域，关闭恢复。SetWindowRgn 成功后所有权交给 Windows，失败路径释放本包 GDI 对象。不复制 #204/#205 的整个播放器。
+原生模式依次应用 patches/native-layout.patch、patches/native-layout-events.patch（前提为弹幕后端两个补丁）。rect/occlusion 改动立即 flush，忙碌时下一轮不延迟250ms。视频按完整可用区域等比显示，控制栏不占独立高度；仅在控件显示时通过窗口 region 避让实际控件，设置面板另行避让，关闭后恢复。occlusion 继续接受原有空列表或一个矩形，并支持两个矩形的扁平列表（最多8个整数）。SetWindowRgn 成功后所有权交给 Windows，失败路径释放本包 GDI 对象。不复制 #204/#205 的整个播放器。
+
+接入 #213 连续切集时，再应用 patches/standby-layout.patch，使备用帧与当前画面使用相同完整区域。该补丁只删除原先扣除控制栏高度的逻辑，不改预热、切集和播放状态。
 
 原生接线需要 #204 的控制栏自动显隐修复。本包的事件补丁已兼容移除永久可见样式后的版本；不要重新添加强制 `.player-chrome` 的 opacity 或 pointer-events 覆盖。显隐由宿主现有控制器处理，弹幕设置面板打开时的临时保持显示仍有效。
 
 抽屉取消独立标题行，关闭按钮与页签同排。仅选集页可收起整层右列；两个评论页关闭后返回选集并保持右列展开。底部评论开关关闭时隐藏两个评论页签，只保留选集；开启时恢复页签并进入本集评论。
 
-底部控制栏始终单行。按 `.player-stage` 可用宽度使用容器查询缩小按钮、音量滑条和间距，保留全部控制；宽屏图标按钮32×32 CSS像素，窄视频区域缩至28或20像素宽，SVG 与悬停背景居中。宿主需保留 `.player-clock`、`.player-toolbar-spacer`，倍速 select 和音量 range 作为控制栏直接子节点。原生表面按 `.player-chrome` 实际顶部预留空间，并观察控制栏高度变化，避免固定84像素造成遮挡；宿主必须把进度条和按钮放在这个容器内。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
+底部控制栏始终单行。按 `.player-stage` 可用宽度使用容器查询缩小按钮、音量滑条和间距，保留全部控制；宽屏图标按钮32×32 CSS像素，窄视频区域缩至28或20像素宽，SVG 与悬停背景居中。宿主需保留 `.player-clock`、`.player-toolbar-spacer`，倍速 select 和音量 range 作为控制栏直接子节点。进度条和按钮沿用宿主原有位置、样式和事件，不因这次画面修复而移动。原生表面不再永久扣除 `.player-chrome` 高度，也不把其透明顶部 padding 变成黑色占位；监听原控制栏显隐和尺寸变化，只更新遮挡区域，显隐不改变视频缩放。画面单击继续由宿主现有处理器执行暂停/继续，本包不重复绑定 click 或键盘监听。
 
 剧场按钮和 T 快捷键共用 `toggleSidebar`：右侧栏展开时收起，关闭时打开选集；从评论页收起后再点也进入选集。宿主移除独立的剧场状态及 `.theater` 类切换，按钮保持“剧场模式”名称，提示可用“切换右侧栏（T）”。选集、评论、关闭和缓存继续由现有侧栏 owner 管理，窗口、播放和弹幕不随此动作改变。浏览器回归覆盖二次点击、宽窄窗口、评论页及侧栏已关闭的情况。
 
@@ -45,6 +47,9 @@ npm --prefix contributions/desktop-social-layout ci
 node contributions/desktop-social-layout/tests/run.mjs --channel chrome
 # 按依赖顺序应用原生补丁后：
 node contributions/desktop-social-layout/tests/test_native_layout.cjs contributions/desktop-native-playback/src/frontend-native.js
+python contributions/desktop-social-layout/tests/test_overlay_control.py contributions/desktop-native-playback/src/desktop_native.py
+# 同时接入 #213 并应用 standby-layout.patch 时：
+node contributions/desktop-social-layout/tests/test_native_layout.cjs contributions/desktop-native-playback/src/frontend-native.js contributions/desktop-seamless-transition/src/frontend-seamless.js
 ```
 
 公开测试为人工构造输入，不连接上游。新导出模块已经独立验证；跨包 Chrome 用例由布局包统一维护。此前本机安装还完成53项窗口功能与21项原生像素检查，快/中/慢档（8/14/24秒）实测为161.25/92.5/53.75物理像素/视频秒；这些属于当时本机接线证据，不是本公开包在所有设备或上游发布后的保证。

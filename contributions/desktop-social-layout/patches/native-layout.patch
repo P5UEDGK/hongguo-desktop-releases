@@ -15,7 +15,7 @@
          result['danmakuSettings'] = validate_settings(body['danmakuSettings'])
 +    if 'occlusion' in body:
 +        value = body['occlusion']
-+        if (not isinstance(value, list) or len(value) not in (0, 4)
++        if (not isinstance(value, list) or len(value) not in (0, 4, 8)
 +                or any(type(v) is not int or not 0 <= v <= 32768 for v in value)):
 +            raise ValueError('Invalid native occlusion')
      return result
@@ -43,7 +43,7 @@
                  "ShowWindow": ([W.HWND, C.c_int], W.BOOL),
                  "DestroyWindow": ([W.HWND], W.BOOL),
                  "PeekMessageW": ([C.POINTER(W.MSG), W.HWND, W.UINT, W.UINT, W.UINT], W.BOOL),
-@@ -365,6 +378,7 @@
+@@ -371,6 +384,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
@@ -51,7 +51,7 @@
          danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
          progressive = isinstance(self.job.source, ProgressiveSource)
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
-@@ -466,9 +480,33 @@
+@@ -472,9 +486,39 @@
                          if not user.GetClientRect(self.parent, C.byref(client)):
                              raise RuntimeError("Desktop parent unavailable")
                          width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
@@ -66,19 +66,25 @@
 +                        if not occlusion:
 +                            user.SetWindowRgn(hwnd, None, True)
 +                        else:
-+                            # Reveal the WebView settings panel without resizing
-+                            # or hiding the native video surface behind it.
++                            # Keep the full render size while revealing at most two
++                            # WebView overlays (controls/idle progress and settings).
 +                            client = W.RECT()
 +                            if not user.GetClientRect(hwnd, C.byref(client)):
 +                                raise RuntimeError("Native surface unavailable")
-+                            ox, oy, ow, oh = occlusion
 +                            region = self.host.gdi.CreateRectRgn(0, 0, client.right, client.bottom)
-+                            cutout = self.host.gdi.CreateRectRgn(ox, oy, ox + ow, oy + oh)
++                            cutout = None
 +                            try:
-+                                if not region or not cutout or not self.host.gdi.CombineRgn(region, region, cutout, 4):
-+                                    raise RuntimeError("Native panel clipping failed")
++                                if not region:
++                                    raise RuntimeError("Native overlay clipping failed")
++                                for index in range(0, len(occlusion), 4):
++                                    ox, oy, ow, oh = occlusion[index:index + 4]
++                                    cutout = self.host.gdi.CreateRectRgn(ox, oy, ox + ow, oy + oh)
++                                    if not cutout or not self.host.gdi.CombineRgn(region, region, cutout, 4):
++                                        raise RuntimeError("Native overlay clipping failed")
++                                    self.host.gdi.DeleteObject(cutout)
++                                    cutout = None
 +                                if not user.SetWindowRgn(hwnd, region, True):
-+                                    raise RuntimeError("Native panel clipping failed")
++                                    raise RuntimeError("Native overlay clipping failed")
 +                                region = None  # successful SetWindowRgn transfers ownership
 +                            finally:
 +                                if region: self.host.gdi.DeleteObject(region)
@@ -86,7 +92,7 @@
                      danmaku_track.update(command)
                      for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
                          if key in command:
-@@ -541,6 +579,10 @@
+@@ -547,6 +591,10 @@
                          raise SourceReadError("Native media input timed out")
                      retry_software()
                      continue
@@ -97,7 +103,7 @@
                  with self.guard:
                      self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                       time=position, duration=player.number("duration", self.job.duration),
-@@ -553,6 +595,7 @@
+@@ -559,6 +607,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops,
