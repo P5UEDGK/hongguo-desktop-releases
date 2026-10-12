@@ -83,7 +83,7 @@
          with self.condition:
              if (generation == self.generation and not self.closed
                      and (job is None or not job.cancelled.is_set() and self.foreground.get(job.id) == generation)
-@@ -147,6 +167,100 @@
+@@ -147,6 +167,98 @@
          self._report()
          return source
  
@@ -104,13 +104,11 @@
 +            # in-flight download must publish its source before transfer.
 +            self.pending = [task for task in self.pending if task[2] != vid]
 +            self.download_pending = [task for task in self.download_pending if task[2] != vid]
-+            until = time.monotonic() + 15
 +            while (self.download_active is not None and self.download_active[2] == vid
 +                   or self.active is not None and self.active[2] == vid):
 +                if self.active is not None and self.active[2] == vid:
 +                    self.background_cancelled.set()
 +                current_generation()
-+                if time.monotonic() >= until: raise EncodingCancelled()
 +                self.condition.wait(.05)
 +            current_generation()
 +            source = self.sources.get(vid)
@@ -184,7 +182,7 @@
      def _download(self):
          while True:
              with self.condition:
-@@ -181,6 +295,8 @@
+@@ -181,6 +293,8 @@
  
      def finish(self, job, series_id, episode, source):
          with self.condition:
@@ -193,7 +191,7 @@
              expected = self.foreground.get(job.id)
              cached_result = self.cache_results.pop(job.id, None)
              self.foreground_directories.pop(job.id, None)
-@@ -198,6 +314,9 @@
+@@ -202,6 +316,9 @@
              pass  # Completion bookkeeping still releases the old foreground slot.
          with self.condition:
              generation = self.foreground.pop(job.id, None)
@@ -203,7 +201,7 @@
              if self.busy == job.id:
                  self.busy = None
              if generation == self.generation and (job.failed or job.cancelled.is_set()):
-@@ -350,6 +469,7 @@
+@@ -355,6 +472,7 @@
  
          result["currentSourceComplete"] = self._source_complete(source)
          return result

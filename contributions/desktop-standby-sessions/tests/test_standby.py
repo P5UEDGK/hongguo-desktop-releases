@@ -20,6 +20,20 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_healthy_prefetch_owner_may_take_more_than_fifteen_seconds(self):
+        from unittest.mock import patch
+        vid='123456780002';source=object();clock=[0];waits=[]
+        p=EpisodePrefetcher(lambda _:self.fail('duplicate source load'),lambda _:({},[{'index':2,'vid':vid}]),self.root/'slow-owner',encoder=lambda *_:None,ahead=0)
+        self.addCleanup(p.close);p.generation=1;p.download_active=(1,2,vid)
+        def wait(_):
+            waits.append(1);clock[0]+=20
+            if len(waits)==2:p.sources[vid]=source;p.download_active=None
+        job=SimpleNamespace(prewarm_parent='parent',prefetch_generation=1,cancelled=threading.Event())
+        with patch('desktop_prefetch.time.monotonic',side_effect=lambda:clock[0]),patch.object(p.condition,'wait',side_effect=wait):
+            self.assertIs(p.load_standby_source(job,'series',2),source)
+        self.assertEqual(len(waits),2)
+
+
     def test_standby_claims_queued_and_inflight_download_before_fallback(self):
         vid='123456780002'
         for kind in ('queued-encode','queued-download','inflight-download'):
