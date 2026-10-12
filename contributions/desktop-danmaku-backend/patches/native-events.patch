@@ -8,7 +8,7 @@
      chromeChanges?.disconnect();
      stage?.removeEventListener?.('transitionend', layout);
      document.removeEventListener('fullscreenchange', layout);
-@@ -210,6 +211,10 @@
+@@ -221,6 +222,10 @@
        controlBusy = false;
        if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, 250);
      }
@@ -19,10 +19,10 @@
    }
    function layout() {
      if (!native || !stage) return;
-@@ -280,6 +285,8 @@
-     stage?.addEventListener?.('transitionend', layout);
+@@ -292,6 +297,8 @@
      document.addEventListener('fullscreenchange', layout);
      document.addEventListener('visibilitychange', layout);
+     document.addEventListener('scroll',layout,true);
 +    media.addEventListener('desktopdanmaku', updateDanmaku);
 +    updateDanmaku();
      layout();

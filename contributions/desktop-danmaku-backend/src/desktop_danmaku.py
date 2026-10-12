@@ -84,6 +84,7 @@ def ass_document(items, settings=None, *, assets=None, subtitle_speed=1, on_emit
             if part not in assets and parts and parts[-1] not in assets:parts[-1]+=part
             else:parts.append(part)
         events=sum(len(assets[part]['drawing']) if part in assets else 1 for part in parts)
+        if not events:continue
         if event_count+events>2048:break
         event_count+=events
         on_emitted(row)

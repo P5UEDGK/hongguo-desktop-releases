@@ -139,5 +139,12 @@ try:
         player.command('set','secondary-sub-delay','4');switched.apply(player)
         assert not switched.failed and float(player.get('secondary-sub-delay'))==4
         switched.close(player);assert player.get('sid')==selected and float(player.get('sub-delay'))==4
-        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, simultaneous caption/option switch, subtitle restoration and sub-speed timing; no pixel or Win32 claim'}))
+        player.command('set','sub-pos','90');player.command('set','secondary-sub-pos','15')
+        positioned=DanmakuTrack();positioned.update({'danmaku':[{'text':'secondary position overlay','offset_ms':0,'lane':0}]});positioned.apply(player)
+        player.command('set','secondary-sub-pos','75')
+        for _ in range(5):
+            positioned.apply(player);assert not positioned.failed and float(player.get('secondary-sub-pos'))==75
+        positioned.close(player)
+        assert float(player.get('sub-pos'))==75 and float(player.get('secondary-sub-pos'))==15
+        print(json.dumps({'pass':True,'scope':'actual libmpv synthetic audio, simultaneous caption/option switch, repeated secondary-position polls and subtitle restoration and sub-speed timing; no pixel or Win32 claim'}))
 finally:player.close()

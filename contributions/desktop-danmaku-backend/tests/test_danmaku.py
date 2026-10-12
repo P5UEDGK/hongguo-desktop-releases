@@ -19,6 +19,19 @@ class Player:
             self.properties[args[1]]=str(args[2])
     def get(self,key): return self.properties.get(key)
 class DanmakuTests(unittest.TestCase):
+    def test_promoted_secondary_position_survives_repeated_polls_and_restores(self):
+        p=Player();p.properties.update({'sid':'7','sub-pos':'90','secondary-sub-pos':'15'})
+        track=DanmakuTrack();track.update({'danmaku':[ITEM]});track.apply(p)
+        p.command('set','secondary-sub-pos','75')
+        for _ in range(5):
+            track.apply(p);self.assertFalse(track.failed);self.assertEqual(p.get('secondary-sub-pos'),'75')
+        track.close(p);self.assertEqual(p.get('sub-pos'),'75');self.assertEqual(p.get('secondary-sub-pos'),'15')
+
+    def test_visibility_ignores_rows_that_emit_zero_ass_dialogues(self):
+        for text in ('','   ','\t\n '):
+            p=Player();track=DanmakuTrack();track.update({'danmaku':[dict(ITEM,offset_ms=0),dict(ITEM,text=text,offset_ms=10000)],'danmakuSettings':dict(DEFAULT_SETTINGS,duration=4)})
+            track.apply(p);self.assertFalse(track.failed);self.assertTrue(track.snapshot(1)['danmakuVisible']);self.assertFalse(track.snapshot(10)['danmakuVisible']);track.close(p)
+
     def test_promoted_secondary_edits_return_to_the_primary_caption(self):
         for clear in (False,True):
             p=Player();p.properties.update({'sid':'7','sub-delay':'2','secondary-sub-delay':'-.5'})

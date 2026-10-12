@@ -62,6 +62,7 @@ class DanmakuTrack:
             ('sub-delay','0'),('secondary-sub-delay','0'),
             ('sub-visibility','yes'),('secondary-sub-visibility','yes'),
             ('sub-pos','100'),('secondary-sub-pos','0'))}
+        self.modified_options['sub-pos']=self.saved_options['sub-pos']
 
     def set_option(self, player, name, value):
         if str(player.get(name)) != str(value):
@@ -140,6 +141,7 @@ class DanmakuTrack:
             live = str(player.get(name))
             if live != self.modified_options.get(name,neutral):
                 self.saved_options[name] = live; changed.add(name); self.dirty = True
+                if name == 'sub-pos':self.modified_options[name]=live
         if self.promoted and self.saved and str(player.get('secondary-sid')) == str(self.saved[0]):
             for primary in ('sub-ass-override','sub-delay','sub-visibility','sub-pos'):
                 secondary = 'secondary-' + primary
