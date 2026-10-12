@@ -53,3 +53,5 @@ node contributions/desktop-social-layout/tests/test_native_layout.cjs contributi
 ## 首轮审查修复
 
 迷你模式恢复单列视频、隐藏已经展开的 aside；ResizeObserver 也观察迷你按钮本身。新增无需窗口 resize 的按钮变宽测试及迷你模式回归。本轮补充抽屉关闭、无标题布局、播放按钮对齐和单击暂停/继续的组合回归；原生桥接测试覆盖实际控制栏高度、DPI、resize、暂停/继续命令和监听清理。
+
+选集紧凑样式沿用宿主的 `.player-series-summary`、`.episode-heading`、`.season-continuation`、`.episode-navigation`、`.episode-page-buttons`、`.episode-locate`、`.desktop-episode-grid` 和 `.episode-expand` 类。分组容器包含范围状态及前后按钮：范围在左，前后按钮在右同排；宿主保留原事件与DOM顺序，样式不添加监听。定位和季查询继续由宿主负责。侧栏320px及以上验收同排，长列表保留滚动空间。

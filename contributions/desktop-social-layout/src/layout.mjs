@@ -83,6 +83,25 @@ export function installSocialStyles() {
         .desktop-player .player-toolbar .desktop-social-controls{gap:1px}
         .desktop-player .player-toolbar .desktop-social-controls > button,.desktop-player .player-toolbar .desktop-danmaku-control > button{min-width:28px;padding:3px 1px;height:26px;font-size:11px}
       }
+
+      .desktop-player-layout aside > .player-series-summary{margin-top:8px;margin-bottom:8px}
+      .desktop-player-layout aside .player-series-summary h2{font-size:14px;line-height:1.4;margin:0 0 4px;overflow-wrap:anywhere}
+      .desktop-player-layout aside .player-series-summary small{font-size:12px;line-height:1.4}
+      .desktop-player-layout aside > .episode-heading{margin-top:0;margin-bottom:8px}
+      .desktop-player-layout aside > .season-continuation{margin-top:0;margin-bottom:8px;padding:6px 8px;border-radius:7px}
+      .desktop-player-layout aside .season-continuation > button{padding:5px 8px;font-size:12px}
+      .desktop-player-layout aside > .episode-navigation{margin-top:0;margin-bottom:8px}
+      .desktop-player-layout aside .episode-page-buttons{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:center}
+      .desktop-player-layout aside .episode-page-buttons [role=status]{order:-1;min-width:0;font-size:11px;line-height:1.4;white-space:nowrap}
+      .desktop-player-layout aside .episode-page-buttons button{height:28px;padding:3px 7px;font-size:12px;white-space:nowrap}
+      .desktop-player-layout aside .episode-locate{margin-top:6px;gap:4px 6px}
+      .desktop-player-layout aside .episode-locate label{gap:3px;font-size:11px}
+      .desktop-player-layout aside .episode-locate input{height:30px;padding:5px 8px;font-size:12px}
+      .desktop-player-layout aside .episode-locate button{height:30px;padding:4px 9px;font-size:12px}
+      .desktop-player-layout aside .episode-locate small{font-size:11px;line-height:1.3}
+      .desktop-player-layout aside > .desktop-episode-grid{gap:6px}
+      .desktop-player-layout aside .desktop-episode-grid button{height:32px;padding:5px 2px;font-size:13px}
+      .desktop-player-layout aside > .episode-expand{width:auto;flex-shrink:0;margin-top:8px;margin-bottom:8px;padding:6px;font-size:12px}
       .desktop-player.mini .desktop-player-layout.desktop-social-enabled{grid-template-columns:minmax(0,1fr)}
       .desktop-player.mini .desktop-player-layout.desktop-social-enabled aside{display:none}
       @media(prefers-reduced-motion:reduce){.desktop-player-layout.desktop-social-enabled aside{animation:none}}
