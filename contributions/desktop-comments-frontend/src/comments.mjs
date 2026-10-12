@@ -54,7 +54,7 @@ function desktopSocialStore(endpoint) {
         const laterIds = new Set();
         for (const [key, page] of entry.pages) if (key)
           for (const row of page.items) if (!firstIds.has(row.id)) laterIds.add(row.id);
-        return {value:entry.value, page:entry.pages.get(cursor), laterIds};
+        return {value:entry.value, page:entry.pages.get(cursor), laterIds, firstIds};
       }
       return pageOnly ? entry.pages.get(cursor) : entry.value;
     };
@@ -77,10 +77,16 @@ function desktopSocialStore(endpoint) {
     entry.pending = desktopSocialRead(endpoint, resource, params, entry.abort.signal, deadline-Date.now()).then(result => {
       if (entry.abort.signal.aborted || entries.get(key) !== entry) throw new DOMException('Aborted', 'AbortError');
       const page = resource === 'comments' || resource === 'replies';
-      if (page && !cursor) {entry.cursors.clear(); entry.pages.clear();}
+      if (page && !cursor && resource !== 'replies') {entry.cursors.clear(); entry.pages.clear();}
       entry.pages.set(cursor, page ? {...result, has_more:result.has_more && result.cursor !== cursor} : result);
       entry.value = page ? {...result, has_more:result.has_more && result.cursor !== cursor,
         items:cursor && entry.value ? [...new Map([...entry.value.items, ...result.items].map(item => [item.id,item])).values()] : result.items} : result;
+      if (resource === 'replies' && !cursor && entry.pages.size > 1) {
+        const later = [...entry.pages].filter(([key]) => key).map(([,value]) => value);
+        const last = later.at(-1);
+        entry.value = {...entry.value, cursor:last.cursor, has_more:last.has_more,
+          items:[...result.items,...later.flatMap(value => value.items).filter(row => !result.items.some(first => first.id === row.id))]};
+      }
       entry.cursors.add(cursor); return entry.value;
     }).catch(error => {
       if (!entry.value && entries.get(key) === entry) entries.delete(key);
@@ -264,6 +270,12 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     own.current = {abort: new AbortController(), busy: false};
     return () => {own.current.abort.abort();};
   }, []);
+  O.useEffect(() => {
+    if (!replies || item.replies <= 0) {
+      own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false};
+      setOpen(false);setPage(null);setBusy(false);setError('');laterIds.current.clear();detachedCursor.current=null;
+    }
+  }, [item.id,item.replies,replies]);
   async function load(cursor = '') {
     const request = own.current;
     if (!request || request.busy || request.abort.signal.aborted) return;
@@ -275,9 +287,9 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
       if (own.current === request && !request.abort.signal.aborted) setPage(previous => {
         detachedCursor.current = null;
         const freshIds = new Set((cached?.page || result).items.map(row => row.id));
-        if (cursor) for (const id of freshIds) laterIds.current.add(id);
+        if (cursor && !cached) for (const id of freshIds) laterIds.current.add(id);
         else for (const id of freshIds) laterIds.current.delete(id);
-        if (cached) for (const id of cached.laterIds) laterIds.current.add(id);
+        if (cached) {for (const id of cached.firstIds) laterIds.current.delete(id); for (const id of cached.laterIds) laterIds.current.add(id);}
         const resultIds = new Set(result.items.map(row => row.id));
         const later = previous?.items.filter(row => laterIds.current.has(row.id) && !resultIds.has(row.id)) || [];
         const keepLater = !cursor && later.length > 0;
@@ -294,7 +306,7 @@ function DesktopSocialComment({item, endpoint, store, replies}) {
     b.jsx('small', {children: (item.created_at ? new Date(item.created_at * 1000).toLocaleDateString('zh-CN') + ' · ' : '') + '赞 ' + item.likes}),
     replies && item.replies > 0 && b.jsx('button', {'aria-expanded': open, onClick: () => {
       setOpen(!open); if (open) {if (store && own.current?.busy) detachedCursor.current = own.current.cursor; own.current?.abort.abort(); own.current = {abort:new AbortController(),busy:false}; setBusy(false);} else if (!busy && (store || !page)) load(detachedCursor.current ?? '');}, children: open ? '收起回复' : '查看 ' + item.replies + ' 条回复'}),
-    open && b.jsxs('div', {className: 'desktop-social-replies', children: [
+    open && replies && item.replies > 0 && b.jsxs('div', {className: 'desktop-social-replies', children: [
       page?.items.map(row => b.jsx(DesktopSocialComment, {item: row, endpoint, store, replies: false}, row.id)),
       page && !page.items.length && b.jsx('p', {children: '暂无回复'}),
       busy && b.jsx('p', {role: 'status', children: '正在加载回复…'}),
