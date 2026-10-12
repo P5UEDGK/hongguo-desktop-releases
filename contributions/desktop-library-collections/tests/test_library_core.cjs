@@ -123,5 +123,86 @@ function fixture(){
     const f=fixture();await Promise.all([f.store.favorite(item(SID),true),f.store.favorite(item(SID),false),f.store.favorite(item(SID),true)]);
     assert.equal(f.favoriteIds.has(SID),true);assert.deepEqual(f.events.map(row=>row[1]),[true,false,true]);await turn();
   });
+
+  function autoFixture(storage = new Map()) {
+    let clock=Date.now();const saved=new Set(),history=[],events=[],calls=[];
+    let fail=null,hold=null;
+    const own=vm.createContext({URL,AbortController,setTimeout,clearTimeout,queueMicrotask,console,
+      Date:class extends Date {static now(){return clock;}}});
+    vm.runInContext(source,own);
+    const records=new Map([SID,OTHER,THIRD].map((sid,index)=>[sid,{seriesId:sid,albumId:ALBUM,season:index+1,title:'测试',retryAt:0}]));
+    records.set(FOREIGN,{seriesId:FOREIGN,albumId:'99990009',season:1,title:'其他剧',retryAt:0});
+    records.set(UNKNOWN,{seriesId:UNKNOWN,albumId:null,season:null,title:'未知',retryAt:0});
+    own.fetch=async(url,options)=>{
+      calls.push([url,options.method]);
+      if(options.method==='GET')return {ok:true,json:async()=>({relations:[...records.values()],manual:{},requestToken:'fixture'})};
+      assert.ok(url.endsWith('/relations'),'automatic grouping must not call search or other endpoints');
+      return {ok:true,json:async()=>({relations:JSON.parse(options.body).seriesIds.map(sid=>records.get(sid)).filter(Boolean)})};
+    };
+    const api={validationStatus:async()=>({baseUrl:'http://127.0.0.1:12345'}),favorites:async()=>[...saved].map(item),history:async()=>[...history],
+      setFavorite:async(row,value)=>{if(hold&&hold.sid===row.seriesId&&value)await hold.promise;
+        if(fail===row.seriesId&&value)throw Error('native failed');
+        events.push([row.seriesId,value]);value?saved.add(row.seriesId):saved.delete(row.seriesId);}};
+    const options={storage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)}};
+    const construct=()=>vm.runInContext('desktopCreateLibrary',own)(api,()=>{},options);
+    let store=construct();
+    return {api,saved,history,events,calls,records,storage,get store(){return store;},
+      restart(){store=construct();return store;},set fail(value){fail=value;},set hold(value){hold=value;},advance(ms){clock+=ms;}};
+  }
+  await test('same collection uses 13 shared seasons in favorites and seven-record history',async()=>{
+    const all=Array.from({length:13},(_,index)=>item(String(8800000000000000000n+BigInt(index))));
+    const related=new Map(all.map((row,index)=>[row.seriesId,{albumId:ALBUM,season:index+1}]));
+    const watched=all.slice(6),unwatchedOther=item(FOREIGN);
+    const shared=[...all,unwatchedOther];
+    const a=groups(all,related,new Map(),shared),b=groups(watched,related,new Map(),shared);
+    assert.equal(a[0].items.length,13);assert.equal(b[0].items.length,13);assert.equal(b.length,1);
+    assert.deepEqual(Array.from(a[0].items,row=>row.seriesId),Array.from(b[0].items,row=>row.seriesId));
+    assert.equal(watched.length,7);assert.equal(progress([all[0]],watched).label,'未观看');
+  });
+  await test('existing history collection auto-favorites all members without search',async()=>{
+    const f=autoFixture();f.history.push(item(SID),item(OTHER));
+    await f.store.observe(f.history,'history');
+    for(let n=0;n<6;n++)await turn();
+    assert.equal(f.saved.size,2);assert.equal(f.events.length,2);
+    assert.equal(f.calls.filter(row=>row[1]==='POST').length,0);
+    const before=f.events.length;
+    await Promise.all(Array.from({length:8},()=>f.store.observe(f.history,'history')));
+    await f.store.syncAutoFavorites();assert.equal(f.events.length,before);
+  });
+  await test('newly grouped season auto-favorites while singleton and detail-only candidates stay untouched',async()=>{
+    const f=autoFixture();f.history.push(item(SID));
+    await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();assert.equal(f.saved.size,0);
+    await f.store.ensure([OTHER,THIRD]);await f.store.syncAutoFavorites();assert.equal(f.saved.size,0);
+    f.history.push(item(OTHER),item(FOREIGN),item(UNKNOWN));
+    await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();
+    assert.equal(f.saved.has(SID),true);assert.equal(f.saved.has(OTHER),true);
+    assert.equal(f.saved.has(THIRD),false);assert.equal(f.saved.has(FOREIGN),false);assert.equal(f.saved.has(UNKNOWN),false);
+    f.history.push(item(THIRD));await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();
+    assert.equal(f.saved.has(THIRD),true);
+  });
+  await test('manual exclusion survives refresh and restart, explicit favorite clears it',async()=>{
+    const f=autoFixture();f.history.push(item(SID),item(OTHER));
+    await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();
+    await f.store.favorite(item(OTHER),false);await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();
+    assert.equal(f.saved.has(OTHER),false);assert.ok([...f.storage.values()][0].includes(OTHER));
+    f.restart();await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();assert.equal(f.saved.has(OTHER),false);
+    await f.store.favorite(item(OTHER),true);await f.store.syncAutoFavorites();assert.equal(f.saved.has(OTHER),true);
+    assert.ok(![...f.storage.values()][0].includes(OTHER));
+  });
+  await test('manual remove wins an already in-flight automatic native save',async()=>{
+    const f=autoFixture(),block=defer();f.history.push(item(SID),item(OTHER));f.hold={sid:OTHER,...block};
+    await f.store.observe(f.history,'history');for(let n=0;n<4;n++)await turn();
+    const removed=f.store.favorite(item(OTHER),false);block.resolve();await removed;await f.store.syncAutoFavorites();
+    assert.equal(f.saved.has(OTHER),false);assert.equal(f.events.filter(row=>row[0]===OTHER).at(-1)[1],false);
+  });
+  await test('failed automatic save does not mark complete; retries after cooldown and keeps other seasons',async()=>{
+    const f=autoFixture();f.fail=SID;f.history.push(item(SID),item(OTHER));
+    await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();
+    assert.equal(f.saved.has(SID),false);assert.equal(f.saved.has(OTHER),true);
+    f.fail=null;await f.store.syncAutoFavorites();assert.equal(f.saved.has(SID),false);
+    f.advance(30001);await f.store.observe(f.history,'history');await f.store.syncAutoFavorites();assert.equal(f.saved.has(SID),true);
+    assert.equal(f.history.length,2);assert.equal(f.events.filter(row=>row[0]===OTHER).length,1);
+  });
+
   console.log('PASS',count,'library tests');
 })().catch(error=>{console.error(error);process.exitCode=1;});

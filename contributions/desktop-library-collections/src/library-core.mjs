@@ -51,7 +51,12 @@ class DesktopSearchQueue {
   }
 }
 
-function desktopLibraryGroups(items, relations, manual) {
+function desktopLibraryGroups(items, relations, manual, sharedItems = items) {
+  if (sharedItems !== items) {
+    const shared = new Map(desktopLibraryGroups([...sharedItems,...items],relations,manual).map(group=>[group.key,group]));
+    // Each root keeps its own series visibility; folders use one shared membership.
+    return desktopLibraryGroups(items,relations,manual).map(group=>shared.get(group.key)||group);
+  }
   const groups = new Map();
   for (const item of items) {
     const relation = relations.get(item.seriesId);
@@ -91,11 +96,61 @@ function desktopLibraryProgress(items, history, relations = new Map()) {
     percent,seriesId:latest.seriesId};
 }
 
-function desktopCreateLibrary(api, notify) {
+function desktopCreateLibrary(api, notify, options = {}) {
   const relations = new Map(), manual = new Map(), known = new Map(), pending = new Map();
   const removed = new Map(), writes = new Map(); let revision = 0;
   const members={favorites:new Set(),history:new Set()};
   let access = null, loading = null, draining = false, error = '';
+  const excluded = new Set(), autoRetry = new Map();
+  const exclusionKey = 'guoban:library-auto-favorite-exclusions:v1';
+  let storage=options.storage, autoWork=null, autoDirty=false, autoScheduled=false;
+  if (storage===undefined) {try {storage=globalThis.localStorage;} catch {storage=null;}}
+  try {
+    const saved=JSON.parse(storage?.getItem(exclusionKey)||'[]');
+    if(Array.isArray(saved))for(const sid of saved)if(typeof sid==='string'&&/^\d{8,24}$/.test(sid))excluded.add(sid);
+  } catch { /* Invalid preferences never block native membership. */ }
+  function rememberChoice(sid,value) {
+    value?excluded.delete(sid):excluded.add(sid);
+    try {storage?.setItem(exclusionKey,JSON.stringify([...excluded]));}
+    catch {error='自动收藏的取消偏好暂时无法保存';}
+  }
+  function scheduleAutoFavorites() {
+    autoDirty=true;
+    if(autoWork||autoScheduled)return;
+    autoScheduled=true;
+    queueMicrotask(()=>{autoScheduled=false;void syncAutoFavorites();});
+  }
+  function syncAutoFavorites() {
+    autoDirty=true;
+    if(autoWork)return autoWork;
+    autoWork=Promise.resolve().then(async()=>{
+      do {
+        autoDirty=false;
+        await load();
+        await ensure([...known.values()]);
+        const groups=desktopLibraryGroups([...known.values()],relations,manual).filter(group=>group.items.length>1);
+        if(!groups.length)continue;
+        const existing=new Set((await original.favorites()).map(item=>item.seriesId));
+        const start=revision;let changed=false;
+        for(const group of groups)for(const item of group.items){
+          const sid=item.seriesId;
+          if(existing.has(sid)||excluded.has(sid)||(autoRetry.get(sid)||0)>Date.now())continue;
+          let saved=false;
+          try {
+            await favorite(item,true,()=>{
+              const key=manual.get(sid)||(relations.get(sid)?.albumId?'album:'+relations.get(sid).albumId:'series:'+sid);
+              saved=known.has(sid)&&key===group.key&&!excluded.has(sid)&&!members.favorites.has(sid)&&(removed.get(sid)||0)<=start;
+              return saved;
+            },'auto');
+            if(saved){existing.add(sid);autoRetry.delete(sid);changed=true;}
+          } catch(caught){autoRetry.set(sid,Date.now()+30000);error=caught.message||'合集收藏暂时未完成';}
+        }
+        if(changed)notify('membership');
+      } while(autoDirty);
+    }).catch(caught=>{error=caught.message||'合集收藏暂时未完成';notify();})
+      .finally(()=>{autoWork=null;if(autoDirty)scheduleAutoFavorites();});
+    return autoWork;
+  }
   const original = {favorite:api.setFavorite.bind(api), favorites:api.favorites.bind(api), history:api.history.bind(api)};
   async function request(path = '', body) {
     const status = await api.validationStatus(), url = new URL(status.baseUrl);
@@ -119,7 +174,7 @@ function desktopCreateLibrary(api, notify) {
     for (const row of value.relations || []) if (/^\d{8,24}$/.test(row.seriesId) &&
       (row.albumId === null || typeof row.albumId === 'string' && /^\d{8,24}$/.test(row.albumId))) relations.set(row.seriesId, row);
     if (value.manual) {manual.clear(); for (const [sid,key] of Object.entries(value.manual)) manual.set(sid,key);}
-    notify();
+    notify();scheduleAutoFavorites();
   }
   function load(force = false) {
     if (loading) return loading;
@@ -161,8 +216,9 @@ function desktopCreateLibrary(api, notify) {
     if (pending.size) queueMicrotask(drain);
     return Promise.all(promises);
   }
-  function favorite(item, value, guard = () => true) {
+  function favorite(item, value, guard = () => true, origin = 'user') {
     const sid=item.seriesId;
+    if(origin==='user')rememberChoice(sid,value);
     if (!value) removed.set(sid,++revision);
     const previous=writes.get(sid) || Promise.resolve();
     const write=previous.catch(()=>{}).then(async()=>{
@@ -170,6 +226,7 @@ function desktopCreateLibrary(api, notify) {
       const result=await original.favorite(item,value);
       if (value) {members.favorites.add(sid);known.set(sid,item);void ensure([item]);}
       else {members.favorites.delete(sid);if(!members.history.has(sid))known.delete(sid);}
+      if(origin!=='auto')scheduleAutoFavorites();
       return result;
     });
     writes.set(sid,write);
@@ -181,7 +238,7 @@ function desktopCreateLibrary(api, notify) {
     members[kind]=new Set(items.map(item=>item.seriesId));
     for(const item of items)known.set(item.seriesId,item);
     for(const sid of known.keys())if(!members.favorites.has(sid)&&!members.history.has(sid))known.delete(sid);
-    return ensure(items);
+    return ensure(items).then(value=>{scheduleAutoFavorites();return value;});
   }
   async function collect(seed, find, live, progress) {
     const start=revision;
@@ -198,16 +255,15 @@ function desktopCreateLibrary(api, notify) {
     const existing=new Set((await original.favorites()).map(item=>item.seriesId)); let added=0, skipped=0;
     for (const item of verified) {
       if (!live()) throw desktopLibraryCancelled();
-      if (existing.has(item.seriesId) || (removed.get(item.seriesId)||0)>start) {skipped++; continue;}
+      if (existing.has(item.seriesId) || excluded.has(item.seriesId) || (removed.get(item.seriesId)||0)>start) {skipped++; continue;}
       let saved=false;
-      await favorite(item,true,()=>{saved=live() && (removed.get(item.seriesId)||0)<=start; return saved;});
+      await favorite(item,true,()=>{saved=live() && !excluded.has(item.seriesId) && (removed.get(item.seriesId)||0)<=start; return saved;},'collect');
       if (saved) {added++;existing.add(item.seriesId);progress(`已收藏 ${added} 季…`);}
     }
     return {added,skipped,uncertain,incomplete:result.incomplete,verified:verified.length};
   }
-  return {relations,manual,known,ensure,observe,favorite,setManual,collect,load,
+  return {relations,manual,known,ensure,observe,favorite,setManual,collect,load,syncAutoFavorites,
     get error(){return error;}, get pendingCount(){return pending.size;}, original};
 }
-
 
 export { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibraryPage, desktopLibraryProgress, desktopCreateLibrary };

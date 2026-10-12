@@ -3,7 +3,7 @@ import { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desk
 // Initialize once before mounting the host. All application APIs stay host-owned.
 export function createLibraryUI({React, jsxRuntime, api, parseSeason, findOtherSeasons, Cover, coverFallback}) {
   const O=React, b=jsxRuntime, ge=api, Ts=parseSeason, KR=findOtherSeasons, O0=Cover, P0=coverFallback;
-function desktopLibraryNotify() {window.dispatchEvent(new Event('desktoplibrarychange'));}
+function desktopLibraryNotify(kind) {window.dispatchEvent(new Event(kind==='membership'?'desktoplibrarymembership':'desktoplibrarychange'));}
 const desktopSearchQueue = new DesktopSearchQueue(desktopLibraryNotify);
 const desktopLibrary = desktopCreateLibrary(ge,desktopLibraryNotify);
 function desktopUseLibraryVersion() {
@@ -97,7 +97,7 @@ function DesktopLibraryGrid({items,history=[],view,renderCard}) {
   const heading=O.useRef(null),restoreKey=O.useRef(null),rootScroll=O.useRef(0);
   const signature=items.map(item=>item.seriesId).join(',');
   O.useEffect(()=>{void desktopLibrary.ensure(items);},[signature]);
-  const groups=desktopLibraryGroups(items,desktopLibrary.relations,desktopLibrary.manual);
+  const groups=desktopLibraryGroups(items,desktopLibrary.relations,desktopLibrary.manual,[...desktopLibrary.known.values()]);
   // The album key may arrive asynchronously. Keep navigation and task state
   // attached to the selected member while its visible group grows or changes key.
   const collection=selected?groups.find(group=>group.items.some(item=>item.seriesId===selected)):null;
@@ -115,6 +115,11 @@ function DesktopLibraryGrid({items,history=[],view,renderCard}) {
   },[selected,seasons.page]);
   function enter(group){rootScroll.current=window.scrollY;restoreKey.current=group.items[0].seriesId;setSeasonPage(1);setSelected(group.items[0].seriesId);}
   const label=view==='history'?'观看历史':'我的收藏';
+  function renderSeason(item) {
+    const card=renderCard(item);
+    return view==='history'&&!history.some(row=>row.seriesId===item.seriesId)
+      ?O.cloneElement(card,{reason:'未观看',onRemoveHistory:undefined}):card;
+  }
   if(collection){
     const first=collection.items.find(item=>item.seriesId===selected),title=Ts(first.title)?.base||first.title;
     const kind=collection.items.length>1?'合集':'系列';
@@ -126,7 +131,7 @@ function DesktopLibraryGrid({items,history=[],view,renderCard}) {
         b.jsx('h1',{ref:heading,tabIndex:-1,children:title}),b.jsx('span',{children:`共 ${collection.items.length} 季`})
       ]}),
       b.jsx(DesktopSeasonActions,{series:first},selected),
-      b.jsx('div',{className:'series-grid desktop-library-grid desktop-season-grid',children:seasons.items.map(item=>renderCard(item))}),
+      b.jsx('div',{className:'series-grid desktop-library-grid desktop-season-grid',children:seasons.items.map(renderSeason)}),
       b.jsx(DesktopLibraryPagination,{total:collection.items.length,page:seasons.page,size:12,onChange:setSeasonPage,label:'合集季列表'})
     ]});
   }

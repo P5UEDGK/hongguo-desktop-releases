@@ -1,5 +1,5 @@
 {
-  "capture": "实际 Windows EXE / WebView2 窗口，隔离 native profile。搜索结果与多页数据使用固定 fixture。",
+  "capture": "实际 Windows EXE / WebView2 窗口，隔离 native profile。搜索结果与多页数据使用固定 fixture。 本轮共享列表截图使用人工季度身份和默认封面，13/7与14/8为隔离原生记录数量；不代表线上搜索结果。",
   "images": [
     {
       "file": "before-inline-layout.png",
@@ -65,6 +65,41 @@
       "file": "narrow-complete.png",
       "sha256": "8c57e8fc7a442ed183e07bfcc750bcebd265556e552fe449e0a35bdbf9cdeb3c",
       "caption": "640 CSS像素窗口：状态单行省略，季卡片两列；只验收本次区域，顶部既有控件挤压未修复。"
+    },
+    {
+      "file": "unified-favorites.png",
+      "sha256": "6dc25360892e051be4c7b571012e921c9c38988399b59ac3fcf79bd5434b6579",
+      "caption": "收藏：同一合集共13季，最近第11季已看80%。"
+    },
+    {
+      "file": "unified-history.png",
+      "sha256": "ef8fdfa1d86e162529bb3c9c63f3d05bafb2894e6e60e157853d2a2b4c4ea36b",
+      "caption": "历史：同一合集同为13季、同一封面与80%进度，原生历史仍只有7季。"
+    },
+    {
+      "file": "unified-history-open.png",
+      "sha256": "61877e5fe6797ed2b34a8968c923789eb525bdc0a5bca0cf01019771fc0fc52f",
+      "caption": "历史展开：包含全部13季；未观看的季如实标记，无删除历史按钮。"
+    },
+    {
+      "file": "unified-history-page-two.png",
+      "sha256": "9ec1cfaf78e9b90538a5373d52bfe5c1ff614dfdc3171b68addce1924597b8c0",
+      "caption": "历史分页：每页12季，第二页显示第13季。"
+    },
+    {
+      "file": "auto-new-season.png",
+      "sha256": "6d51496f76f338f91a454d1fcea0a2a4596b1e91e6ae7a80e575245afef6c683",
+      "caption": "本地新归入第14季后自动收藏，两页更新为14季。"
+    },
+    {
+      "file": "unified-history-narrow.png",
+      "sha256": "93278b65d0361f0f1aa7ab1c7b6c8cd8a45cabb2dad849ddc6f41e7777d11499",
+      "caption": "640 CSS像素：统一系列页与14季统计。"
+    },
+    {
+      "file": "unified-restart.png",
+      "sha256": "c6507fc1487ffcace82641d409042f734a11bcf740d787ad5e0a526498733e45",
+      "caption": "取消第14季收藏后重启：合集仍14季，收藏13条、真实历史8条，不自动恢复取消。"
     }
   ]
 }

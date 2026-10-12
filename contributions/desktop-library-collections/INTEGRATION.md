@@ -1,6 +1,6 @@
 # 宿主接入
 
-公开仓库没有完整 Tauri/React 工程，因此以下是私有源码接入契约，不是可直接启动的独立应用。前端仅把已验收的注入模块拆为纯逻辑模块与显式依赖工厂；业务语句不变。
+公开仓库没有完整 Tauri/React 工程，因此以下是私有源码接入契约，不是可直接启动的独立应用。前端仅把已验收的注入模块拆为纯逻辑模块与显式依赖工厂；公开工厂与本机接线沿用相同逻辑。
 
 ## 后端
 
@@ -40,7 +40,7 @@ const libraryUI = createLibraryUI({
 | 依赖 | 契约 |
 | --- | --- |
 | api.setFavorite(item, value) | 原生收藏唯一写入口，Promise |
-| api.favorites()/history() | 返回原生条目列表；工厂包装后异步补关系 |
+| api.favorites()/history() | 返回原生条目列表；工厂包装后异步补关系，并补齐可靠合集的收藏 |
 | api.validationStatus() | 返回受信本机服务 `{baseUrl: 'http://127.0.0.1:端口'}` |
 | api.search/searchExplorer/searchNovelfm/validationSearch | 存在的入口全部包装进同一个调度队列 |
 | parseSeason(title) | 宿主已有标题解析，成功返回含 base 的对象，否则空值 |
@@ -72,6 +72,10 @@ const libraryUI = createLibraryUI({
   )}
 />
 ```
+
+收藏与历史共用 `library.known` 中已有原生条目的完整合集成员；历史根列表仍按原生历史中出现过的系列过滤，不为全未观看的系列新建入口。`renderCard` 必须返回可接收 `reason`、`onRemoveHistory` 的 React 元素：历史中的未观看季度由网格覆盖 `reason="未观看"` 并移除删除历史操作。该卡片应优先显示 reason，避免以第1集作为缺失历史的默认文字。
+
+原生收藏仍是成员事实的唯一持久 owner。自动补收藏只遍历已出现于收藏/历史且已有可靠合集关系的条目，同 ID 串行写入、去重；不启动搜索。用户取消先记录到 `localStorage` 的 `guoban:library-auto-favorite-exclusions:v1` 字符串 ID 数组，在途自动写入结束后由同 ID 取消操作覆盖；重启后仍跳过。手动再收藏清除该 ID 的排除。该小型偏好不是第二份收藏数据库；存储不可用时原生操作仍继续，跨重启排除无法保证，应由宿主处理其存储错误。自动写失败不会标完成，其他季度继续；30秒冷却后，在下一次记录或关系刷新时重试，不设轮询。
 
 根层单季收到 navigation.open/entryKey，封面和标题共用 onOpen；系列页内各季没有根入口，继续打开原播放详情。卡片补充以下接线：
 
