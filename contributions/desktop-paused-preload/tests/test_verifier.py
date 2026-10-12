@@ -14,6 +14,16 @@ spec.loader.exec_module(probe)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_aggregate_delayed_ranges_cannot_exceed_the_timeout_cap(self):
+        for total,delay in ((513*1024**2,1),(2*1024**3,.12)):
+            with self.subTest(total=total),self.assertRaises(ValueError):probe.preload_timeout(total,delay)
+        self.assertGreater(probe.preload_timeout(100*1024**2,.12),600)
+
+    def test_paused_fill_aborts_on_top_level_or_native_failure(self):
+        good=dict(native=dict(state='ready',preloadLimited=False,cacheComplete=False))
+        for value in (dict(good,state='failed'),dict(native=dict(good['native'],state='failed'))):
+            with self.assertRaisesRegex(AssertionError,'Native failed'):probe.preload_outcome(value)
+
     def test_delay_cannot_exceed_derived_timeout(self):
         for delay in (1500,3601):
             with self.subTest(delay=delay),self.assertRaises(ValueError):probe.preload_timeout(65536,delay)
@@ -243,7 +253,7 @@ class ProbeTests(unittest.TestCase):
 
     def test_deadline_scales_with_100mib_rate_and_is_bounded(self):
         self.assertGreater(probe.preload_timeout(100*1024**2,.12),100*1024**2/65536*.12)
-        self.assertLessEqual(probe.preload_timeout(2*1024**3,.12),3600)
+        with self.assertRaises(ValueError):probe.preload_timeout(2*1024**3,.12)
         self.assertEqual(probe.preload_timeout(100*1024**2,0,60),60)
         for value in (0,-1,3601,float('nan')):
             with self.assertRaises(ValueError):probe.preload_timeout(100,0,value)

@@ -62,6 +62,7 @@ def bootstrap_read_within_envelope(value):
 
 def preload_outcome(value):
     native = value['native']
+    if value.get('state') == 'failed' or native.get('state') == 'failed':raise AssertionError('Native failed')
     if native['preloadLimited']:
         return 'limited' if native.get('preloadReason') == 'budget' else 'failed'
     if native['cacheComplete']:
@@ -95,8 +96,9 @@ def preload_timeout(total_bytes, range_delay, override=None):
         if not math.isfinite(override) or not 1 <= override <= 3600:
             raise ValueError('Preload timeout must be between 1 and 3600 seconds')
         return override
-    return min(3600, 30 + math.ceil(total_bytes / 65536) * range_delay * 3
-               + total_bytes / (8 * 1024 ** 2))
+    required=30 + math.ceil(total_bytes / 65536) * range_delay * 3 + total_bytes / (8 * 1024 ** 2)
+    if required > 3600:raise ValueError('Aggregate Range work exceeds the verifier timeout cap')
+    return required
 
 
 def wait_server_started(server, thread, timeout=5):
