@@ -36,7 +36,7 @@ def validate_control(body):
     if "rect" in body:
         rect = body["rect"]
         if (not isinstance(rect, list) or len(rect) != 4
-                or any(type(v) is not int or not 0 <= v <= 32768 for v in rect)
+                or any(type(v) is not int or not (-32768 if i < 2 else 1) <= v <= 32768 for i, v in enumerate(rect))
                 or rect[2] < 1 or rect[3] < 1):
             raise ValueError("Invalid native rectangle")
     return dict(body)
@@ -553,7 +553,8 @@ class NativeSession:
                         client = W.RECT()
                         if not user.GetClientRect(self.parent, C.byref(client)):
                             raise RuntimeError("Desktop parent unavailable")
-                        width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
+                        # WS_CHILD clips all four edges to the parent client area.
+                        # Keep the original video geometry instead of resizing it.
                         user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                     if "visible" in command:
                         user.ShowWindow(hwnd, 4 if command["visible"] else 0)

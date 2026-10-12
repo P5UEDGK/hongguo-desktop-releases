@@ -22,6 +22,12 @@ from desktop_prefetch import EpisodePrefetcher
 
 
 class NativeTests(unittest.TestCase):
+    def test_negative_child_coordinates_are_bounded_and_preserved(self):
+        self.assertEqual(validate_control({'rect':[-100,-50,800,600]})['rect'],[-100,-50,800,600])
+        for rect in ([-32769,0,800,600],[0,-32769,800,600],[0,0,-1,600],[0,0,800,0]):
+            with self.assertRaises(ValueError):validate_control({'rect':rect})
+
+
     def test_display_capacity_drops_are_discounted_but_extra_loss_recovers(self):
         for fps,rate,refresh in ((120,1,60),(60,2,60),(120,.5,30)):
             watch=FrameDropWatch();unavoidable=fps*rate-refresh
@@ -113,7 +119,7 @@ class NativeTests(unittest.TestCase):
     def test_control_rejects_command_injection_and_invalid_values(self):
         for value in ({'path':'C:/secret'}, {'command':['loadfile','x']}, {'hwnd':1},
                       {'rate':float('nan')}, {'seek':True}, {'volume':2}, {'paused':'yes'},
-                      {'rect':[-1,0,10,10]}, {'rect':[0,0,10.5,10]}, {'rect':[0,0,0,10]}, [], {}):
+                      {'rect':[-32769,0,10,10]}, {'rect':[0,0,10.5,10]}, {'rect':[0,0,0,10]}, [], {}):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 validate_control(value)
         self.assertEqual(validate_control({'rate':3,'paused':True,'rect':[0,0,800,400]}),

@@ -39,7 +39,8 @@ def describe_streams(media):
     video = {"contentType": f'video/mp4; codecs="{codec}"', "width": context.width,
              "height": context.height, "framerate": rate,
              "bitrate": actual_bitrate(context.bit_rate)}
-    copy_eligible = video["bitrate"] > 0
+    tag = getattr(context, "codec_tag", None)
+    copy_eligible = video["bitrate"] > 0 and tag == {"h264":"avc1", "hevc":"hvc1"}.get(context.name)
     audio = []
     for track in media.streams.audio:
         c = track.codec_context

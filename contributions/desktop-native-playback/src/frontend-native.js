@@ -10,7 +10,10 @@ async function desktopNativeWindowContext() {
 
 function desktopNativeSurfaceVisible(media) {
   const rect = media.getBoundingClientRect();
-  if (document.hidden || rect.width <= 0 || rect.height <= 0) return false;
+  const width = window.innerWidth ?? document.documentElement?.clientWidth ?? Infinity;
+  const height = window.innerHeight ?? document.documentElement?.clientHeight ?? Infinity;
+  if (document.hidden || rect.width <= 0 || rect.height <= 0 || rect.left + rect.width <= 0 ||
+      rect.top + rect.height <= 0 || rect.left >= width || rect.top >= height) return false;
   const stage = media.closest('.player-stage') || media.parentElement;
   const nodes = new Set([media, stage]);
   for (const node of nodes) {
@@ -33,7 +36,7 @@ function desktopNativeSurfaceRect(media) {
   const controls = chrome?.getBoundingClientRect();
   const reserved = hidden ? 0 : controls?.height > 0 ? rect.top + rect.height - controls.top : 84;
   const bar = Math.min(Math.max(0, reserved), Math.max(0, rect.height - 1));
-  return [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+  return [Math.round(rect.left * scale), Math.round(rect.top * scale),
     Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
 }
 
@@ -54,7 +57,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   const negotiationPause = () => {if (!native) state.paused = true;};
   const negotiationPlay = () => {if (!native) state.paused = false;};
   function trackNegotiation() {
-    if (fallbackStarted && !negotiationMethods.has('currentTime')) {
+    if (!negotiationMethods.has('currentTime')) {
       negotiationMethods.set('currentTime',Object.getOwnPropertyDescriptor(media,'currentTime'));
       Object.defineProperty(media,'currentTime',{configurable:true,get:()=>state.time,set:seek});
     }
