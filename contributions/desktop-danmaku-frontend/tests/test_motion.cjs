@@ -43,9 +43,6 @@ async function step(time){media.currentTime=time;frames.shift()?.();await new Pr
   const paused=layer.children[0].style.transform;await step(2);assert.equal(layer.children[0].style.transform,paused);
   events.get('desktopsocialsettings')({detail:{settings:{opacity:50,lanes:1,fontSize:36,duration:12}}});
   await step(2);assert.equal(layer.children[0].style.opacity,.5);
-  layer.clientHeight=400;await step(2);
-  assert(Math.abs(parseFloat(layer.children[0].style.fontSize)-36*400/562)<1e-8,'motion consumes the layout owner measured height');
-  layer.clientHeight=562;await step(2);
   assert.equal(media.desktopDanmakuSettings.fontSize,36);
   await step(3);assert.notEqual(layer.children[0].style.transform,paused);
   media.currentTime=70;events.get('seeking')();await step(70);

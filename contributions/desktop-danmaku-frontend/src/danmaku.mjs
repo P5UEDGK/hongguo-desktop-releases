@@ -27,12 +27,9 @@ function DesktopDanmakuSettings({media, sessionKey}) {
   const [settings, setSettings] = O.useState(desktopDanmakuSettings);
   const [enabled, setEnabled] = O.useState(() => desktopSocialPreference('danmaku', true));
   const [rows, setRows] = O.useState([]), panel = O.useRef(null), hoverTimer = O.useRef(null);
-  const control = O.useRef(null), hovered = O.useRef(false), pointerFocus = O.useRef(false);
+  const control = O.useRef(null), hovered = O.useRef(false);
   const dismiss = () => {
-    const active = document.activeElement;
-    const keepFocus = !pointerFocus.current &&
-      (panel.current?.contains(active) || control.current?.contains(active));
-    if (!hovered.current && !keepFocus) setOpen(false);
+    if (!hovered.current && !control.current?.contains(document.activeElement)) setOpen(false);
   };
   O.useEffect(() => () => clearTimeout(hoverTimer.current), []);
   O.useEffect(() => {
@@ -66,11 +63,9 @@ function DesktopDanmakuSettings({media, sessionKey}) {
   }, [open, list, sessionKey]);
   const update = (name, value) => desktopSocialSet(media.current, {settings: {...settings, [name]: Number(value)}});
   return b.jsxs('span', {ref:control, className: 'desktop-danmaku-control',
-    onPointerDownCapture: () => {pointerFocus.current=true;},
-    onKeyDownCapture: () => {pointerFocus.current=false;},
     onPointerEnter: () => {hovered.current=true; clearTimeout(hoverTimer.current); setOpen(true);},
     onPointerLeave: () => {hovered.current=false; hoverTimer.current = setTimeout(dismiss, 250);},
-    onFocus: event => {if (event?.target?.matches?.(':focus-visible')) pointerFocus.current=false;clearTimeout(hoverTimer.current); setOpen(true);},
+    onFocus: () => {clearTimeout(hoverTimer.current); setOpen(true);},
     onBlur: event => {if (!event.currentTarget.contains(event.relatedTarget)) hoverTimer.current=setTimeout(dismiss,250);}, children: [
     b.jsx('button', {className: 'desktop-danmaku-toggle', 'aria-label': '弹幕', 'aria-pressed': enabled,
       'aria-expanded': open, title: '点击开关弹幕，悬停调整设置',
@@ -79,9 +74,7 @@ function DesktopDanmakuSettings({media, sessionKey}) {
       b.jsxs('div', {className: 'desktop-danmaku-heading', children: [b.jsx('strong', {children: '弹幕设置'}),
         b.jsx('button', {'aria-label': '恢复默认弹幕设置', onClick: () => desktopSocialSet(media.current,
           {settings: {opacity:80,lanes:3,fontSize:28,duration:14}}), children: '恢复默认'}),
-        b.jsx('button', {'aria-label': '关闭弹幕设置', onClick: () => {
-          control.current?.querySelector('.desktop-danmaku-toggle')?.focus(); setOpen(false);
-        }, children: '×'})]}),
+        b.jsx('button', {'aria-label': '关闭弹幕设置', onClick: () => setOpen(false), children: '×'})]}),
       ...[['opacity','不透明度',10,100,10,settings.opacity+'%'], ['lanes','显示区域',1,6,1,'顶部 '+settings.lanes+' 行'],
         ['fontSize','字体大小',18,36,2,settings.fontSize+''], ['duration','移动速度',4,24,1,
           settings.duration<14?'较快':settings.duration>14?'较慢':'适中']].map(([name,label,min,max,step,text]) =>
@@ -112,15 +105,9 @@ function desktopUniqueDanmaku(items) {
   });
 }
 
-const motionStart = row => row.motion_start_ms ?? row.offset_ms;
-
 function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous = [], viewportWidth = 1000, notBefore = 0) {
   const unique = new Map(desktopUniqueDanmaku(items).map(item => [item.id, item]));
-  const previousById = new Map(previous.filter(row => unique.has(row.id) && row.lane < settings.lanes).map(row=>[row.id,row]));
-  // Only in-flight rows keep their lane unconditionally. Future rows must
-  // satisfy spacing again after speed, font or viewport changes.
-  const kept = new Map([...previousById].filter(([,row]) => row.offset_ms < notBefore &&
-    motionStart(row) + settings.duration * 1000 > notBefore));
+  const kept = new Map(previous.filter(row => unique.has(row.id) && row.lane < settings.lanes).map(row=>[row.id,row]));
   const lanes = Array.from({length:settings.lanes},()=>[]);
   const width = text => Math.max(60,[...String(text)].slice(0,160).length*settings.fontSize);
   const screen = Math.max(1,Math.min(1000,viewportWidth));
@@ -129,7 +116,7 @@ function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous
   const separated = (a,b) => {
     const wa=width(a.text), wb=width(b.text);
     const gap=settings.duration*1000*Math.max((wa+16)/(screen+wa),(wb+16)/(screen+wb));
-    return Math.abs(motionStart(a)-motionStart(b))>=gap;
+    return Math.abs(a.offset_ms-b.offset_ms)>=gap;
   };
   for (const row of kept.values()) lanes[row.lane].push(row);
   return [...unique.values()].sort((a, b) => a.offset_ms - b.offset_ms || a.id.localeCompare(b.id)).flatMap(item => {
@@ -137,13 +124,11 @@ function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous
     // Already-started new rows would first appear mid-flight. Keep them in the
     // raw list, but admit only future arrivals to the DOM and native timelines.
     if (item.offset_ms < notBefore) return [];
-    const preferred = previousById.get(item.id)?.lane;
-    const fits = lane => lanes[lane].every(row => separated(item,row));
-    const lane = preferred !== undefined && fits(preferred) ? preferred : lanes.findIndex((_,lane) => fits(lane));
+    const lane = lanes.findIndex(intervals => intervals.every(row => separated(item,row)));
     if (lane < 0) return [];
     lanes[lane].push(item);
     return [{id: item.id, text: [...item.text].slice(0, 160).join(''), offset_ms: item.offset_ms, lane}];
-  }).slice(0,300);
+  }).slice(-300);
 }
 
 function desktopStartDanmaku(media, endpoint, status) {
@@ -155,71 +140,41 @@ function desktopStartDanmaku(media, endpoint, status) {
   let next = 0, cursor = '', ended = false, retryAt = 0, frame;
   let loadAbort = null, enabled = desktopSocialPreference('danmaku',true);
   let settings = desktopDanmakuSettings();
-  let lastViewport = null, nextScheduleAt = Infinity;
   const publish = () => {
-    media.desktopDanmaku = enabled ? rows.map(({text, offset_ms, lane, motion_start_ms}) => ({text, offset_ms, lane,
-      ...(motion_start_ms === undefined ? {} : {motion_start_ms})})) : [];
+    media.desktopDanmaku = enabled ? rows.map(({text, offset_ms, lane}) => ({text, offset_ms, lane})) : [];
     media.desktopDanmakuSettings = settings;
     media.desktopDanmakuRows = raw;
     media.dispatchEvent(new Event('desktopdanmaku'));
     media.dispatchEvent(new Event('desktopdanmakulist'));
   };
-  const schedule = time => {
-    const width = viewport();
-    const updated = desktopDanmakuRows(raw, settings, rows, width, time);
-    if (JSON.stringify(updated) !== JSON.stringify(rows)) {rows = updated; publish();}
-    lastViewport = width;
-    // Admissions depend on inputs and occupied lanes, not paused frames.
-    // Revisit the cap when an admitted row finishes and frees a slot.
-    nextScheduleAt = Math.min(Infinity, ...rows.map(row => motionStart(row) + settings.duration * 1000).filter(end => end > time));
-  };
   const changed = event => {
-    if (event.detail.settings) {
-      const time = Math.max(0, media.currentTime || 0) * 1000;
-      rows = rows.filter(row => motionStart(row) + settings.duration * 1000 > time);
-      const updated = desktopDanmakuSettings(event.detail.settings);
-      if (updated.duration !== settings.duration) rows = rows.map(row => row.offset_ms <= time ? {
-        ...row, motion_start_ms: Math.round(time - (time - motionStart(row)) * updated.duration / settings.duration)
-      } : row);
-      settings = updated;
-    }
+    if (event.detail.settings) settings = desktopDanmakuSettings(event.detail.settings);
     if (typeof event.detail.danmaku === 'boolean' && enabled !== event.detail.danmaku) {
       enabled = event.detail.danmaku; reset();
     } else if (event.detail.settings) {
-      schedule(Math.max(0, media.currentTime || 0) * 1000); publish();
+      rows = desktopDanmakuRows(raw, settings, rows, viewport(), Math.max(0, media.currentTime || 0) * 1000); publish();
     }
     if (enabled) load();
   };
-    const availableHeight = () => layer.clientHeight || media.clientHeight - 84 || 562;
-    const viewport = () => (media.clientWidth || 1000)/Math.max(.3,availableHeight()/562);
+  const viewport = () => (media.clientWidth || 1000)/Math.max(.3,(media.clientHeight-84 || 562)/562);
   function reset() {
     generation++; loadAbort?.abort(); loadAbort=null; busy=false;
     raw = []; rows = []; cursor = ''; ended = false; retryAt = 0;
     last = -1; lastClock = Date.now();
     next = Math.floor(Math.max(0, media.currentTime || 0) / 30) * 30000;
-    lastViewport = null; nextScheduleAt = Infinity; status(''); publish(); layer.replaceChildren();
+    publish(); layer.replaceChildren();
   }
   async function load() {
     const time = Math.max(0, media.currentTime || 0) * 1000;
-    if (!enabled || busy || Date.now() < retryAt) return;
-    const bucket = Math.floor(time / 30000) * 30000;
-    if (next < time - 24000 && bucket > next) {
-      next = bucket; cursor = ''; ended = false;
-    }
-    if (ended || time + 5000 < next) return;
+    if (!enabled || busy || ended || Date.now() < retryAt || time + 5000 < next) return;
     busy = true; const own = generation, offset = next, ownCursor = cursor;
     const request = new AbortController(); loadAbort=request;
     try {
       const page = await desktopSocialRead(endpoint, 'danmaku', {offset_ms: offset, cursor: ownCursor}, request.signal);
       if (stopped || own !== generation) return;
       const receivedAt = Math.max(0, media.currentTime || 0) * 1000;
-      const inFlight = new Set(rows.filter(row => row.offset_ms <= receivedAt &&
-        motionStart(row) + settings.duration * 1000 > receivedAt).map(row => row.id));
-      const priority = row => inFlight.has(row.id) ? 0 : row.offset_ms >= receivedAt ? 1 : 2;
-      raw = desktopUniqueDanmaku(raw.filter(item => item.offset_ms >= receivedAt - 24000).concat(page.items))
-        .sort((a,b)=>priority(a)-priority(b) || (priority(a)===2 ? b.offset_ms-a.offset_ms : a.offset_ms-b.offset_ms))
-        .slice(0,600).sort((a,b)=>a.offset_ms-b.offset_ms);
-      schedule(receivedAt); publish();
+      raw = desktopUniqueDanmaku(raw.filter(item => item.offset_ms >= receivedAt - 24000).concat(page.items)).slice(-600);
+      rows = desktopDanmakuRows(raw, settings, rows, viewport(), receivedAt); publish();
       const advance = page.next_offset_ms > offset;
       if (advance) {next = page.next_offset_ms; cursor = page.cursor;}
       else if (page.has_more && page.cursor && page.cursor !== ownCursor) cursor = page.cursor;
@@ -239,11 +194,10 @@ function desktopStartDanmaku(media, endpoint, status) {
     const clock = Date.now(), elapsed = Math.max(0, (clock-lastClock)/1000) * (media.playbackRate || 1);
     if (last >= 0 && (time < last - .7 || time > last + Math.max(3, elapsed + .7))) reset();
     last = time; lastClock = clock; load();
-    if (viewport() !== lastViewport || time * 1000 >= nextScheduleAt) schedule(time * 1000);
     layer.hidden = !!stage?.classList.contains('desktop-native-playback');
     if (!layer.hidden) {
       const width = media.clientWidth || stage?.clientWidth || 1000;
-      const active = rows.filter(row => time * 1000 >= row.offset_ms && time * 1000 < motionStart(row) + settings.duration * 1000);
+      const active = rows.filter(row => time * 1000 >= row.offset_ms && time * 1000 < row.offset_ms + settings.duration * 1000);
       const existing = new Map([...layer.children].map(node => [node.dataset.id, node]));
       for (const row of active) {
         let node = existing.get(row.id);
@@ -256,8 +210,8 @@ function desktopStartDanmaku(media, endpoint, status) {
           node.desktopEmojiVersion=emojis.catalog; node.desktopText=row.text;
         }
         existing.delete(row.id);
-        const age = (time * 1000 - motionStart(row)) / (settings.duration * 1000);
-          const scale = Math.max(0.3, availableHeight() / 562), size = settings.fontSize * scale;
+        const age = (time * 1000 - row.offset_ms) / (settings.duration * 1000);
+        const scale = Math.max(0.3, (media.clientHeight - 84 || 562) / 562), size = settings.fontSize * scale;
         node.style.fontSize = size + 'px'; node.style.opacity = settings.opacity / 100;
         node.style.transform = `translate3d(${width - (width + node.offsetWidth) * age}px,${(25 + row.lane * (settings.fontSize+15)) * scale}px,0)`;
       }
@@ -269,7 +223,7 @@ function desktopStartDanmaku(media, endpoint, status) {
   return () => {
     stopped = true; generation++; loadAbort?.abort(); cancelAnimationFrame(frame);
     media.removeEventListener('seeking', reset); media.removeEventListener('desktopsocialsettings', changed);
-    layer.remove(); rows = []; raw = []; status(''); publish();
+    layer.remove(); rows = []; raw = []; publish();
   };
 }
 
