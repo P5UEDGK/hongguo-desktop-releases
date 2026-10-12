@@ -51,10 +51,10 @@
          danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
          output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
-@@ -564,9 +578,34 @@
-                         if not user.GetClientRect(self.parent, C.byref(client)):
+@@ -565,9 +579,34 @@
                              raise RuntimeError("Desktop parent unavailable")
-                         width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
+                         # WS_CHILD clips all four edges to the parent client area.
+                         # Keep the original video geometry instead of resizing it.
 -                        user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
 +                        if not user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010):
 +                            raise RuntimeError("Native bounds update failed")
@@ -87,7 +87,7 @@
                      danmaku_track.update(command)
                      if command.get("paused") is True:
                          desired["paused"] = True
-@@ -648,6 +687,10 @@
+@@ -649,6 +688,10 @@
                          raise SourceReadError("Native media input timed out")
                      retry_software(no_frame=not frame_ready)
                      continue
@@ -98,7 +98,7 @@
                  with self.guard:
                      self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                       time=position, duration=player.number("duration", self.job.duration),
-@@ -660,6 +703,7 @@
+@@ -661,6 +704,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops,
