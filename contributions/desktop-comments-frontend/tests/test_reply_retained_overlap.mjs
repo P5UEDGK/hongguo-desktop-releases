@@ -3,7 +3,7 @@ import {pathToFileURL} from 'node:url';
 const {createComments}=await import(process.argv[2]?pathToFileURL(process.argv[2]):'../src/comments.mjs');
 const api=createComments({React:{},jsxRuntime:{},resolveEndpoint(){},installStyles(){},danmaku:{},emojis:{}});
 const store=api.createStore({origin:'http://127.0.0.1',key:'owned',series:'12345678',episode:'1'});
-globalThis.fetch=async url=>{const q=new URL(url).searchParams;const ids=q.get('cursor')==='p2'?['two','shared']:q.get('cursor')==='p3'?['shared','three']:['one'];return {ok:true,json:async()=>({items:ids.map(id=>({id})),cursor:q.get('cursor')==='p2'?'p3':'',has_more:q.get('cursor')==='p2'})};};
+globalThis.fetch=async url=>{const q=new URL(url).searchParams;const ids=q.get('cursor')==='p2'?['two','shared']:q.get('cursor')==='p3'?['shared','three']:['one'];return {ok:true,json:async()=>({items:ids.map(id=>({id})),cursor:q.get('cursor')==='p2'?'p3':q.get('cursor')==='p3'?'':'p2',has_more:q.get('cursor')!=='p3'})};};
 await store.read('replies',{comment_id:'parent',cursor:'p2'});await store.read('replies',{comment_id:'parent',cursor:'p3'});
 const result=await store.read('replies',{comment_id:'parent',cursor:''});
 assert.deepEqual(result.items.map(row=>row.id),['one','two','shared','three'],'overlaps across retained p2/p3 are deduplicated');store.dispose();

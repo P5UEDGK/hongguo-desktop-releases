@@ -85,11 +85,18 @@ function desktopSocialStore(endpoint) {
       entry.pages.set(cursor, page ? {...result, has_more:result.has_more && result.cursor !== cursor} : result);
       entry.value = page ? {...result, has_more:result.has_more && result.cursor !== cursor,
         items:cursor && entry.value ? [...new Map([...entry.value.items, ...result.items].map(item => [item.id,item])).values()] : result.items} : result;
-      if (resource === 'replies' && !cursor && entry.pages.size > 1) {
-        const later = [...entry.pages].filter(([key]) => key).map(([,value]) => value);
-        const last = later.at(-1);
-        entry.value = {...entry.value, cursor:last.cursor, has_more:last.has_more,
-          items:[...new Map([...result.items,...later.flatMap(value => value.items)].map(row=>[row.id,row])).values()]};
+      if (resource === 'replies' && entry.pages.has('')) {
+        const chain = [], visited = new Set();
+        let next = '';
+        while (entry.pages.has(next) && !visited.has(next)) {
+          visited.add(next);
+          const current = entry.pages.get(next);chain.push(current);
+          if (!current.has_more) break;
+          next = current.cursor;
+        }
+        const last = chain.at(-1);
+        entry.value = {...last,
+          items:[...new Map(chain.flatMap(page=>page.items).map(row=>[row.id,row])).values()]};
       }
       entry.cursors.add(cursor); return entry.value;
     }).catch(error => {
