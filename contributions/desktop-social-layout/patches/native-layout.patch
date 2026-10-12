@@ -1,7 +1,7 @@
 --- a/contributions/desktop-native-playback/src/desktop_native.py
 +++ b/contributions/desktop-native-playback/src/desktop_native.py
 @@ -25,7 +25,7 @@
- 
+
  def validate_control(body):
      if not isinstance(body, dict) or not body or set(body) - {
 -            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings"}:
@@ -19,9 +19,9 @@
 +                or any(type(v) is not int or not 0 <= v <= 32768 for v in value)):
 +            raise ValueError('Invalid native occlusion')
      return result
- 
- 
-@@ -132,6 +137,13 @@
+
+
+@@ -129,6 +134,13 @@
                  function = getattr(self.dll, name)
                  function.argtypes, function.restype = args, result
              self.user = C.WinDLL("user32", use_last_error=True)
@@ -35,7 +35,7 @@
              self.enum_callback = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
              self.window_callback = C.WINFUNCTYPE(C.c_ssize_t, W.HWND, W.UINT, W.WPARAM, W.LPARAM)
              definitions = {
-@@ -152,6 +164,7 @@
+@@ -149,6 +161,7 @@
                  "CreateWindowExW": ([W.DWORD, W.LPCWSTR, W.LPCWSTR, W.DWORD, C.c_int,
                      C.c_int, C.c_int, C.c_int, W.HWND, W.HMENU, W.HINSTANCE, C.c_void_p], W.HWND),
                  "SetWindowPos": ([W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT], W.BOOL),
@@ -43,18 +43,18 @@
                  "ShowWindow": ([W.HWND, C.c_int], W.BOOL),
                  "DestroyWindow": ([W.HWND], W.BOOL),
                  "PeekMessageW": ([C.POINTER(W.MSG), W.HWND, W.UINT, W.UINT, W.UINT], W.BOOL),
-@@ -460,6 +473,7 @@
+@@ -365,6 +378,7 @@
          frame_ready = False
          requested_position = self.job.start_seconds
          drop_watch = FrameDropWatch()
 +        occlusion = []
          danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
-         output_watch = OutputLossWatch()
          progressive = isinstance(self.job.source, ProgressiveSource)
-@@ -565,9 +579,34 @@
+         media_uri = str(self.job.source) if not progressive else self.job.stream_url
+@@ -466,9 +480,33 @@
+                         if not user.GetClientRect(self.parent, C.byref(client)):
                              raise RuntimeError("Desktop parent unavailable")
-                         # WS_CHILD clips all four edges to the parent client area.
-                         # Keep the original video geometry instead of resizing it.
+                         width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
 -                        user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
 +                        if not user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010):
 +                            raise RuntimeError("Native bounds update failed")
@@ -64,8 +64,7 @@
 +                        occlusion = command["occlusion"]
 +                    if "rect" in command or "occlusion" in command:
 +                        if not occlusion:
-+                            if not user.SetWindowRgn(hwnd, None, True):
-+                                raise RuntimeError("Native panel region clear failed")
++                            user.SetWindowRgn(hwnd, None, True)
 +                        else:
 +                            # Reveal the WebView settings panel without resizing
 +                            # or hiding the native video surface behind it.
@@ -85,11 +84,11 @@
 +                                if region: self.host.gdi.DeleteObject(region)
 +                                if cutout: self.host.gdi.DeleteObject(cutout)
                      danmaku_track.update(command)
-                     if command.get("paused") is True:
-                         desired["paused"] = True
-@@ -649,6 +688,10 @@
+                     for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
+                         if key in command:
+@@ -541,6 +579,10 @@
                          raise SourceReadError("Native media input timed out")
-                     retry_software(no_frame=not frame_ready)
+                     retry_software()
                      continue
 +                surface = W.RECT()
 +                surface_origin = W.POINT(0, 0)
@@ -98,7 +97,7 @@
                  with self.guard:
                      self.data.update(state="ended" if eof and not seeking and output_ready else "buffering" if buffering else "ready" if output_ready else "preparing",
                                       time=position, duration=player.number("duration", self.job.duration),
-@@ -661,6 +704,7 @@
+@@ -553,6 +595,7 @@
                                       bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                       audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                       frameDrops=frame_drops, decoderDrops=decoder_drops,

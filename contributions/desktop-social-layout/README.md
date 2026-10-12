@@ -12,9 +12,9 @@ bootstrap.mjs 导出 createSocialUI({React,jsxRuntime,resolveEndpoint})，返回
 
 ```js
 const {Drawer,Controls,Selection}=createSocialUI({React,jsxRuntime,resolveEndpoint:trustedEndpoint});
-// 原 header: <Selection media={mediaRef} sessionKey={session.streamUrl}/>
+// 原 header: <Selection media={mediaRef}/>
 // 原 .player-toolbar: <Controls media={mediaRef} sessionKey={session.streamUrl}/>
-// 原 aside: 先渲染 <Drawer session={session} media={mediaRef}/>，再渲染原选集正文
+// 原 aside（保留选集正文）: <Drawer session={session} media={mediaRef}/>
 ```
 
 宿主保留 .app-shell、.desktop-player、header、.desktop-player-layout、.player-stage、.player-toolbar、aside、.window-controls、.window-pin、.player-mini-toggle 类。外框尺寸由现有窗口 owner 固定，layout 使用剩余空间的 grid、min-height:0/min-width:0；不得按评论内容重算窗口大小。抽屉开时右列占空间，视频缩窄；关时恢复。CSS只装一次。
@@ -35,14 +35,13 @@ tests/run.mjs 是跨包唯一浏览器回归入口，覆盖评论前端和布局
 
 ## 验证
 
-Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。本包 Python 校验只使用标准库。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
+Python 3.10+、Node 18+；命令以 pwsh 为入口，在包含对应 contributions 的检出根运行。Python API 测试先安装本包 requirements-test.txt。浏览器组合测试需要 Chrome；也可传 --channel msedge。其他模块没有 npm 运行时依赖，React/JSX runtime 由宿主提供。
 
 ```pwsh
 npm --prefix contributions/desktop-social-layout ci
 node contributions/desktop-social-layout/tests/run.mjs --channel chrome
 # 按依赖顺序应用原生补丁后：
 node contributions/desktop-social-layout/tests/test_native_layout.cjs contributions/desktop-native-playback/src/frontend-native.js
-python contributions/desktop-social-layout/tests/test_native_control.py contributions/desktop-native-playback/src/desktop_native.py
 ```
 
 公开测试为人工构造输入，不连接上游。新导出模块已经独立验证；跨包 Chrome 用例由布局包统一维护。此前本机安装还完成53项窗口功能与21项原生像素检查，快/中/慢档（8/14/24秒）实测为161.25/92.5/53.75物理像素/视频秒；这些属于当时本机接线证据，不是本公开包在所有设备或上游发布后的保证。
@@ -52,43 +51,3 @@ python contributions/desktop-social-layout/tests/test_native_control.py contribu
 ## 首轮审查修复
 
 迷你模式恢复单列视频、隐藏已经展开的 aside；ResizeObserver 也观察迷你按钮本身。新增无需窗口 resize 的按钮变宽测试及迷你模式回归。本轮补充抽屉关闭、无标题布局、播放按钮对齐和单击暂停/继续的组合回归；原生桥接测试覆盖实际控制栏高度、DPI、resize、暂停/继续命令和监听清理。
-
-本轮74项Chrome组合检查通过，覆盖长选集滚动、导航先于正文的键盘顺序、选集开关可访问状态、窄剧场、迷你置顶避让及设置长文换行。Selection按sessionKey重新连接媒体，动态测量控制栏并给DOM弹幕提供可用高度；监听面板移除与控制栏显隐，隐藏时回收底部空间。原生事件补丁共用#204的desktopNativeSurfaceRect，不另写几何算法。原生occlusion已由dict(body)保留，新增执行当前校验函数的回归证明，不增加重复赋值。
-
-评论开关通过aria-pressed表示评论页签是否启用；不以aria-expanded描述仍展开的选集抽屉。选集按钮继续按实际抽屉状态报告展开/收起。浏览器回归覆盖记忆打开、启用、返回选集及关闭评论。
-
-当前79项Chrome组合通过，追加评论开关aria-pressed和鼠标/键盘聚焦区别；旧评论/弹幕owner分别失败回放。
-
-布局补丁同步原生基线 6223e50a7f470065f6cbd5d4dc520690c2e8e516，保留请求窗口、可取消prepare、音频顺序与seek revision修复。遮挡裁剪先执行，再更新弹幕并应用有序音频控制；四份补丁精确组合和现有布局桥接回归通过。本机安装待完成。
-
-
-## 本轮二次反馈修复
-
-验证前置条件已移除不存在的 requirements-test.txt；本包 Python 校验只用标准库。跨包浏览器增加在途调速像素连续性与原生运动起点检查，沿用已有组合测试入口。
-
-
-## 本轮三次反馈修复
-
-pin参与顶部控件测量不再依赖dark颜色类。无dark的1280/640/1600像素窗口回归在旧样式失败，当前84项Chrome通过；保留在途调速、控件显隐及窄窗口回归。原生前端补丁对齐 #204 c7bfbc2ea269af4013ab971467d9ef68dc207b9a。
-
-本机候选与安装仍待完成。
-
-
-本轮审查回归（2026-10-12，第四批）：4242240140：Chrome 150的原实现未复现fixed弹层偏移，现行CSS规范不再由container-type建立layout containment；保留容器查询实现，增加窄布局与popover视口定位回归。WebView2 148随真实窗口验证复核。
-
-
-本轮第六批审查（2026-10-12）：4242515891：互动选集按钮省略presence-based Tauri drag marker，真实窗口点击及定位验收。
-
-2026-10-12 第二十一轮复核：同步native窗口与掉帧修复依赖基线，保留已有布局事件。 四份桥接补丁已按当前#204 3b1890dea4037576ec53e97e97962d29a4559115 组合核验。
-
-2026-10-12 第二十二轮复核：同步原生CSS显隐的布局桥接及回归。
-
-2026-10-12 第二十三轮复核：同步native输入重定向及模式恢复后的布局桥接补丁。
-
-2026-10-12 第二十四轮复核：4243737743：清除原生窗口区域失败时触发错误恢复；同步native依赖。
-
-2026-10-12 第二十五轮复核：同步native负坐标范围和初始记忆布局补丁。
-
-2026-10-12 第二十七轮复核：同步native control恢复与scroll事件后的布局桥补丁。
-
-验证：413项融合后端无跳过、34套播放器前端、260项公开备用组合（1项可选片源跳过）、88项浏览器及真实libmpv字幕位置编辑通过。8项冻结前版反例失败、当前通过；Windows autocrlf实际克隆后的补丁应用通过。候选Tauri原生/HLS播放、裁剪、暂停和退出释放通过。暂停预加载和评论代码未变，复用上一轮通过证据。本机安装验收随后执行，上游尚未合并发布。
