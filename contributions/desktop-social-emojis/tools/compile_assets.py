@@ -6,48 +6,19 @@ import json
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from desktop_emoji_assets import validate_assets, validate_name
-
-MAX_MAPPING_BYTES = 1024 * 1024
-
-def load_mapping(path):
-    with path.open('rb') as stream:data=stream.read(MAX_MAPPING_BYTES+1)
-    if len(data)>MAX_MAPPING_BYTES:raise ValueError('Emoji mapping exceeds 1 MiB')
-    return validate_mapping(json.loads(data.decode('utf8')))
-
-def validate_mapping(mapping):
-    if not isinstance(mapping,dict) or len(mapping)>256:
-        raise ValueError('Emoji mapping must be an object with at most 256 tags')
-    for name in mapping: validate_name(name)
-    return mapping
+from desktop_emoji_assets import validate_assets
 
 def compile_assets(mapping):
-    validate_mapping(mapping)
-    from PIL import Image, ImageOps
+    from PIL import Image
     result={}
     for name, source_path in mapping.items():
         with Image.open(source_path) as source:
-            # Inspect the header before allocating a full RGBA copy.
-            width,height=source.size
-            if width<=0 or height<=0 or width*height>4096*4096:
-                raise ValueError('Emoji image dimensions exceed 16 megapixels')
-            image=ImageOps.exif_transpose(source).convert('RGBA')
+            image=source.convert('RGBA')
             image.thumbnail((256,256),Image.Resampling.LANCZOS)
-            png=io.BytesIO(); image.save(png,format='PNG',optimize=True,icc_profile=None)
-            ratio=48/max(image.size)
-            fitted=image.resize((max(1,round(image.width*ratio)),max(1,round(image.height*ratio))),Image.Resampling.LANCZOS)
-            small=Image.new('RGBA',(48,48),(0,0,0,0))
-            small.paste(fitted,((48-fitted.width)//2,(48-fitted.height)//2))
-            # Fully transparent RGB carries no visible color and must not
-            # compete for the limited ASS palette (including unused RGB in PNG).
-            rgba=small.load()
-            visible=[rgba[x,y][:3] for y in range(48) for x in range(48)
-                     for _ in range(round(rgba[x,y][3]/255*7))]
-            colors=Image.new('RGB',(max(1,len(visible)),1))
-            if visible: colors.putdata(visible)
-            palette=colors.quantize(colors=16)
-            pixels=small.convert('RGB').quantize(palette=palette,dither=Image.Dither.NONE).convert('RGB')
-            alpha=small.getchannel('A'); groups={}
+            png=io.BytesIO(); image.save(png,format='PNG',optimize=True)
+            small=image.resize((48,48),Image.Resampling.LANCZOS)
+            palette=small.convert('RGB').quantize(colors=16)
+            pixels=palette.convert('RGB'); alpha=small.getchannel('A'); groups={}
             for y in range(48):
                 x=0
                 while x<48:
@@ -93,6 +64,6 @@ if __name__=='__main__':
     parser.add_argument('mapping',type=Path,help='JSON object: [tag] -> local image path, relative to this JSON')
     parser.add_argument('output',type=Path)
     args=parser.parse_args()
-    mapping=load_mapping(args.mapping)
+    mapping=json.loads(args.mapping.read_text(encoding='utf8'))
     mapping={name:args.mapping.parent/path for name,path in mapping.items()}
     args.output.write_text(json.dumps(compile_assets(mapping),ensure_ascii=False,separators=(',',':'))+'\n',encoding='utf8')
