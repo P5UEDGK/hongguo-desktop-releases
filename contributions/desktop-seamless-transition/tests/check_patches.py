@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory() as temp:
     subprocess.run(['node',str(package/'tests/test_activation.cjs'),str(root/'src/frontend-native.js')],check=True)
     subprocess.run(['node',str(package/'tests/test_codec_handoff.cjs'),str(root/'src/frontend-codec.js')],check=True)
     subprocess.run(['node',str(package/'tests/test_pending_adoption.cjs'),str(root/'src/frontend-native.js')],check=True)
+    subprocess.run(['node',str(package/'tests/test_adoption_cleanup.cjs'),str(root/'src/frontend-native.js')],check=True)
     subprocess.run(['node',str(package/'tests/test_cold_pending_seek.cjs'),str(root/'src/frontend-native.js'),str(root/'src/frontend-codec.js')],check=True)
     subprocess.run(['node',str(package/'tests/test_expiry_hold.cjs')],check=True)
     subprocess.run(['node',str(package/'tests/test_unclaimed_hold.cjs')],check=True)
