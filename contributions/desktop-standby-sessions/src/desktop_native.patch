@@ -12,16 +12,18 @@
                      previous_sessions = list(self.sessions.items())
                  if not previous_sessions:
                      break
-@@ -291,7 +296,69 @@
+@@ -291,7 +296,99 @@
              session = self.sessions.get(identifier)
              if not session or session.stop.is_set():
                  raise ValueError("Native session unavailable")
 -            return session.submit(body)
-+            previous_states = []
 +            ownership = list(getattr(session, "handoff_previous", ()))
++            original_ownership=list(ownership);rollback=[]
++            if body.get("visible") is True and getattr(session,"handoff_restore_pending",False):raise queue.Full()
 +            try:
 +                if getattr(session.job, "prewarm_parent", None):
 +                    if body.get("visible") is True:
++                        session.handoff_restore_pending = False
 +                        if session.job.prewarm_parent not in self.sessions:
 +                            raise ValueError("Native standby parent unavailable")
 +                        if not session.snapshot().get("outputReady"):
@@ -34,8 +36,8 @@
 +                                if owned and owned[2] == current and before.get("paused"):
 +                                    continue
 +                                paused = owned[1] if owned and owned[2] == current else bool(before.get("paused", True))
-+                                previous_states.append((previous, bool(before.get("paused", True))))
 +                                revision = previous.submit({"paused": True})
++                                rollback.append((previous,bool(before.get("paused",True)),getattr(previous,"pause_revision",revision)))
 +                                ownership = [item for item in ownership if item[0] is not previous]
 +                                ownership.append((previous, paused, getattr(previous, "pause_revision", revision)))
 +                                until = time.monotonic() + .3
@@ -49,23 +51,51 @@
 +                    elif body.get("paused") is False or body.get("muted") is False:
 +                        raise ValueError("Standby must remain silent and paused")
 +                revision = session.submit(body)
-+                if ownership:
-+                    session.handoff_previous = ownership
++                session.handoff_previous = ownership
++                if body.get("visible") is False:self._restore_handoff(session)
 +                return revision
 +            except Exception:
-+                # No child command was accepted. Restore the old playback
-+                # state instead of leaving a visible episode paused on 429.
-+                for previous, paused in previous_states:
-+                    try:
-+                        previous.submit({"paused": paused})
-+                    except Exception:
-+                        pass  # Preserve the original control failure.
++                session.handoff_previous = [item for item in original_ownership if not any(item[0] is row[0] for row in rollback)]+rollback
++                self._restore_handoff(session,targets=rollback)
 +                raise
++
++    def _restore_handoff(self, session, schedule=True, targets=None):
++        remaining=[];kept=[]
++        for previous, paused, pause_revision in getattr(session, "handoff_previous", ()):
++            if targets is not None and not any(previous is row[0] for row in targets):
++                kept.append((previous,paused,pause_revision));continue
++            if not any(previous is live for live in self.sessions.values()):continue
++            if getattr(previous, "stop", threading.Event()).is_set():continue
++            try:
++                current=getattr(previous, "pause_revision", previous.snapshot().get("revision", 0))
++                if current == pause_revision:previous.submit({"paused":paused})
++            except (queue.Full,ValueError):
++                remaining.append((previous,paused,pause_revision))
++        session.handoff_previous=kept+remaining
++        session.handoff_restore_targets=remaining
++        session.handoff_restore_pending=bool(remaining)
++        if remaining and schedule and not getattr(session, "handoff_restore_worker", False):
++            session.handoff_restore_worker=True
++            threading.Thread(target=self._retry_handoff_restore,args=(session,),daemon=True).start()
++
++    def _retry_handoff_restore(self, session):
++        while True:
++            with self.guard:
++                closed=getattr(self,"closed",None)
++                if not session.handoff_restore_pending or closed is not None and closed.is_set():
++                    session.handoff_restore_worker=False
++                    return
++                self._restore_handoff(session,schedule=False,targets=session.handoff_restore_targets)
++                if not session.handoff_restore_pending:
++                    session.handoff_restore_worker=False
++                    return
++            time.sleep(.05)
 +
 +    def validate_handoff(self, identifier):
 +        with self.guard:
 +            session = self.sessions.get(identifier)
 +            if session is None: raise ValueError("Standby session unavailable")
++            if getattr(session,"handoff_restore_pending",False):raise ValueError("Parent rollback pending")
 +            for previous, _, pause_revision in getattr(session, "handoff_previous", ()):
 +                if not any(previous is live for live in self.sessions.values()): continue
 +                desired = previous.desired_state() if hasattr(previous, "desired_state") else previous.snapshot()
@@ -83,23 +113,16 @@
  
      def release(self, identifier):
          with self.guard:
-@@ -301,6 +368,15 @@
+@@ -301,6 +398,8 @@
          with self.guard:
              if self.sessions.get(identifier) is session:
                  self.sessions.pop(identifier, None)
 +                if getattr(getattr(session, "job", None), "prewarm_parent", None):
-+                    for previous, paused, pause_revision in getattr(session, "handoff_previous", ()):
-+                        if any(previous is live for live in self.sessions.values()):
-+                            try:
-+                                current = getattr(previous, "pause_revision", previous.snapshot().get("revision", 0))
-+                                if current == pause_revision:
-+                                    previous.submit({"paused": paused})
-+                            except Exception:
-+                                pass
++                    self._restore_handoff(session)
          return True
  
  
-@@ -432,6 +508,8 @@
+@@ -432,6 +531,8 @@
              revision = self.revision + 1
              self.commands.put_nowait((revision, command))
              self.revision = revision
@@ -108,7 +131,7 @@
              self.queued_state.update({key: value for key, value in command.items()
                                        if key in self.queued_state})
              return revision
-@@ -458,7 +536,8 @@
+@@ -458,7 +559,8 @@
          media_uri = str(self.job.source) if not progressive else self.job.stream_url
          # Starting paused allows the frontend to place the surface and apply
          # its remembered speed/volume before either picture or sound advances.
@@ -118,7 +141,7 @@
          def retry_software(*, no_frame=False):
              nonlocal retried, initial, grace, last_progress, slow_since, frame_ready
              if retried or player.get("hwdec-current") == "no":
-@@ -646,6 +725,7 @@
+@@ -646,6 +748,7 @@
                                       width=width, height=height, decoder="software" if hwdec == "no" else "hardware" if hwdec else "probing",
                                       hwdec=hwdec, avsync=avsync, audioDevice=player.get("audio-device"),
                                       buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,

@@ -20,6 +20,34 @@ def eventually(predicate):
     if not predicate():raise AssertionError('asynchronous metadata did not finish')
 
 class StandbyTests(unittest.TestCase):
+    def test_hiding_provisional_child_restores_the_owned_parent(self):
+        host=object.__new__(NativeHost);host.guard=threading.RLock();state={'paused':False,'revision':0}
+        def submit(body):
+            state.update(body,revision=state['revision']+1);parent.pause_revision=state['revision'];return state['revision']
+        parent=SimpleNamespace(stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=submit)
+        child=SimpleNamespace(stop=threading.Event(),job=SimpleNamespace(prewarm_parent='parent'),snapshot=lambda:{'outputReady':True},submit=lambda _:1)
+        host.sessions={'parent':parent,'child':child}
+        host.control('child',{'visible':True,'paused':False});self.assertTrue(state['paused'])
+        host.control('child',{'visible':False,'paused':True})
+        self.assertFalse(state['paused']);self.assertEqual(child.handoff_previous,[])
+
+    def test_ack_timeout_retains_rollback_until_a_full_parent_queue_drains(self):
+        host=object.__new__(NativeHost);host.guard=threading.RLock();host.closed=threading.Event()
+        self.addCleanup(host.closed.set);state={'paused':False,'revision':0};blocked=[True];queued=[]
+        def submit(body):
+            if queued and blocked[0]:raise queue.Full()
+            state['revision']+=1;parent.pause_revision=state['revision'];queued.append(body)
+            if not blocked[0]:state.update(body)
+            return state['revision']
+        parent=SimpleNamespace(stop=threading.Event(),snapshot=lambda:dict(state),desired_state=lambda:dict(state),submit=submit)
+        child=SimpleNamespace(stop=threading.Event(),job=SimpleNamespace(prewarm_parent='parent'),snapshot=lambda:{'outputReady':True},submit=lambda _:self.fail('child must not start before parent ACK'))
+        host.sessions={'parent':parent,'child':child}
+        with self.assertRaisesRegex(ValueError,'Previous audio not paused'):host.control('child',{'visible':True,'paused':False})
+        with self.assertRaises(queue.Full):host.control('child',{'visible':True,'paused':False})
+        state['paused']=True;blocked[0]=False
+        eventually(lambda:state['paused'] is False)
+        self.assertEqual(child.handoff_previous,[])
+
     def test_promoted_metadata_survives_encoder_finishing_during_load(self):
         source=self.root/'promoted.mp4';source.write_bytes(b'owned')
         job=SimpleNamespace(id='a'*32,cancelled=threading.Event(),failed=False,video_mode='h264',source=source,directory=self.root)
