@@ -233,7 +233,7 @@ def make_router(settings, origins=("http://tauri.localhost", "tauri://localhost"
     return router
 
 
-def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0):
+def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0, library=None):
     """Delete only recognized originals and fully owned HLS entries, oldest first."""
     from desktop_playable_cache import plain
     root = Path(root).resolve(strict=True)
@@ -241,6 +241,17 @@ def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0):
     hls_file = re.compile(r"(?:owner\.marker|cache\.json|complete\.marker|index\.m3u8|init\.mp4|seg[0-9]{6}\.m4s)").fullmatch
     candidates = []
     total = extra_bytes
+    from desktop_video_library import VideoLibrary
+    if library is None:
+        try:library = VideoLibrary(root)
+        except OSError:library = None  # Invalid indexes and unknown files are preserved.
+    named = {}
+    if library is not None:
+        named = library.originals()
+        for path in named:
+            info = path.stat();total += info.st_size
+            if path not in protected:
+                candidates.append((info.st_mtime, path, info.st_size, False))
     for path in root.iterdir():
         if not path.is_file() or not plain(path):
             continue
@@ -267,11 +278,14 @@ def clean_video_cache(root, cache, *, protected=(), busy=False, extra_bytes=0):
                     if any(not hls_file(child.name) for child in cache._owned_children(path)):
                         continue
                     cache._remove_owned(path)
-            elif path.parent == root and plain(path) and path.resolve() not in protected:
+            elif plain(path) and path.resolve() not in protected and (
+                    path.parent == root or (path in named and library.lookup(named[path]) == path)):
                 path.unlink()
             else:
                 continue
             total -= size;freed += size;removed.append(path)
         except (OSError, ValueError):
             continue
+    if library is not None:
+        library.forget(removed)
     return {"clearedBytes":freed, "clearedFiles":len(removed), "remainingBytes":max(0,total), "removed":removed}
