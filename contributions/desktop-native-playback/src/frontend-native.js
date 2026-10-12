@@ -130,6 +130,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     stage?.removeEventListener?.('transitionend', layout);
     document.removeEventListener('fullscreenchange', layout);
     document.removeEventListener('visibilitychange', layout);
+    document.removeEventListener('scroll',layout,true);
     stage?.classList.remove('desktop-native-playback');
     for (const [key, descriptor] of saved) {
       if (descriptor) Object.defineProperty(media, key, descriptor);
@@ -196,15 +197,25 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     Object.assign(pending, command);
     if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
   }
-  async function flush() {
+  async function flush(deadline = null) {
     controlTimer = null;
     if (disposed || !id || !native || controlBusy || !Object.keys(pending).length) return;
     controlBusy = true;
     const command = pending; pending = {};
+    const until = deadline ?? Date.now()+30000;
     try {
-      const result = await request('/' + id + '/control', {method: 'POST',
-        headers: {'content-type': 'application/json'}, body: JSON.stringify(command)});
-      revision = result.revision;
+      for (let attempt=0;attempt<2;attempt++) {
+        if (disposed || fallbackStarted || !id) return;
+        if (attempt) {Object.assign(command,pending);pending={};}
+        try {
+          const result = await request('/' + id + '/control', {method:'POST',
+            headers:{'content-type':'application/json'},body:JSON.stringify(command)},Math.min(15000,until-Date.now()));
+          revision=result.revision;return;
+        } catch(error) {
+          if (attempt || error.status && error.status !== 429 || Date.now()>=until) throw error;
+          await new Promise(resolve=>setTimeout(resolve,Math.min(100,until-Date.now())));
+        }
+      }
     } catch {if (!disposed) failPreparation();}
     finally {
       controlBusy = false;
@@ -280,6 +291,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     stage?.addEventListener?.('transitionend', layout);
     document.addEventListener('fullscreenchange', layout);
     document.addEventListener('visibilitychange', layout);
+    document.addEventListener('scroll',layout,true);
     layout();
   }
   async function poll(ownGeneration) {
