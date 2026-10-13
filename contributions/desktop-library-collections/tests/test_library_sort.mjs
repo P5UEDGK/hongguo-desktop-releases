@@ -35,6 +35,24 @@ test('names use Chinese natural ordering in either direction without mutating gr
   assert.deepEqual(desktopLibrarySortGroups(input,[],'title-desc',names),[ten,two]);
   assert.deepEqual(input,[ten,two]);
 });
+
+test('played uses history across all known seasons, not favorite timestamps or episode progress',()=>{
+  const input=[a,b],favorites=[row(1,900),row(3,100)],history=[{...row(1,50),lastEpisode:99},{...row(2,300),lastEpisode:1},row(3,200)];
+  assert.deepEqual(desktopLibrarySortGroups(input,favorites,'recent',names,history),[a,b]);
+  assert.deepEqual(desktopLibrarySortGroups(input,favorites,'played',names,history),[a,b]);
+  assert.deepEqual(desktopLibrarySortGroups(input,favorites,'played',names,[row(1,50),row(3,200)]),[b,a]);
+  assert.deepEqual(input,[a,b]);assert.equal(history[0].lastEpisode,99);
+});
+
+test('played puts unwatched last and breaks equal/missing times by native add time',()=>{
+  const c=group('c',[row(4)]),d=group('d',[row(5)]);
+  const favorites=[row(1,200),row(3,100),row(4,9999),row(5,300)];
+  assert.deepEqual(desktopLibrarySortGroups([c,b,a,d],favorites,'played',names,[row(1,80),row(3,80)]),[a,b,c,d]);
+  assert.deepEqual(desktopLibrarySortGroups([c,b,a,d],favorites,'played',names,[row(1,80),{...row(3),updatedAt:'invalid'}]),[a,b,c,d]);
+  assert.deepEqual(desktopLibrarySortGroups([a,b,c,d],favorites,'played',names,[]),[c,d,a,b]);
+  assert.deepEqual(desktopLibrarySortGroups([],favorites,'played',names,[]),[]);
+  assert.deepEqual(desktopLibrarySortGroups([a],favorites,'played',names,[]),[a]);
+});
 test('factory renders every season, exposes separate persistent controls, sorting starts no searches',()=>{
   const shownRows=rows.map((item,i)=>({...item,title:`持械入宋： 第${i+1}季`}));
   const storage=new Map(),events=new EventTarget();let cursor=0,refCursor=0,searches=0;
@@ -55,7 +73,8 @@ test('factory renders every season, exposes separate persistent controls, sortin
   const rootSort=tree.props.children[0].props.children[1];
   assert.equal(rootSort.props.value,'recent');
   const control=rootSort.type(rootSort.props);assert.equal(control.props.children.type,'select');assert.equal(control.props.children.props['aria-label'],'收藏排序');
-  rootSort.props.onChange('title-desc');
+  assert.deepEqual(control.props.children.props.children.map(option=>option.props.children),['最近添加','最近播放']);
+  rootSort.props.onChange('played');
   tree=render();tree.props.children[1].props.children[0].props.children[0].props.onClick();
   tree=render();
   assert.equal(tree.props.children[1].props.children[0].props.children,'持械入宋');
@@ -71,7 +90,13 @@ test('factory renders every season, exposes separate persistent controls, sortin
   const seasonSort=tree.props.children[1].props.children[2];
   assert.equal(seasonSort.props.value,'desc');seasonSort.props.onChange('asc');
   tree=render();assert.equal(tree.props.children[3].props.children[0].item,shownRows[0]);
-  assert.deepEqual(JSON.parse(storage.get('guoban:library-sort:v1')),{favorites:'title-desc',seasons:'asc'});
+  assert.deepEqual(JSON.parse(storage.get('guoban:library-sort:v1')),{favorites:'played',seasons:'asc'});
+  state.length=0;assert.equal(render().props.children[0].props.children[1].props.value,'played');
+  for(const old of ['title-asc','title-desc']){
+    storage.set('guoban:library-sort:v1',JSON.stringify({favorites:old,history:'title-desc',seasons:'asc'}));state.length=0;
+    assert.equal(render().props.children[0].props.children[1].props.value,'recent');
+    assert.equal(JSON.parse(storage.get('guoban:library-sort:v1')).history,'title-desc');
+  }
   assert.equal(searches,0);
   delete globalThis.localStorage;
 });

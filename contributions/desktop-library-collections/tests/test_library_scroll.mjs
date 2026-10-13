@@ -41,9 +41,9 @@ test('root lists append batches, stop at the end and reset on sorting without da
   tree.props.children[2].props.children.props.onClick();tree=render();assert.equal(count(tree),37);assert.equal(tree.props.children[2],false);
   tree=render(rows.slice(0,1));assert.equal(count(tree),1);assert.equal(tree.props.children[2],false);
   tree=render([]);assert.equal(count(tree),0);assert.equal(tree.props.children[2],false);
-  tree=render();tree.props.children[0].props.children[1].props.onChange('title-asc');
+  tree=render();tree.props.children[0].props.children[1].props.onChange('played');
   tree=render();assert.equal(count(tree),12);assert.equal(scroll,0);
-  assert.equal(tree.props.children[1].props.children[0].item.title,'作品1');
+  assert.equal(tree.props.children[1].props.children[0].item.title,'作品37');
   tree.props.children[2].props.children.props.onClick();tree=render();assert.equal(count(tree),24);
   tree=render(rows,'history');assert.equal(count(tree),12);
   tree=render(rows,'favorites');assert.equal(count(tree),24);

@@ -186,7 +186,8 @@ function desktopLibraryDisplayTitle(title) {
 }
 
 function desktopLibrarySortPreference(name,value) {
-  const key='guoban:library-sort:v1',allowed=name==='seasons'?['asc','desc']:['recent','title-asc','title-desc'];
+  const key='guoban:library-sort:v1',allowed=name==='seasons'?['asc','desc']:
+    name==='favorites'?['recent','played']:['recent','title-asc','title-desc'];
   const fallback=name==='seasons'?'desc':'recent';
   try {
     const saved=JSON.parse(localStorage.getItem(key)||'{}');
@@ -198,9 +199,9 @@ function desktopLibrarySortPreference(name,value) {
 
 function DesktopLibrarySort({value,onChange,seasons=false,view}) {
   const label=seasons?'合集季号排序':view==='history'?'历史排序':'收藏排序';
-  const options=seasons?[['desc','季号倒序'],['asc','季号正序']]:[
-    ['recent',view==='history'?'最近观看':'最近添加'],['title-asc','名称正序'],['title-desc','名称倒序']
-  ];
+  const options=seasons?[['desc','季号倒序'],['asc','季号正序']]:view==='history'?[
+    ['recent','最近观看'],['title-asc','名称正序'],['title-desc','名称倒序']
+  ]:[['recent','最近添加'],['played','最近播放']];
   return b.jsx('label',{className:'desktop-library-sort',children:b.jsx('select',{
     'aria-label':label,value,onChange:event=>onChange(event.target.value),
     children:options.map(([key,text])=>b.jsx('option',{value:key,children:text},key))
@@ -220,7 +221,7 @@ function DesktopLibraryGrid({items,history=[],view,renderCard}) {
   // The album key may arrive asynchronously. Keep navigation and task state
   // attached to the selected member while its visible group grows or changes key.
   const collection=selected?groups.find(group=>group.items.some(item=>item.seriesId===selected)):null;
-  const sortedGroups=desktopLibrarySortGroups(groups,items,rootOrder,group=>group.items.length>1?desktopLibraryDisplayTitle(group.items[0].title):group.items[0].title);
+  const sortedGroups=desktopLibrarySortGroups(groups,items,rootOrder,group=>group.items.length>1?desktopLibraryDisplayTitle(group.items[0].title):group.items[0].title,history);
   const visibleCount=visibleCounts[view]||12,roots=sortedGroups.slice(0,visibleCount);
   const hasMore=roots.length<sortedGroups.length,seasons=desktopLibrarySortSeasons(collection?.items||[],desktopLibrary.relations,seasonOrder);
   function appendRoots(){setVisibleCounts(counts=>({...counts,[view]:Math.min(sortedGroups.length,(counts[view]||12)+12)}));}

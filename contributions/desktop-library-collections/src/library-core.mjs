@@ -100,13 +100,17 @@ function desktopLibrarySortSeasons(items, relations, order = 'desc') {
   });
 }
 
-function desktopLibrarySortGroups(groups, records, order, titleOf) {
+function desktopLibrarySortGroups(groups, records, order, titleOf, history = []) {
   const titles=new Intl.Collator('zh-CN',{numeric:true,sensitivity:'base'});
   const times=new Map(records.map(item=>[item.seriesId,Number.isFinite(Number(item.updatedAt))?Number(item.updatedAt):0]));
+  const played=new Map(history.map(item=>[item.seriesId,Number.isFinite(Number(item.updatedAt))?Number(item.updatedAt):0]));
   const latest=group=>Math.max(0,...group.items.map(item=>times.get(item.seriesId)||0));
+  const watched=group=>group.items.some(item=>played.has(item.seriesId));
+  const lastPlayed=group=>Math.max(0,...group.items.map(item=>played.get(item.seriesId)||0));
   const compareTitle=(a,b)=>titles.compare(titleOf(a),titleOf(b));
   return [...groups].sort((a,b)=>{
-    const primary=order==='title-asc'?compareTitle(a,b):order==='title-desc'?compareTitle(b,a):latest(b)-latest(a);
+    const primary=order==='played'?(watched(b)-watched(a)||lastPlayed(b)-lastPlayed(a)||latest(b)-latest(a)):
+      order==='title-asc'?compareTitle(a,b):order==='title-desc'?compareTitle(b,a):latest(b)-latest(a);
     return primary||compareTitle(a,b)||a.key.localeCompare(b.key);
   });
 }
