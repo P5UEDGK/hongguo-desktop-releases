@@ -27,10 +27,7 @@ function DesktopDanmakuSettings({media, sessionKey}) {
   const [settings, setSettings] = O.useState(desktopDanmakuSettings);
   const [enabled, setEnabled] = O.useState(() => desktopSocialPreference('danmaku', true));
   const [rows, setRows] = O.useState([]), panel = O.useRef(null), hoverTimer = O.useRef(null);
-  const control = O.useRef(null), hovered = O.useRef(false);
-  const dismiss = () => {
-    if (!hovered.current && !control.current?.contains(document.activeElement)) setOpen(false);
-  };
+  const controlRef = O.useRef(null), pointer = O.useRef(null);
   O.useEffect(() => () => clearTimeout(hoverTimer.current), []);
   O.useEffect(() => {
     const video = media.current;
@@ -62,11 +59,41 @@ function DesktopDanmakuSettings({media, sessionKey}) {
     return () => {observer.disconnect(); window.removeEventListener('resize', layout);};
   }, [open, list, sessionKey]);
   const update = (name, value) => desktopSocialSet(media.current, {settings: {...settings, [name]: Number(value)}});
-  return b.jsxs('span', {ref:control, className: 'desktop-danmaku-control',
-    onPointerEnter: () => {hovered.current=true; clearTimeout(hoverTimer.current); setOpen(true);},
-    onPointerLeave: () => {hovered.current=false; hoverTimer.current = setTimeout(dismiss, 250);},
-    onFocus: () => {clearTimeout(hoverTimer.current); setOpen(true);},
-    onBlur: event => {if (!event.currentTarget.contains(event.relatedTarget)) hoverTimer.current=setTimeout(dismiss,250);}, children: [
+  const pointerInside = () => [controlRef.current, panel.current].some(node => {
+    if (!node || !pointer.current) return false;
+    const rect = node.getBoundingClientRect(), {x, y} = pointer.current;
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  });
+  const keepOpen = event => {
+    if (Number.isFinite(event?.clientX)) pointer.current = {x:event.clientX,y:event.clientY};
+    clearTimeout(hoverTimer.current); setOpen(true);
+  };
+  const scheduleClose = () => {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => {
+      if (!pointerInside() && !controlRef.current?.querySelector(':focus-visible,:active')) setOpen(false);
+    }, 1200);
+  };
+  O.useEffect(() => {
+    if (!open) return;
+    // Native video clipping can reset CSS :hover while the pointer stays still.
+    // Track coordinates across the button, the fixed panel and the video surface.
+    const moved = event => {
+      pointer.current = {x:event.clientX,y:event.clientY};
+      if (pointerInside()) clearTimeout(hoverTimer.current); else scheduleClose();
+    };
+    const blurred = () => {pointer.current = null; scheduleClose();};
+    document.addEventListener('pointermove', moved, true); window.addEventListener('blur', blurred);
+    return () => {document.removeEventListener('pointermove', moved, true); window.removeEventListener('blur', blurred);};
+  }, [open]);
+  const leave = event => {
+    const control = event.currentTarget;
+    if (event.relatedTarget instanceof Node && control.contains(event.relatedTarget)) return;
+    scheduleClose();
+  };
+  return b.jsxs('span', {ref:controlRef,className: 'desktop-danmaku-control',
+    onPointerEnter: keepOpen, onPointerMove: keepOpen,
+    onPointerLeave: leave, onFocusCapture: keepOpen, onBlurCapture: leave, children: [
     b.jsx('button', {className: 'desktop-danmaku-toggle', 'aria-label': '弹幕', 'aria-pressed': enabled,
       'aria-expanded': open, title: '点击开关弹幕，悬停调整设置',
       onClick: () => desktopSocialSet(media.current, {danmaku: !enabled}), children: '弹幕'}),
@@ -131,6 +158,15 @@ function desktopDanmakuRows(items, settings = desktopDanmakuSettings(), previous
   }).slice(-300);
 }
 
+function desktopDanmakuViewport(media, stage) {
+  const boxWidth = media.clientWidth || stage?.clientWidth || 1000;
+  const boxHeight = media.clientHeight || stage?.clientHeight || 562;
+  const aspect = media.videoWidth > 0 && media.videoHeight > 0 ? media.videoWidth / media.videoHeight : boxWidth / boxHeight;
+  const width = Math.min(boxWidth, boxHeight * aspect), height = width / aspect;
+  return {width, height, left: (boxWidth - width) / 2, top: (boxHeight - height) / 2,
+    scale: Math.min(width, height) / 562};
+}
+
 function desktopStartDanmaku(media, endpoint, status) {
   desktopLoadEmojis(endpoint);
   const stage = media.closest('.player-stage');
@@ -156,7 +192,10 @@ function desktopStartDanmaku(media, endpoint, status) {
     }
     if (enabled) load();
   };
-  const viewport = () => (media.clientWidth || 1000)/Math.max(.3,(media.clientHeight-84 || 562)/562);
+  const viewport = () => {
+    const view = desktopDanmakuViewport(media, stage);
+    return view.width / view.scale;
+  };
   function reset() {
     generation++; loadAbort?.abort(); loadAbort=null; busy=false;
     raw = []; rows = []; cursor = ''; ended = false; retryAt = 0;
@@ -196,7 +235,7 @@ function desktopStartDanmaku(media, endpoint, status) {
     last = time; lastClock = clock; load();
     layer.hidden = !!stage?.classList.contains('desktop-native-playback');
     if (!layer.hidden) {
-      const width = media.clientWidth || stage?.clientWidth || 1000;
+      const viewport = desktopDanmakuViewport(media, stage), width = viewport.width;
       const active = rows.filter(row => time * 1000 >= row.offset_ms && time * 1000 < row.offset_ms + settings.duration * 1000);
       const existing = new Map([...layer.children].map(node => [node.dataset.id, node]));
       for (const row of active) {
@@ -211,9 +250,11 @@ function desktopStartDanmaku(media, endpoint, status) {
         }
         existing.delete(row.id);
         const age = (time * 1000 - row.offset_ms) / (settings.duration * 1000);
-        const scale = Math.max(0.3, (media.clientHeight - 84 || 562) / 562), size = settings.fontSize * scale;
+        const scale = viewport.scale, size = settings.fontSize * scale;
+        const x = width - (width + node.offsetWidth) * age;
         node.style.fontSize = size + 'px'; node.style.opacity = settings.opacity / 100;
-        node.style.transform = `translate3d(${width - (width + node.offsetWidth) * age}px,${(25 + row.lane * (settings.fontSize+15)) * scale}px,0)`;
+        node.style.transform = `translate3d(${viewport.left + x}px,${viewport.top + (25 + row.lane * (settings.fontSize+15)) * scale}px,0)`;
+        node.style.clipPath = `inset(0 ${Math.max(0, x + node.offsetWidth - width)}px 0 ${Math.max(0, -x)}px)`;
       }
       for (const node of existing.values()) node.remove();
     }

@@ -8,7 +8,7 @@
 
 ## 接入与行为
 
-createDanmaku 接收 React、jsxRuntime、read/preference/set 和 emojis。Settings 放在原弹幕开关位置，点击开关、悬停显示设置，无单独齿轮、无发送入口。与评论开关分别保存本机状态，移开延迟250ms收起；不改快捷键。
+createDanmaku 接收 React、jsxRuntime、read/preference/set 和 emojis。Settings 放在原弹幕开关位置，点击开关、悬停显示设置，无单独齿轮、无发送入口。与评论开关分别保存本机状态，移开延迟1.2秒收起；不改快捷键。
 
 defaults={opacity:80,lanes:3,fontSize:28,duration:14}。duration 是单条完整滚动时间，滑块向右映射为更短时间/更快。旧版本速度按1.8比例迁移一次，版本标记为2，保留其他偏好。恢复默认、行数、字号、透明度、当前播放附近列表均走同一 owner。
 
@@ -40,3 +40,13 @@ node contributions/desktop-danmaku-frontend/tests/test_ingress.cjs
 迟到准入回归使用可控的延迟响应，覆盖响应期间视频继续前进、首帧位于右边界、分页位置连续、设置不复活迟到项、seek 过期响应及清理；不连接上游接口。
 
 同一回归还覆盖异 ID 的单页／跨页重复、代表 ID 和在途位置稳定、不同毫秒及完整原文边界、缓存上限、设置与 seek，以及 DOM／原生日程一致。
+
+## 竖屏与悬停修复（2026-10-13）
+
+DOM弹幕按实际contain区域计算位置、字体和表情比例，并裁剪到视频边界。设置面板按按钮/面板矩形与指针位置保持悬停，兼容原生窗口切换时CSS hover失效及relatedTarget为Window的情况；离开宽限1.2秒，拖动和键盘焦点期间保持可用。弹幕持续时间、独立开关、迟到准入、去重和防追尾规则保留。
+
+本轮本机安装版已验证横屏、竖屏、旋转视频的原生文字和表情比例、移动、暂停和2倍速，以及原生/HLS悬停、面板移入、滑块、键盘焦点与延迟关闭。这是本机接线证据；公开包的独立测试和目标设备发布验收分别记录。
+
+公开包本轮验证：16项Python、4组Node与114项浏览器组合检查通过；组合补丁逐个应用通过，真实libmpv字幕保留和恢复通过。新增几何/旋转/尺寸变更与Window/Node/null悬停回归使用人工样本。
+
+完整Node回归：`pwsh -NoProfile -Command "node --test contributions/desktop-danmaku-frontend/tests/*.cjs"`。
