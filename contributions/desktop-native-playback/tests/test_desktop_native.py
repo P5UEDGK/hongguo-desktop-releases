@@ -48,7 +48,7 @@ class NativeTests(unittest.TestCase):
             watch=FrameDropWatch();values=[]
             for n in range(26):
                 values.append(watch.observe(n/10,0 if decoder else n*3,n*3 if decoder else 0,30,1,True))
-            self.assertTrue(any(values),'moving audio clock cannot hide sustained video loss')
+            self.assertEqual(any(values),decoder,'VO drops must not disable hardware decoding')
             self.assertFalse(any(values[:20]),'one early burst cannot trigger recovery')
 
     def test_drop_watch_ignores_pause_counter_reset_and_normal_low_loss(self):

@@ -33,7 +33,7 @@ def describe_streams(media):
     if not codec or not math.isfinite(rate) or not 0 < rate <= 120:
         return {"copyEligible": False}
     video = {"contentType": f'video/mp4; codecs="{codec}"', "width": context.width,
-             "height": context.height, "framerate": rate,
+             "height": context.height, "pixelFormat": getattr(getattr(context, "format", None), "name", None), "framerate": rate,
              "bitrate": max(1, context.bit_rate or 2000000)}
     copy_eligible = True
     audio = []
