@@ -26,11 +26,14 @@
 
 `src/desktop_library.py` 负责持久关系及本机路由；`src/library-core.mjs` 负责队列、归组、进度与收藏编排；`src/frontend-library.mjs` 提供显式宿主工厂及组件；`src/season-search.mjs` 统一标题解析、原词/前缀查询与其他季/下一季查找。React、封面组件、搜索接口与原生存储由宿主提供，不另建一套应用。
 
+如宿主使用受控Python本机服务，`src/desktop_bootstrap.py`保留原START/端口控制协议，先完成端口握手，再加载框架和准备缓存；不要将慢初始化放在主进程等待端口的阶段。它替换宿主既有入口，不启动第二份服务。
+
 Python 3.10+、Node 18+。在仓库根以 pwsh 执行：
 
 ```pwsh
 python -m pip install -r contributions/desktop-library-collections/requirements-test.txt
 python contributions/desktop-library-collections/tests/test_desktop_library.py
+python contributions/desktop-library-collections/tests/test_bootstrap_startup.py
 node contributions/desktop-library-collections/tests/test_library_core.cjs
 node contributions/desktop-library-collections/tests/test_library_adapter.mjs
 node contributions/desktop-library-collections/tests/test_season_search.mjs
@@ -40,7 +43,7 @@ node contributions/desktop-library-collections/tests/test_library_scroll.mjs
 node --check contributions/desktop-library-collections/src/frontend-library.mjs
 ```
 
-后端8项、前端核心20项及工厂接线4项、分季搜索17项、排序6项、连续列表1项及搜索/收藏集成2项回归均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
+后端8项、前端核心20项及工厂接线4项、分季搜索17项、排序6项、连续列表1项、搜索/收藏集成2项及启动协议3项回归（共61项）均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
 
 ## 接入限制
 

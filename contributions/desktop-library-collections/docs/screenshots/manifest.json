@@ -1,5 +1,5 @@
 {
-  "capture": "实际 Windows EXE / WebView2 原始截图。最新3张为37根条目/38原生记录的隔离fixture，共用一张已有公开缓存封面；不代表个人片单或上游结果。此前31张范围沿用原说明。旧根列表与合集分页截图仅为历史证据，当前两处根列表连续追加、合集全量列出。",
+  "capture": "当前新增1张为本机启动修复后的真实目标合集。此前34张沿用逐图范围；原图未修改，旧分页图保留为历史证据。",
   "images": [
     {
       "file": "before-inline-layout.png",
@@ -177,6 +177,12 @@
       "file": "root-scroll-history-narrow.png",
       "sha256": "784e84c64194dce22a62c571f722e19221be3e8e96da56d76dbf3c134e324f44",
       "caption": "620 CSS像素历史列表：两列卡片、原生移除历史入口与排序。顶部原有搜索区域拥挤仍不在本批范围。"
+    },
+    {
+      "file": "startup-restored-collection.png",
+      "sha256": "d63a588e06525e2216b1e7a35593ec15a67fe1c9f83c05061d7defa4f24c6318",
+      "caption": "启动顺序修复后：真实41季合集恢复，倒序与原标题保留。",
+      "scope": "实际安装版，真实目标合集，只读导航；收藏99/历史51前后内容一致"
     }
   ]
 }
