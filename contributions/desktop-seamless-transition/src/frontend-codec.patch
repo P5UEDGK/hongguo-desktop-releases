@@ -3,7 +3,7 @@
 @@ -15,8 +15,8 @@
    } catch { return false; }
  }
- 
+
 -function desktopCreateCodecFetch(forceH264 = false) {
 -  let closed = false, usedCopy = false, failureCode = null;
 +function desktopCreateCodecFetch(forceH264 = false, standbyParent = null) {
@@ -42,7 +42,7 @@
    request.close = () => {closed = true;};
    return request;
 @@ -57,6 +65,7 @@
- 
+
  function desktopCodecHls(media, url, initialPosition, callbacks, preparation, windowed = false, initialState = null) {
    let disposed = false, retried = false, epoch = 0, controller, transport;
 +  let standbyParent = initialState?.standbyParent;
@@ -67,5 +67,5 @@
 +    activate() {standbyParent = null;},
 +    sessionId: () => transport?.sessionId?.()});
  }
- 
+
  // Complete backend prefetch owns speculative media. Keep the resolved episode
