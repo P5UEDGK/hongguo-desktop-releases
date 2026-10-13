@@ -8,7 +8,7 @@
  import sqlite3
  import threading
  import time
-+from concurrent.futures import ThreadPoolExecutor, as_completed
++from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
  from contextlib import contextmanager
  from pathlib import Path
  
@@ -76,7 +76,7 @@
 +                        continue  # A cover backfill failure must not discard a known relationship.
                      album = identity(vd.get("related_album_id")) if valid else None
                      season = vd.get("season_index") if valid else None
-@@ -83,10 +96,63 @@
+@@ -83,10 +96,81 @@
                      row = (sid, album, season, vd["series_title"][:500] if valid else "",
                             "resolved" if valid and album else "ungrouped" if valid else "failed",
 -                           0 if album else now + (86400 if valid else 300))
@@ -126,12 +126,30 @@
 +        missing = [sid for sid in initial["missing"] if posters.ready_to_fetch(sid)]
 +        if not missing:
 +            return
-+        rows = self.resolve(missing, require_covers=True)["relations"]
++        # Known image URLs are read through WAL without the relationship lock.
++        # A background relationship lookup (or an unknown sibling in this batch)
++        # must not hold up downloads that already have an address.
++        with self.connect() as db:
++            known = {sid: url for sid, url in db.execute(
++                "SELECT series_id,url FROM poster_urls WHERE series_id IN ("
++                + ",".join("?" for _ in missing) + ")", missing) if cover_url(url)}
++        unknown = [sid for sid in missing if sid not in known]
 +        with ThreadPoolExecutor(max_workers=6) as pool:
-+            work = {pool.submit(self._fetch_cover, posters, row): row["seriesId"] for row in rows}
-+            for future in as_completed(work):
-+                sid, data = work[future], future.result()
-+                yield {"covers": {sid: data} if data else {}, "missing": [] if data else [sid]}
++            work = {pool.submit(self._fetch_cover, posters, {"seriesId": sid, "coverUrl": url}): sid
++                    for sid, url in known.items()}
++            metadata = pool.submit(self.resolve, unknown, require_covers=True) if unknown else None
++            if metadata is not None:
++                work[metadata] = None
++            while work:
++                completed, _ = wait(work, return_when=FIRST_COMPLETED)
++                for future in completed:
++                    sid = work.pop(future)
++                    if future is metadata:
++                        for row in future.result()["relations"]:
++                            work[pool.submit(self._fetch_cover, posters, row)] = row["seriesId"]
++                    else:
++                        data = future.result()
++                        yield {"covers": {sid: data} if data else {}, "missing": [] if data else [sid]}
 +
 +    def _fetch_cover(self, posters, row):
 +        sid = row["seriesId"]
@@ -143,7 +161,7 @@
 +        return data
  
      def set_manual(self, sid, target):
-@@ -138,3 +204,22 @@
+@@ -138,3 +222,22 @@
              raise HTTPException(400, str(error)) from None
  
 +    @router.post("/covers", dependencies=[Depends(check)])

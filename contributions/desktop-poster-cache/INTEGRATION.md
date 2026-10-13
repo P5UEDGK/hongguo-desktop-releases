@@ -14,7 +14,7 @@ fetch_image_bytes 复用原图片下载/HEIC 转 JPEG 方法，返回 bytes；�
 本包沿用 [#246](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/pull/246) 的 CacheSettings/视频热切 owner，不复制第二套配置或视频实现。patches/library-covers.patch 与 patches/server-posters.patch 是本机关系/服务 owner 的最小改动，适用于已有 backend/desktop_library.py 的宿主，不是可直接应用到当前发行仓库的补丁。接入相同前置模块后用 git apply --check 核对；不同宿主应实现以下契约，避免复制第二套图片缓存：
 
 1. 同一关系数据库新增 poster_urls(series_id PRIMARY KEY, url NOT NULL)，旧 relations 六列不变。详情补齐时只保存 ID 精确匹配的 series_cover，经 cover_url 验证；已有合法关系不能被补图失败覆盖。WAL 本地读取不持远程查询的全局锁。
-2. POST /desktop/library/covers 接收 {seriesIds:[字符串 ID],localOnly:布尔值}，最多 20 张，localOnly 默认 false。先对所有 ID 调用 posters.read；localOnly 为 true 时立即返回本地图及缺失 ID，不查详情、不下载。普通请求才对剩余且 ready_to_fetch 的 ID 复用详情 owner 补查地址，再用最多六个线程调用 posters.get。默认返回 {covers:{ID:dataURL},missing:[],localHits:n}；额外传 stream:true 时返回 application/x-ndjson，先发送本地命中，再按完成顺序逐张发送 {covers:{ID:dataURL},missing:[]}，每行最多一张图片。localOnly 为 true 时仍返回 JSON。非法 localOnly 或 stream 类型返回 400。
+2. POST /desktop/library/covers 接收 {seriesIds:[字符串 ID],localOnly:布尔值}，最多 20 张，localOnly 默认 false。先对所有 ID 调用 posters.read；localOnly 为 true 时立即返回本地图及缺失 ID，不查详情、不下载。普通请求对剩余且 ready_to_fetch 的 ID 先通过 WAL 读取已有合法地址并立即下载，不获取关系查询锁；仅缺地址的 ID 后台批量补查，与已知地址下载共用最多六个工作线程。用动态 future 集合按完成顺序消费，详情完成后才加入对应下载，不能先等待整个详情批次。默认返回 {covers:{ID:dataURL},missing:[],localHits:n}；额外传 stream:true 时返回 application/x-ndjson，先发送本地命中，再按完成顺序逐张发送 {covers:{ID:dataURL},missing:[]}，每行最多一张图片。localOnly 为 true 时仍返回 JSON。非法 localOnly 或 stream 类型返回 400。
 3. 地址下载失败后清除该条已失效地址，保留图片文件与有效关系；冷却过后可重新取得签名地址。没有地址也进入相同失败冷却，防止每张卡片反复查询。
 4. 沿用桌面回环监听、可信 Origin、客户端标志和当前会话 requestToken。GET /desktop/library 取得会话 token；POST 验证 x-desktop-library-token。若普通 API key 中间件免除此路由，只免除精确路径并保留上述检查，不开放整个路径前缀。
 
@@ -61,3 +61,15 @@ return await response.json();
 先通过公开测试，再验证宿主已有图片无详情/图片上游请求、冷缺图补齐一次、切页/进入合集/返回/重启继续命中、坏图仅修复本条、签名地址过期后冷却恢复，以及合法 token、错误 Origin 和缺失 token。补充阻塞回归：一批混有本地图和缺图时本地图先显示；六张缺图等待网络时，后来显示的本地图仍能加载；同批一张完成、一张仍下载时，完成的图片立即显示，剩余图片完成后独立显示。分别验证各封面页面以及无 source、validationApi、appImport 来源。对实际安装包统计 get_series_cover 调用必须为零，避免源码已接线但运行包漏接。核对原收藏/历史表未变，并确认目录映射后仍复用既有原生文件，并验证设置切换、保存失败及在途下载只向已提交的新根发布。
 
 本机补丁应用、上述业务、鉴权及旧 schema 迁移已有对应测试和真实运行证据。公开 fixture 不能替代维护者私有工程的接入/发布验收。撤回补丁和公共入口接线可恢复旧路径，用户图片和新增地址表保留，不通过清缓存回滚。
+
+
+### 缺地址阻塞回归
+
+`tests/test_host_covers.py` 使用人工 ID 和图片，验证已知地址下载不等无关详情锁、同批已知地址先于缺地址返回。它需要已应用本包补丁的宿主 `desktop_library.py`，不会连接真实上游。未指定宿主路径时两项显式跳过，不能当作集成验收通过：
+
+```pwsh
+$env:HONGGUO_HOST_BACKEND = '<已应用补丁的宿主 backend 绝对路径>'
+pwsh -NoProfile -Command "python -I -B contributions/desktop-poster-cache/tests/run.py"
+```
+
+本机在补丁应用后的宿主副本上执行这两项测试；原实现两项均超时，修复后通过。本轮本机完整宿主的图片/关系测试共26项通过。安装包UI与真实HTTP结果以本轮验收记录为准，公开测试不替代客户端发布验证。
