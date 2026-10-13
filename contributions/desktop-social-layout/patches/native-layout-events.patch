@@ -1,0 +1,100 @@
+--- a/contributions/desktop-native-playback/src/frontend-native.js
++++ b/contributions/desktop-native-playback/src/frontend-native.js
+@@ -7,2 +7,4 @@
+   let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
++  let controlsOverlay = null;
++  let chromeObserver = null;
+   let resize = null, lastRect = '', generation = 0, seekPending = null;
+@@ -65,3 +67,9 @@
+     resize?.disconnect();
++    chromeObserver?.disconnect();
++    controlsOverlay?.dispose();
++    const chrome = stage?.querySelector?.('.player-chrome');
++    for (const name of ['transitionend', 'focusin', 'focusout', 'pointerdown', 'pointerup'])
++      chrome?.removeEventListener?.(name, layout);
+     media.removeEventListener('desktopdanmaku', updateDanmaku);
++    media.removeEventListener('desktopsociallayout', updateSocialLayout);
+     document.removeEventListener('fullscreenchange', layout);
+@@ -128,3 +136,3 @@
+       controlBusy = false;
+-      if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, "paused" in pending || "seek" in pending ? 0 : 250);
++      if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, pending.rect || "paused" in pending || "seek" in pending ? 0 : 250);
+     }
+@@ -138,10 +146,47 @@
+     const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
+-    // Keep the existing timeline, volume, speed and fullscreen buttons above
+-    // the native surface; the reserved band is part of the current stage.
+-    const bar = Math.min(84, Math.max(0, rect.height - 1));
+-    const bounds = typeof desktopNativeSurfaceRect === "function" ? desktopNativeSurfaceRect(media) : [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+-      Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
++    // Match the browser player: render into the full video rectangle. Reveal
++    // the existing WebView controls with region cutouts, never by shrinking video.
++    const bounds = typeof desktopNativeSurfaceRect === 'function' ? desktopNativeSurfaceRect(media) : [
++      Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
++      Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round(rect.height * scale))];
+     const visible = !document.hidden && rect.width > 0 && rect.height > 0;
+-    const signature = JSON.stringify([bounds, visible]);
+-    if (signature !== lastRect) {lastRect = signature; queue({rect: bounds, visible});}
++    const occlusion = [];
++    const cut = box => {
++      if (!box) return;
++      const left = Math.max(rect.left, box.left), top = Math.max(rect.top, box.top);
++      const right = Math.min(rect.left + rect.width, box.right ?? box.left + box.width);
++      const bottom = Math.min(rect.top + rect.height, box.bottom ?? box.top + box.height);
++      if (right > left && bottom > top) {
++        const x = Math.max(0, Math.floor((left - rect.left) * scale));
++        const y = Math.max(0, Math.floor((top - rect.top) * scale));
++        occlusion.push(x, y, Math.ceil((right - rect.left) * scale) - x,
++          Math.ceil((bottom - rect.top) * scale) - y);
++      }
++    };
++    const chrome = (media.desktopControlsOverlayError || !controlsOverlay?.ready) && stage.querySelector?.('.player-chrome');
++    const style = chrome && typeof getComputedStyle === 'function' ? getComputedStyle(chrome) : null;
++    const shown = chrome && (chrome.matches?.('.visible,:has(:focus-visible,:active)') ||
++      !style || Number(style.opacity) > .001);
++    if (shown && style?.display !== 'none' && style?.visibility !== 'hidden') {
++      const box = chrome.getBoundingClientRect();
++      // Do not turn the transparent top padding into an extra black band.
++      const children = Array.from(chrome.children || []).map(node => node.getBoundingClientRect())
++        .filter(child => child.width > 0 && child.height > 0);
++      const top = children.length ? Math.max(box.top, Math.min(...children.map(child => child.top)) - 8) : box.top;
++      cut({...box.toJSON?.(), left:box.left, top, width:box.width, height:box.top + box.height - top});
++    } else if (media.desktopControlsOverlayError || !controlsOverlay?.ready) {
++      const idle = stage.querySelector?.('.player-idle-progress');
++      if (idle && (typeof getComputedStyle !== 'function' || Number(getComputedStyle(idle).opacity) > .001))
++        cut(idle.getBoundingClientRect());
++    }
++    cut(stage.querySelector?.('.desktop-danmaku-panel')?.getBoundingClientRect());
++    const signature = JSON.stringify([bounds, visible, occlusion]);
++    if (signature !== lastRect) {
++      lastRect = signature; queue({rect: bounds, visible, occlusion});
++      if (!controlBusy) {clearTimeout(controlTimer); controlTimer = null; flush();}
++    }
++  }
++  function updateSocialLayout() {
++    layout();
++    if (!controlBusy) {clearTimeout(controlTimer); controlTimer = null; flush();}
+   }
+@@ -196,3 +241,18 @@
+     stage?.classList.add('desktop-native-playback');
++    controlsOverlay = desktopNativeControlsOverlay(media, stage, body => {
++      queue(body);
++      if (!controlBusy) {clearTimeout(controlTimer); controlTimer=null; flush();}
++    }, layout, () => ready && !fallbackStarted && (state.paused || state.buffering || state.ended || !state.duration ||
++      (state.duration - state.time) / Math.max(.25, state.rate) > 1));
+     resize = new ResizeObserver(layout); resize.observe(media);
++    const chrome = stage?.querySelector?.('.player-chrome');
++    if (chrome) resize.observe(chrome);
++    if (chrome) {
++      if (typeof MutationObserver === 'function') {
++        chromeObserver = new MutationObserver(layout);
++        chromeObserver.observe(chrome, {attributes:true, attributeFilter:['class','style']});
++      }
++      for (const name of ['transitionend', 'focusin', 'focusout', 'pointerdown', 'pointerup'])
++        chrome.addEventListener?.(name, layout);
++    }
+     document.addEventListener('fullscreenchange', layout);
+@@ -200,2 +260,3 @@
+     media.addEventListener('desktopdanmaku', updateDanmaku);
++    media.addEventListener('desktopsociallayout', updateSocialLayout);
+     updateDanmaku();

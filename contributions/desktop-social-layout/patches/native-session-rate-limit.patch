@@ -1,0 +1,38 @@
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -215,16 +215,25 @@
+         if not _keys.is_valid(key):            # 强制: 必须有效密钥
+             _stats["auth_fail"] += 1
+             return JSONResponse({"detail": "缺少或无效的 api_key(请在客户端配置本地链路密钥)"}, status_code=401)
+-        now = time.time()
+-        with _rl_lock:
+-            desktop_segments = path.startswith("/desktop/hls/")
+-            limit = 600 if desktop_segments else RATE_PER_MIN
+-            bucket = _rl.setdefault((key, desktop_segments), [])
+-            while bucket and bucket[0] < now - 60:
+-                bucket.pop(0)
+-            if len(bucket) >= limit:
+-                return JSONResponse({"detail": f"超过限流 {limit}/分钟"}, status_code=429)
+-            bucket.append(now)
++        session_key = os.environ.get("HONGGUO_SESSION_API_KEY", "")
++        owned_client = (
++            bool(session_key) and key == session_key
++            and request.client is not None
++            and request.client.host in ("127.0.0.1", "::1")
++        )
++        # The managed local app must not consume a per-minute API allowance.
++        # This also covers catalog reads and switching series or episodes.
++        if not owned_client:
++            now = time.time()
++            with _rl_lock:
++                desktop_segments = path.startswith("/desktop/hls/")
++                limit = 600 if desktop_segments else RATE_PER_MIN
++                bucket = _rl.setdefault((key, desktop_segments), [])
++                while bucket and bucket[0] < now - 60:
++                    bucket.pop(0)
++                if len(bucket) >= limit:
++                    return JSONResponse({"detail": f"超过限流 {limit}/分钟"}, status_code=429)
++                bucket.append(now)
+         _stats["requests"] += 1
+     resp = await call_next(request)
+     if resp.status_code >= 500:

@@ -1,0 +1,135 @@
+--- a/contributions/desktop-native-playback/src/desktop_native.py
++++ b/contributions/desktop-native-playback/src/desktop_native.py
+@@ -5,2 +5,4 @@
+ """
++import base64
++import zlib
+ import ctypes as C
+@@ -25,5 +27,28 @@
+
++def decode_controls_overlay(value):
++    # Neither filesystem paths, memory pointers nor mpv commands cross this API.
++    if not isinstance(value, dict) or set(value) != {"x", "y", "width", "height", "data"}:
++        raise ValueError("Invalid controls overlay")
++    x, y, width, height = (value[key] for key in ("x", "y", "width", "height"))
++    if (any(type(v) is not int for v in (x, y, width, height))
++            or not 0 <= x <= 32768 or not 0 <= y <= 32768
++            or not 1 <= width <= 8192 or not 1 <= height <= 512
++            or width * height > 1048576 or x + width > 32768 or y + height > 32768
++            or not isinstance(value["data"], str) or len(value["data"]) > 524288):
++        raise ValueError("Invalid controls overlay")
++    try:
++        compressed = base64.b64decode(value["data"], validate=True)
++        decoder = zlib.decompressobj()
++        pixels = decoder.decompress(compressed, width * height * 4 + 1)
++        if (len(pixels) != width * height * 4 or not decoder.eof
++                or decoder.unused_data or decoder.unconsumed_tail):
++            raise ValueError("Invalid controls pixels")
++    except (ValueError, zlib.error) as error:
++        raise ValueError("Invalid controls overlay") from error
++    return {"x": x, "y": y, "width": width, "height": height, "pixels": pixels}
++
++
+ def validate_control(body):
+     if not isinstance(body, dict) or not body or set(body) - {
+-            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings"}:
++            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings", "occlusion", "controlsOverlay"}:
+         raise ValueError("Invalid native control")
+@@ -44,2 +69,4 @@
+     result = dict(body)
++    if "controlsOverlay" in body:
++        result["controlsOverlay"] = decode_controls_overlay(body["controlsOverlay"])
+     if 'danmaku' in body:
+@@ -48,2 +75,7 @@
+         result['danmakuSettings'] = validate_settings(body['danmakuSettings'])
++    if 'occlusion' in body:
++        value = body['occlusion']
++        if (not isinstance(value, list) or len(value) not in (0, 4, 8)
++                or any(type(v) is not int or not 0 <= v <= 32768 for v in value)):
++            raise ValueError('Invalid native occlusion')
+     return result
+@@ -132,2 +164,9 @@
+             self.user = C.WinDLL("user32", use_last_error=True)
++            self.gdi = C.WinDLL("gdi32", use_last_error=True)
++            for name, args, result in (
++                    ("CreateRectRgn", [C.c_int] * 4, C.c_void_p),
++                    ("CombineRgn", [C.c_void_p] * 3 + [C.c_int], C.c_int),
++                    ("DeleteObject", [C.c_void_p], W.BOOL)):
++                function = getattr(self.gdi, name)
++                function.argtypes, function.restype = args, result
+             self.enum_callback = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
+@@ -152,2 +191,3 @@
+                 "SetWindowPos": ([W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT], W.BOOL),
++                "SetWindowRgn": ([W.HWND, C.c_void_p, W.BOOL], C.c_int),
+                 "ShowWindow": ([W.HWND, C.c_int], W.BOOL),
+@@ -428,2 +468,7 @@
+         drop_watch = FrameDropWatch()
++        occlusion = []
++        controls_buffer = None
++        controls_updates = 0
++        controls_rect = None
++        controls_nonzero = 0
+         danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
+@@ -543,5 +588,45 @@
+                         width, height = min(width, max(1, client.right - x)), min(height, max(1, client.bottom - y))
+-                        user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
++                        if not user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010):
++                            raise RuntimeError("Native bounds update failed")
+                     if "visible" in command:
+                         user.ShowWindow(hwnd, 4 if command["visible"] else 0)
++                    if "controlsOverlay" in command:
++                        overlay = command["controlsOverlay"]
++                        controls_buffer = C.create_string_buffer(overlay["pixels"])
++                        player.command("overlay-add", 62, overlay["x"], overlay["y"],
++                                       "&" + str(C.addressof(controls_buffer)), 0, "bgra",
++                                       overlay["width"], overlay["height"], overlay["width"] * 4)
++                        controls_updates += 1
++                        alpha = overlay["pixels"][3::4]
++                        controls_nonzero = len(alpha) - alpha.count(0)
++                        controls_rect = [overlay[key] for key in ("x", "y", "width", "height")]
++                    if "occlusion" in command:
++                        occlusion = command["occlusion"]
++                    if "rect" in command or "occlusion" in command:
++                        if not occlusion:
++                            user.SetWindowRgn(hwnd, None, True)
++                        else:
++                            # Keep the full render size while revealing at most two
++                            # WebView overlays (controls/idle progress and settings).
++                            client = W.RECT()
++                            if not user.GetClientRect(hwnd, C.byref(client)):
++                                raise RuntimeError("Native surface unavailable")
++                            region = self.host.gdi.CreateRectRgn(0, 0, client.right, client.bottom)
++                            cutout = None
++                            try:
++                                if not region:
++                                    raise RuntimeError("Native overlay clipping failed")
++                                for index in range(0, len(occlusion), 4):
++                                    ox, oy, ow, oh = occlusion[index:index + 4]
++                                    cutout = self.host.gdi.CreateRectRgn(ox, oy, ox + ow, oy + oh)
++                                    if not cutout or not self.host.gdi.CombineRgn(region, region, cutout, 4):
++                                        raise RuntimeError("Native overlay clipping failed")
++                                    self.host.gdi.DeleteObject(cutout)
++                                    cutout = None
++                                if not user.SetWindowRgn(hwnd, region, True):
++                                    raise RuntimeError("Native overlay clipping failed")
++                                region = None  # successful SetWindowRgn transfers ownership
++                            finally:
++                                if region: self.host.gdi.DeleteObject(region)
++                                if cutout: self.host.gdi.DeleteObject(cutout)
+                     danmaku_track.update(command)
+@@ -642,2 +727,6 @@
+                     raise NativeOutputError("Native audio/input output unavailable")
++                surface = W.RECT()
++                surface_origin = W.POINT(0, 0)
++                user.GetClientRect(hwnd, C.byref(surface))
++                user.MapWindowPoints(hwnd, self.parent, C.byref(surface_origin), 1)
+                 with self.guard:
+@@ -657,2 +746,4 @@
+                                      frameDrops=frame_drops, decoderDrops=decoder_drops,
++                                     occlusion=list(occlusion),
++                                     controlsOverlayUpdates=controls_updates, controlsOverlayRect=controls_rect, controlsOverlayNonzero=controls_nonzero, surfaceRect=[surface_origin.x, surface_origin.y, surface.right, surface.bottom],
+                                      **danmaku_track.snapshot(position))
+@@ -680,2 +771,3 @@
+                 if reusable and player:
++                    player.command("overlay-remove", 62)
+                     user.ShowWindow(hwnd, 0)
