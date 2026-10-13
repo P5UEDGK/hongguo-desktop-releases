@@ -42,14 +42,24 @@ def active_danmaku(items, seconds, settings):
             and 0 <= seconds - row['offset_ms'] / 1000 < settings['duration']]
 
 
-def ass_document(items, settings=None, *, assets=None):
+def danmaku_resolution(aspect=None):
+    """Square ASS units following the displayed video, with a stable short side."""
+    if not isinstance(aspect, (int, float)) or not math.isfinite(aspect) or aspect <= 0:
+        return 1000, 562
+    aspect = min(10, max(.1, aspect))
+    return (round(562 * aspect), 562) if aspect >= 1 else (562, round(562 / aspect))
+
+
+def ass_document(items, settings=None, *, assets=None, resolution=None):
     """One timed track lets libass move glyphs on the video's presentation clock."""
     settings = validate_settings(DEFAULT_SETTINGS if settings is None else settings)
     items = validate_danmaku(items)
     assets = {} if assets is None else assets
+    canvas_width, canvas_height = resolution or danmaku_resolution()
     duration, size = settings["duration"], settings["fontSize"]
     alpha = f'{round(255 * (1 - settings["opacity"] / 100)):02X}'
-    lines = ["[Script Info]", "ScriptType: v4.00+", "PlayResX: 1000", "PlayResY: 562",
+    lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {canvas_width}", f"PlayResY: {canvas_height}",
+             f"LayoutResX: {canvas_width}", f"LayoutResY: {canvas_height}",
              "WrapStyle: 2", "ScaledBorderAndShadow: yes", "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
              "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
@@ -76,7 +86,7 @@ def ass_document(items, settings=None, *, assets=None):
         start = row['offset_ms']
         prefix=f'Dialogue: 0,{stamp(start)},{stamp(start + duration * 1000)},Default,,0,0,0,,'
         def movement(x,top):
-            return r'{\an7\move(' + f'{1000+x:g},{top:g},{-width+x:g},{top:g},0,{duration*1000}' + r')\clip(0,0,1000,562)'
+            return r'{\an7\move(' + f'{canvas_width+x:g},{top:g},{-width+x:g},{top:g},0,{duration*1000}' + f')\\clip(0,0,{canvas_width},{canvas_height})'
         x=0
         for part in parts:
             if part not in assets:

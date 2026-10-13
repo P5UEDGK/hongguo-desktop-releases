@@ -1,6 +1,6 @@
 """One owned ASS track; ordinary position polls never replace it."""
 import time
-from desktop_danmaku import DEFAULT_SETTINGS, validate_danmaku, validate_settings, ass_document, active_danmaku
+from desktop_danmaku import DEFAULT_SETTINGS, validate_danmaku, validate_settings, ass_document, active_danmaku, danmaku_resolution
 
 class DanmakuTrack:
     def __init__(self, *, assets=None, clock=time.monotonic):
@@ -17,6 +17,7 @@ class DanmakuTrack:
         self.promoted = False
         self.pending_removals = set()
         self.retry_at = 0
+        self.resolution = danmaku_resolution()
 
     def update(self, command):
         items = validate_danmaku(command['danmaku']) if 'danmaku' in command else self.items
@@ -76,12 +77,27 @@ class DanmakuTrack:
             self.pending_removals.remove(identifier)
 
     def apply(self, player):
+        # Read display metadata on the video owner thread, including rotation.
+        # Ordinary position polls do not rebuild an unchanged ASS document.
+        try:
+            aspect = float(player.get('video-out-params/aspect') or 0)
+            if aspect <= 0:
+                width = float(player.get('video-params/w') or 0)
+                height = float(player.get('video-params/h') or 0)
+                aspect = width / height if width > 0 and height > 0 else 0
+            rotation = int(float(player.get('video-params/rotate') or 0))
+            if rotation % 180 == 90 and aspect: aspect = 1 / aspect
+            resolution = danmaku_resolution(aspect)
+        except (ValueError, TypeError, OverflowError, ZeroDivisionError):
+            resolution = danmaku_resolution()
+        if resolution != self.resolution:
+            self.resolution, self.dirty = resolution, True
         if not self.dirty or self.clock() < self.retry_at:
             return
         self.dirty = False
         try:
             self.remove_pending(player)
-            document = ass_document(self.items, self.settings, assets=self.assets) if self.items else ''
+            document = ass_document(self.items, self.settings, assets=self.assets, resolution=self.resolution) if self.items else ''
             if document == self.document:
                 if document: self.show_captions(player)
                 self.failed = False
