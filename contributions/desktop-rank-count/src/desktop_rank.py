@@ -1,11 +1,12 @@
 """Read complete official rank loader data with one upstream request per page."""
+import asyncio
 import json
 import re
 import threading
 import time
 from concurrent.futures import Future
 
-import requests
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 BASE = 'https://hongguoduanju.com'
@@ -15,70 +16,45 @@ ORIGINS = ('http://tauri.localhost', 'tauri://localhost')
 ID = re.compile(r'[0-9]{8,24}').fullmatch
 MAX_BYTES = 8 * 1024 * 1024
 TOTAL_SECONDS = 20.0
+# Reuse verified trust roots instead of rebuilding them in each timed request.
+_SSL_CONTEXT = httpx.create_ssl_context()
 
 
-def upstream_page(board, page, request=requests.request):
-    deadline = time.monotonic() + TOTAL_SECONDS
+def _client_factory(**options):
+    return httpx.AsyncClient(verify=_SSL_CONTEXT, **options)
+
+
+def upstream_page(board, page, client_factory=None):
+    # The timeout surrounds connection, header acquisition, body and cleanup.
+    # A synchronous Requests call cannot be cancelled while reading headers.
+    try:
+        return asyncio.run(asyncio.wait_for(
+            _upstream_page(board, page, client_factory or _client_factory),
+            timeout=TOTAL_SECONDS))
+    except (asyncio.TimeoutError, httpx.TimeoutException) as error:
+        raise ValueError('排行榜请求超时，请重试') from error
+    except (httpx.HTTPError, OSError, UnicodeError) as error:
+        raise ValueError('排行榜暂时无法连接，请重试') from error
+
+
+async def _upstream_page(board, page, client_factory):
     route = BOARDS[board]
     params = {'__loader': 'rank_' + route + '/page', '__ssrDirect': 'true'}
     if page != 1:
         params['page'] = page
-    try:
-        with request('GET', BASE + '/rank/' + route,
-                     params=params,
-                     timeout=(5, 15), stream=True, allow_redirects=False) as response:
+    async with client_factory(timeout=httpx.Timeout(15, connect=5),
+                              follow_redirects=False) as client:
+        async with client.stream('GET', BASE + '/rank/' + route, params=params) as response:
             response.raise_for_status()
             if response.status_code != 200:
                 raise ValueError('排行榜响应异常，请重试')
-            return _read_body(response, deadline)
-    except (requests.RequestException, OSError, UnicodeError) as error:
-        raise ValueError('排行榜暂时无法连接，请重试') from error
-
-
-def _read_body(response, deadline):
-    # Requests buffers iter_content chunks. A monotonic check only inside the
-    # loop cannot stop a peer trickling bytes before a complete chunk arrives.
-    shutdown = getattr(getattr(response, 'raw', None), 'shutdown', None)
-    if not callable(shutdown):
-        raise ValueError('排行榜连接不支持限时中断')
-    expired, guard, finished = threading.Event(), threading.Lock(), False
-
-    def expire():
-        with guard:
-            if not finished:
-                expired.set()
-                try:
-                    shutdown()
-                except (OSError, ValueError, RuntimeError):
-                    pass  # The connection may already have finished reading.
-
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise ValueError('排行榜请求超时，请重试')
-    timer = threading.Timer(remaining, expire)
-    timer.daemon = True
-    timer.start()
-    try:
-        chunks, size = [], 0
-        for chunk in response.iter_content(65536):
-            if expired.is_set() or time.monotonic() >= deadline:
-                raise ValueError('排行榜请求超时，请重试')
-            size += len(chunk)
-            if size > MAX_BYTES:
-                raise ValueError('排行榜响应过大，请重试')
-            chunks.append(chunk)
-        if expired.is_set() or time.monotonic() >= deadline:
-            raise ValueError('排行榜请求超时，请重试')
-        return b''.join(chunks).decode('utf-8')
-    except (requests.RequestException, OSError) as error:
-        if expired.is_set():
-            raise ValueError('排行榜请求超时，请重试') from error
-        raise
-    finally:
-        # Finish cancellation before __exit__ can release a reusable connection.
-        with guard:
-            finished = True
-        timer.cancel()
+            chunks, size = [], 0
+            async for chunk in response.aiter_bytes(65536):
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise ValueError('排行榜响应过大，请重试')
+                chunks.append(chunk)
+            return b''.join(chunks).decode('utf-8')
 
 
 def parse_page(text, page):

@@ -130,12 +130,29 @@ class RankTests(unittest.TestCase):
                 try:
                     for _ in range(100):
                         self.wfile.write(b'x');self.wfile.flush();time.sleep(.03)
-                except (BrokenPipeError,ConnectionResetError):pass
+                except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
             def log_message(self,*args):pass
         server=ThreadingHTTPServer(('127.0.0.1',0),SlowBody)
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
             with patch('desktop_rank.BASE',f'http://127.0.0.1:{server.server_port}'),patch('desktop_rank.TOTAL_SECONDS',.2,create=True):
+                started=time.monotonic()
+                with self.assertRaisesRegex(ValueError,'超时'):upstream_page('hot',1)
+                self.assertLess(time.monotonic()-started,1)
+        finally:server.shutdown();server.server_close();thread.join(2)
+
+    def test_total_deadline_interrupts_slow_status_and_headers(self):
+        class SlowHeaders(BaseHTTPRequestHandler):
+            def do_GET(self):
+                try:
+                    for byte in b'HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx':
+                        self.connection.sendall(bytes([byte]));time.sleep(.04)
+                except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),SlowHeaders)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            with patch('desktop_rank.BASE',f'http://127.0.0.1:{server.server_port}'),patch('desktop_rank.TOTAL_SECONDS',.2):
                 started=time.monotonic()
                 with self.assertRaisesRegex(ValueError,'超时'):upstream_page('hot',1)
                 self.assertLess(time.monotonic()-started,1)
@@ -147,25 +164,26 @@ class RankTests(unittest.TestCase):
             with self.assertRaises(ValueError):service.page(*args)
 
     def test_upstream_wire_one_rank_request_and_bounded_body(self):
+        calls=[];options=[]
         class Reply:
             status_code=200
-            raw=type('Raw',(),{'shutdown':staticmethod(lambda:None)})()
-            def __enter__(self):return self
-            def __exit__(self,*args):pass
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
             def raise_for_status(self):pass
-            def iter_content(self,size):yield payload().encode()
-        with patch('desktop_rank.requests.request',return_value=Reply()) as call:
-            upstream_page('hot',2,call)
-            self.assertEqual(call.call_count,1)
-            self.assertEqual(call.call_args.args,('GET','https://hongguoduanju.com/rank/hot-drama'))
-            self.assertEqual(call.call_args.kwargs['params']['page'],2)
-            self.assertEqual(call.call_args.kwargs['params']['__loader'],'rank_hot-drama/page')
-            self.assertFalse(call.call_args.kwargs['allow_redirects'])
+            async def aiter_bytes(self,size):yield payload().encode()
+        class Client:
+            def __init__(self,**kwargs):options.append(kwargs)
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
+            def stream(self,*args,**kwargs):calls.append((args,kwargs));return Reply()
+        upstream_page('hot',2,Client)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(calls[0][0],('GET','https://hongguoduanju.com/rank/hot-drama'))
+        self.assertEqual(calls[0][1]['params']['page'],2)
+        self.assertEqual(calls[0][1]['params']['__loader'],'rank_hot-drama/page')
+        self.assertFalse(options[0]['follow_redirects'])
         with patch('desktop_rank.MAX_BYTES',1):
-            with self.assertRaises(ValueError):upstream_page('hot',1,lambda *a,**k:Reply())
-        unsupported=Reply();unsupported.raw=None
-        with self.assertRaisesRegex(ValueError,'限时中断'):
-            upstream_page('hot',1,lambda *a,**k:unsupported)
+            with self.assertRaises(ValueError):upstream_page('hot',1,Client)
 
     def test_local_route_origin_and_header(self):
         calls=[];service=DesktopRank(lambda board,page:(calls.append(1) or payload()))

@@ -7,15 +7,17 @@
 把 `src/desktop_rank.py` 放入宿主后端目录，在既有桌面服务中初始化一次：
 
 ```python
-from desktop_rank import DesktopRank, upstream_page, make_router
+from desktop_rank import DesktopRank, make_router
 
-rank = DesktopRank(lambda board, page: upstream_page(board, page, H.http_request))
+rank = DesktopRank()
 app.include_router(make_router(rank))
 ```
 
-宿主 `H.http_request` 需支持 requests 的 `params`、`timeout`、`stream`、`allow_redirects` 及响应上下文管理；响应还须提供可中断读取的 `raw.shutdown()`（测试使用requests及urllib3 2.7）。沿用既有连接池、TLS验证和代理策略，禁用隐式重试。不支持限时中断的传输会明确报错，不能静默降级为无限等待。第一页不发送 `page=1`，该参数在实测中返回无内容；后续页传入对应页码。
+网络依赖为HTTPX异步客户端，运行依赖见 `requirements-test.txt`。不再接收同步 `H.http_request`：同步传输在响应头返回前无法可靠取消。默认保留TLS校验及HTTPX环境代理/CA设置，复用已验证的SSL信任上下文。第一页不发送 `page=1`，该参数在实测中返回无内容；后续页传入对应页码。
 
-连接及单次socket读超时仍为5/15秒，另设20秒总读取预算，从调用上游前计时。收到响应头后按剩余预算设置定时器，直接中止底层读取，避免 `iter_content` 等待凑满一块数据时永不返回。正常结束先关闭取消门禁，再归还连接池，避免定时器误伤已复用的连接。
+连接及单次socket读超时为5/15秒，`asyncio.wait_for`另包住20秒整次网络预算，覆盖连接、状态行/响应头、正文流和异步上下文清理。超时取消网络任务并关闭连接，避免只取消浏览器fetch而让后端继续等待；不创建超时后继续运行的读取线程。
+
+若宿主有独立代理或CA策略，通过 `upstream_page(board, page, client_factory=...)` 注入HTTPX客户端工厂。工厂接收 `timeout`、`follow_redirects`，返回新的异步客户端；使用宿主已验证的SSL上下文，不能关闭TLS验证或开启隐式重试。默认会读取环境代理，不能绕过宿主网络策略。每次加载使用独立事件循环，不能跨调用复用绑定旧循环的AsyncClient；SSL信任上下文可以复用。工厂构造不得执行阻塞网络操作。
 
 读取的是官网榜单自身的 `__loader=rank_<route>/page&__ssrDirect=true` 响应，非详情接口。响应可能直接返回JSON，也可能先给 `__deferred_promise:content`，再用 `data:` 块提供完整 `content`。仅在同一响应完整结束且结构通过验证后计算集数；缺块不得转查详情或猜测。
 
