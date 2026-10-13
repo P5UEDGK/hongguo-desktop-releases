@@ -174,6 +174,10 @@ class RankTests(unittest.TestCase):
                 entered.set();release.wait(2);host='127.0.0.1'
             return original(host,*args,**kwargs)
         factory=lambda **options:httpx.AsyncClient(verify=desktop_rank._SSL_CONTEXT,trust_env=False,**options)
+        # Load HTTPX/AnyIO's lazy network backend before the tiny DNS budget.
+        # Cold portable installs may otherwise time out before reaching DNS.
+        with patch('desktop_rank.BASE','http://127.0.0.1:9'):
+            with self.assertRaises(ValueError):upstream_page('hot',1,factory)
         try:
             with patch('socket.getaddrinfo',stalled),patch('desktop_rank.BASE','http://deadline.test:9'),patch('desktop_rank.TOTAL_SECONDS',.2):
                 started=time.monotonic()
