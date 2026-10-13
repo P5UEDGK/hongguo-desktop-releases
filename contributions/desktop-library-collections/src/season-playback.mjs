@@ -1,9 +1,38 @@
+// The host provides its existing managed-endpoint parser; no credentials persist.
+function desktopCreateContinuationRequest(endpointOf,request=fetch) {
+  return (session,parent,enabled,revision)=>{
+    const endpoint=endpointOf(session.streamUrl);
+    const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),8000);
+    return request(endpoint.origin+'/desktop/hls/'+parent+'/continuation',{
+      method:'POST',headers:{'x-api-key':endpoint.key,'content-type':'application/json'},
+      body:JSON.stringify({enabled,revision}),credentials:'omit',redirect:'error',cache:'no-store',keepalive:!enabled,signal:abort.signal
+    }).then(response=>{if(!response.ok)throw Error('Continuation unavailable');return response.json();}).finally(()=>clearTimeout(timer));
+  };
+}
+
 // Owns only the next season's first episode. The host owns playback identity.
-function desktopCreateSeasonPlayback({find,resolve,prepare,shouldPrewarm}) {
+function desktopCreateSeasonPlayback({find,resolve,prepare,shouldPrewarm,prefetch=()=>{}}) {
   let current=null,epoch=0,searchEpoch=0,result=null,lookup=null,first=null,sourceWork=null,standby=null,attempted=false;
   const empty=()=>({items:[],automatic:false,incomplete:true});
+  const cacheNotices=new WeakMap();
+  function syncCache(config) {
+    if(!config?.media)return;
+    const previous=cacheNotices.get(config);
+    const parent=config.enabled?config.media.desktopSessionId?.():previous?.parent;
+    if(!parent)return;
+    const enabled=!!config.enabled&&!config.media.seeking&&config.healthy();
+    const key=parent+':'+enabled+':'+(result?.automatic?result.items[0]?.seriesId||'':'');
+    const repeated=previous?.key===key;
+    if(repeated&&(!previous.retryAt||Date.now()<previous.retryAt||previous.attempts>=2))return;
+    const notice={parent,key,attempts:repeated?previous.attempts+1:1};
+    cacheNotices.set(config,notice);
+    const revision=desktopCreateSeasonPlayback.cacheRevision=(desktopCreateSeasonPlayback.cacheRevision||0)+1;
+    const retry=delay=>{if(current===config&&config.enabled&&cacheNotices.get(config)===notice)notice.retryAt=Date.now()+delay;};
+    Promise.resolve().then(()=>prefetch(config.session,parent,enabled,revision))
+      .then(value=>{if(value?.accepted===false)retry(250);},()=>retry(5000));
+  }
   function release() {standby?.preparation?.dispose();standby=null;first=null;sourceWork=null;attempted=false;}
-  function cancel() {epoch++;searchEpoch++;if(current)current.enabled=false;lookup=null;release();}
+  function cancel() {epoch++;searchEpoch++;if(current){current.enabled=false;syncCache(current);}lookup=null;release();}
   async function search(seed,live=()=>true,force=false) {
     if(!current?.enabled||current.series?.seriesId!==seed.seriesId||!live())return empty();
     if(!force&&result?.automatic)return result;
@@ -18,11 +47,13 @@ function desktopCreateSeasonPlayback({find,resolve,prepare,shouldPrewarm}) {
   }
   async function tick() {
     const config=current,version=epoch;
+    syncCache(config);
     if(!config?.enabled||!config.media||config.media.paused||config.media.seeking||config.media.ended||!config.healthy())return;
     const {session,media,series}=config;
     if(!series||session.episode<Math.max(1,session.total-1))return;
     const valid=()=>epoch===version&&current===config&&config.enabled;
     const next=await search(series);
+    if(valid())syncCache(config);
     if(!valid()||!next.automatic||next.items.length!==1||session.episode!==session.total)return;
     if(!first&&!sourceWork) {
       const candidate=next.items[0];
@@ -47,14 +78,15 @@ function desktopCreateSeasonPlayback({find,resolve,prepare,shouldPrewarm}) {
     if(!same)result=null;
     current=config;
     const update=()=>{void tick();};
-    for(const event of ['timeupdate','playing','seeked'])config.media?.addEventListener(event,update);
+    const events=['timeupdate','playing','waiting','seeking','seeked'];
+    for(const event of events)config.media?.addEventListener(event,update);
     // Metadata can be resolved while the penultimate episode is loading.
     if(config.enabled&&config.series&&config.session.episode>=Math.max(1,config.session.total-1))
       void search(config.series);
     update();
     return ()=>{
-      for(const event of ['timeupdate','playing','seeked'])config.media?.removeEventListener(event,update);
-      if(current===config){epoch++;config.enabled=false;release();}
+      for(const event of events)config.media?.removeEventListener(event,update);
+      if(current===config){epoch++;config.enabled=false;syncCache(config);release();}
     };
   }
   function take(candidate) {
@@ -84,4 +116,4 @@ function desktopCreateSeasonPlayback({find,resolve,prepare,shouldPrewarm}) {
   return {attach,find:search,take,cancel,get result(){return result;}};
 }
 
-export {desktopCreateSeasonPlayback as createSeasonPlayback};
+export { desktopCreateSeasonPlayback as createSeasonPlayback, desktopCreateContinuationRequest as createContinuationRequest };

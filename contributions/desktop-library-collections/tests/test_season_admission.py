@@ -5,7 +5,7 @@ from types import SimpleNamespace
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
 from desktop_library import LibraryRelations
-from desktop_season_playback import make_season_prewarm
+from desktop_season_playback import make_season_prewarm, make_known_season_loader
 
 SID='8800000000000002001';NEXT='8800000000000002002';OTHER='8800000000000002003';ALBUM='7619198149772446782'
 class AdmissionTests(unittest.TestCase):
@@ -40,5 +40,23 @@ class AdmissionTests(unittest.TestCase):
         self.assertFalse(self.allow(self.parent,NEXT,1))
         with self.relations.connect() as db:db.execute("UPDATE relations SET state='resolved',album_id='7619198149772446799' WHERE series_id=?",(NEXT,))
         self.assertFalse(self.allow(self.parent,NEXT,1))
+
+    def test_unique_next_id_is_shared_by_standby_and_cache(self):
+        self.assertEqual(self.relations.next_season_id(SID),NEXT)
+        self.assertIsNone(self.relations.next_season_id(OTHER))
+        with self.relations.connect() as db:db.execute("UPDATE relations SET season=2 WHERE series_id=?",(OTHER,))
+        self.assertIsNone(self.relations.next_season_id(SID))
+
+    def test_cache_loader_uses_only_known_local_next_and_no_search(self):
+        calls=[]
+        loader=make_known_season_loader(self.relations,lambda sid:(calls.append(sid) or {},[{'index':1,'vid':'12345678'}]))
+        self.assertEqual(loader(SID),(NEXT,[{'index':1,'vid':'12345678'}]))
+        self.assertIsNone(loader(OTHER));self.assertEqual(calls,[NEXT])
+
+    def test_relationship_changed_during_metadata_is_discarded(self):
+        def metadata(sid):
+            with self.relations.connect() as db:db.execute("UPDATE relations SET album_id=NULL WHERE series_id=?",(NEXT,))
+            return {},[{'index':1,'vid':'12345678'}]
+        self.assertIsNone(make_known_season_loader(self.relations,metadata)(SID))
 
 if __name__=='__main__':unittest.main()

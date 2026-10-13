@@ -1,5 +1,5 @@
 {
-  "capture": "当前新增1张为本机启动修复后的真实目标合集。此前34张沿用逐图范围；原图未修改，旧分页图保留为历史证据。",
+  "capture": "新增2张为隔离Edge/Chromium中的完整候选React播放器、生产HLS/copy与真实12秒H264；剧集身份受控，不含个人片单。此前图片保留逐图范围，原图未修改。",
   "images": [
     {
       "file": "before-inline-layout.png",
@@ -183,6 +183,16 @@
       "sha256": "d63a588e06525e2216b1e7a35593ec15a67fe1c9f83c05061d7defa4f24c6318",
       "caption": "启动顺序修复后：真实41季合集恢复，倒序与原标题保留。",
       "scope": "实际安装版，真实目标合集，只读导航；收藏99/历史51前后内容一致"
+    },
+    {
+      "file": "cross-season-cache-ready.png",
+      "sha256": "88e80d0d8d1d4fa9b89b5a2d8c048f853dd3488da1f716be99263e3933b146b1",
+      "caption": "隔离真实H264/HLS/copy：本季播放期间下一季第1～3集完整缓存；缓存状态由同批JSON证明，图片仅展示实际播放器。"
+    },
+    {
+      "file": "cross-season-cache-playing.png",
+      "sha256": "44e8abbd1aa38f6fab7d156a0a3bc6f566076c6778f068ae3185fda268d58794",
+      "caption": "同一隔离React播放器自动进入下一季第1集，2x保留；无重复下载/转码由同批计数证明。"
     }
   ]
 }

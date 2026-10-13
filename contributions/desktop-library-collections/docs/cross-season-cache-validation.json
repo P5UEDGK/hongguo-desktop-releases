@@ -1,0 +1,318 @@
+{
+  "scope": "owned Edge/Chromium, candidate compiled JS/current installed CSS, real React and production HLS/copy service; synthetic series metadata and local real H264 media; no Tauri/native-decoder claim",
+  "status": "runtime_verified",
+  "checks": [
+    {
+      "name": "next-first-source-resolves-before-last-episode-ends",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "next-three-complete-cache-before-crossing",
+      "passed": true,
+      "evidence": {
+        "mode": "copy",
+        "targets": [
+          {
+            "seriesId": "8800000000000002002",
+            "episode": 1
+          },
+          {
+            "seriesId": "8800000000000002002",
+            "episode": 2
+          },
+          {
+            "seriesId": "8800000000000002002",
+            "episode": 3
+          }
+        ],
+        "downloaded": [
+          {
+            "vid": "8800000000000004002",
+            "at": 51850.625
+          },
+          {
+            "vid": "8800000000000004003",
+            "at": 51850.859
+          },
+          {
+            "vid": "8800000000000005001",
+            "at": 51853.984
+          },
+          {
+            "vid": "8800000000000005002",
+            "at": 51854.171
+          },
+          {
+            "vid": "8800000000000005003",
+            "at": 51860.296
+          },
+          {
+            "vid": "8800000000000005004",
+            "at": 51866.406
+          }
+        ]
+      }
+    },
+    {
+      "name": "trusted-real-cross-season-standby",
+      "passed": true,
+      "evidence": [
+        {
+          "parent": "8800000000000002001",
+          "parentEpisode": 3,
+          "target": "8800000000000002002",
+          "episode": 1,
+          "allowed": true
+        }
+      ]
+    },
+    {
+      "name": "prepared-first-source-resolved-once",
+      "passed": true,
+      "evidence": [
+        {
+          "sid": "8800000000000002001",
+          "episode": 2,
+          "at": 4967.39999999851
+        },
+        {
+          "sid": "8800000000000002001",
+          "episode": 3,
+          "at": 8769.89999999851
+        },
+        {
+          "sid": "8800000000000002002",
+          "episode": 1,
+          "at": 14710.10000000149
+        }
+      ]
+    },
+    {
+      "name": "crossing-reuses-downloaded-next-first",
+      "passed": true,
+      "evidence": [
+        {
+          "vid": "8800000000000004002",
+          "at": 51850.625
+        },
+        {
+          "vid": "8800000000000004003",
+          "at": 51850.859
+        },
+        {
+          "vid": "8800000000000005001",
+          "at": 51853.984
+        },
+        {
+          "vid": "8800000000000005002",
+          "at": 51854.171
+        },
+        {
+          "vid": "8800000000000005003",
+          "at": 51860.296
+        },
+        {
+          "vid": "8800000000000005004",
+          "at": 51866.406
+        }
+      ]
+    },
+    {
+      "name": "crossing-reuses-next-first-playable-cache",
+      "passed": true,
+      "evidence": [
+        {
+          "vid": "8800000000000004002",
+          "at": 51852.062
+        },
+        {
+          "vid": "8800000000000004003",
+          "at": 51852.968
+        },
+        {
+          "vid": "8800000000000005001",
+          "at": 51854.062
+        },
+        {
+          "vid": "8800000000000005002",
+          "at": 51855.031
+        },
+        {
+          "vid": "8800000000000005003",
+          "at": 51861.406
+        },
+        {
+          "vid": "8800000000000005004",
+          "at": 51866.75
+        }
+      ]
+    },
+    {
+      "name": "automatic-cross-season-keeps-rate",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "next-first-picture-decodes",
+      "passed": true,
+      "evidence": null
+    },
+    {
+      "name": "no-window-errors",
+      "passed": true,
+      "evidence": []
+    },
+    {
+      "name": "close-releases-parent-and-standby",
+      "passed": true,
+      "evidence": []
+    }
+  ],
+  "sourceSha256": "89a3f2f93f9c43d0424cb1f441a54c15c973cb24589dfb583fbefb61b66ce767",
+  "frontendSha256": "2d20fee4e88bcc8b0982c13714428d9ac573a1fa17a672acec025ef4dce548ba",
+  "cacheBeforeCrossing": {
+    "schema": 2,
+    "ahead": 3,
+    "cacheKind": "complete-playable-hls",
+    "playbackMode": "copy",
+    "currentSourceComplete": true,
+    "current": {
+      "seriesId": "8800000000000002001",
+      "episode": 3
+    },
+    "currentPlayableComplete": true,
+    "foregroundRequests": 0,
+    "pendingEpisodes": [],
+    "activeEpisode": null,
+    "completedEpisodes": [
+      4,
+      5,
+      6
+    ],
+    "failedEpisodes": [],
+    "downloadCompletedEpisodes": [
+      4,
+      5,
+      6
+    ],
+    "downloadPendingEpisodes": [],
+    "downloadActiveEpisode": null,
+    "capacityPaused": false,
+    "continuationEnabled": true,
+    "cacheTargets": [
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 1
+      },
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 2
+      },
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 3
+      }
+    ],
+    "downloadPendingTargets": [],
+    "downloadCompletedTargets": [
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 1
+      },
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 2
+      },
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 3
+      }
+    ],
+    "completedTargets": [
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 1
+      },
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 2
+      },
+      {
+        "seriesId": "8800000000000002002",
+        "episode": 3
+      }
+    ],
+    "failureCode": null,
+    "state": "idle"
+  },
+  "downloads": [
+    {
+      "vid": "8800000000000004002",
+      "at": 51850.625
+    },
+    {
+      "vid": "8800000000000004003",
+      "at": 51850.859
+    },
+    {
+      "vid": "8800000000000005001",
+      "at": 51853.984
+    },
+    {
+      "vid": "8800000000000005002",
+      "at": 51854.171
+    },
+    {
+      "vid": "8800000000000005003",
+      "at": 51860.296
+    },
+    {
+      "vid": "8800000000000005004",
+      "at": 51866.406
+    }
+  ],
+  "encodes": [
+    {
+      "vid": "8800000000000004002",
+      "at": 51852.062
+    },
+    {
+      "vid": "8800000000000004003",
+      "at": 51852.968
+    },
+    {
+      "vid": "8800000000000005001",
+      "at": 51854.062
+    },
+    {
+      "vid": "8800000000000005002",
+      "at": 51855.031
+    },
+    {
+      "vid": "8800000000000005003",
+      "at": 51861.406
+    },
+    {
+      "vid": "8800000000000005004",
+      "at": 51866.75
+    }
+  ],
+  "started": [
+    {
+      "sid": "8800000000000002001",
+      "episode": 2,
+      "at": 8369.5
+    },
+    {
+      "sid": "8800000000000002001",
+      "episode": 3,
+      "at": 14706.89999999851
+    },
+    {
+      "sid": "8800000000000002002",
+      "episode": 1,
+      "at": 20894.10000000149
+    }
+  ]
+}

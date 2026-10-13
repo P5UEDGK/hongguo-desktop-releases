@@ -140,3 +140,33 @@ node contributions/desktop-library-collections/tools/verify-host-bundle.cjs <dec
 此工具适用于本贡献的既有宿主资源边界，执行资源内真实收藏编排和入口接线，以隔离内存收藏与详情响应核验：先保存当前季、后台加入同合集其他季、反复取消再收藏复用搜索、重建窗口后复用持久记录，以及人工取消项保持排除。它不连接真实账号，也不写用户收藏。
 
 替换组件代码时，保留组件之后的初始化语句，特别是 `desktopLibrary.setDiscoveryHandler(desktopDiscoverFavorite)`；仅源码工厂测试通过不能证明最终安装资源已经接线。再用实际收藏按钮、真实搜索和原生终态完成宿主验收；搜索失败或分页不完整仍按既有冷却与重试规则处理。
+
+## 跨季连续后N集缓存
+
+`createSeasonPlayback`新增可选`prefetch`回调，从同模块导入`createContinuationRequest`并注入宿主既有的受控URL解析器。例如既有配置扩展为：
+
+```javascript
+createSeasonPlayback({
+  ...existingOptions,
+  prefetch: createContinuationRequest(parseManagedEndpoint),
+});
+```
+
+解析器沿用播放器已有实现，返回当前受管服务endpoint；不得另存凭证或允许任意地址。控制器传当前真实`media.desktopSessionId`及单调递增revision，在连播开关、播放健康状态和已确认下一季变化时去重通知，清理捕获旧parent身份。请求有8秒超时；备用会话尚未激活或临时网络失败时，同一配置至多两次事件驱动尝试，不创建后台轮询。
+
+宿主HlsJobs接入`make_continuation_control(prefetch)`，EpisodePrefetcher接入`make_known_season_loader(relations, episode_loader)`。`LibraryRelations.next_season_id`提供唯一关系判定，缓存加载器和原备用会话准入共用它；metadata前后再次核对关系。待激活备用会话不能控制前台队列。
+
+`POST /desktop/hls/{identifier}/continuation`沿用原HLS的`x-api-key`与Origin检查，JSON必须为`{"enabled": true, "revision": 1}`；revision必须是正的安全整数。旧/重复revision返回`accepted:false`，已释放/过期parent不能控制新代际。关闭通知使用keepalive；job release也关闭延续缓存，通知失败不能阻断释放。
+
+`integration/continuous-season-cache.patch`只包含既有EpisodePrefetcher、HlsJobs及server的定向改动，不复制第二份缓存owner。它以本次实际已融合的宿主为基线，包含此前热设置、容量和备用会话生命周期上下文；先审查已有`season-standby.patch`和宿主实际版本，再融合新补丁。发行仓库不含完整宿主，不能保证直接应用于旧版缓存贡献；本机基线已通过`git apply --check`、应用后全文核对与集成验收。
+
+后N集使用内部连续序列位置，`latest_episodes`仍保持本季原集表，媒体访问仍按VID。旧snapshot的`*Episodes`数组是内部序列位置，跨季时不能当成本季集号显示；新增`cacheTargets`、`downloadPendingTargets`、`downloadCompletedTargets`和`completedTargets`使用实际`{seriesId, episode}`。下一季只取从第1集开始连续可用的前缀，不递归补再下一季。“剩余集数”不跨季。
+
+宿主集成测试使用接入后的真实后端目录：
+
+```pwsh
+$env:HONGGUO_TEST_BACKEND = '<patched-host>/backend'
+uv run --python 3.11 --with-requirements contributions/desktop-library-collections/requirements-test.txt python contributions/desktop-library-collections/tests/host/test_cross_season_cache.py
+```
+
+测试依赖宿主媒体模块及其运行环境；找不到宿主时会明确跳过，跳过不能计为集成通过。本次13项在已接入的实际后端运行通过，下载/编码输入隔离；普通公开93项不依赖私有宿主。

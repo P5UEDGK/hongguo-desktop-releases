@@ -24,6 +24,8 @@
 
 - 连播优先已知的同合集连续下一季，不受合集倒序显示影响；缺失时复用补季任务，仅选择唯一且季号加一的可靠成员。倒数第二集确认下一季，最后一集解析第一集片源，接近结束复用宿主首帧预热；预加载本身不写收藏或历史。缺季、歧义和未知关系不自动跳播。
 - 跨季备用会话需要后端再次确认本季最后一集、同合集连续季号及下一季第1集。关闭连播、换剧、跳集或关闭播放器时，过期结果不能接播，备用资源及时释放。
+- 开启自动连播且设置“缓存后N集”时，按播放顺序缓存：本季不足N集，由已确认的直接下一季补足。例如N=3，本季倒数第二集缓存本季最后一集及下一季第1、2集；本季最后一集缓存下一季第1～3集。沿用同一个下载/转码队列、容量限制与当前播放优先级，不递归到再下一季；“剩余集数”仍只缓存本季。
+- 连续缓存只读取本地已确认、同合集且季号严格加一的唯一下一季，不为缓存额外搜索。现有季末查找若确认了新关系，可重新检查缓存目标。关闭连播、换剧、跳集或退出使旧跨季等待任务失效；在途任务允许有界结束，不能加入新播放代际。
 
 ## 代码与验证
 
@@ -45,10 +47,11 @@ node contributions/desktop-library-collections/tests/test_season_search.mjs
 node contributions/desktop-library-collections/tests/test_season_integration.mjs
 node contributions/desktop-library-collections/tests/test_library_sort.mjs
 node contributions/desktop-library-collections/tests/test_library_scroll.mjs
+node contributions/desktop-library-collections/tests/test_cross_season_signal.mjs
 node --check contributions/desktop-library-collections/src/frontend-library.mjs
 ```
 
-后端8项、前端核心20项及工厂接线4项、分季搜索17项、排序6项、连续列表1项、搜索/收藏集成2项及启动协议3项回归（共61项）均使用隔离或固定输入，不连接上游。实际窗口证据与范围见 [验证说明](VALIDATION.md)，原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
+公开回归共93项，均使用隔离或固定输入，不连接上游。跨季缓存宿主集成另有13项，需接入实际缓存/HLS模块后运行；命令和宿主补丁边界见 [接入说明](INTEGRATION.md)。真实视频与实际安装窗口证据见 [验证说明](VALIDATION.md)，原始截图及逐图说明见 [界面截图](docs/SCREENSHOTS.md)。
 
 ## 接入限制
 
