@@ -114,6 +114,7 @@ class PolicyTests(unittest.TestCase):
                               cancelled=threading.Event(), source_description=desc)
         session = NativeSession(host, job, 1)
         session.stop = Stop()
+        session.wake.wait = session.stop.wait
         session.forward_input = lambda _: input_ready
         session.submit({'paused': False, 'rate': 2, 'volume': .4, 'muted': True})
         with patch('desktop_native.Mpv', Player), patch('desktop_native.time.monotonic', lambda: clock.now):

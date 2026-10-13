@@ -315,6 +315,7 @@ class NativeSession:
     def __init__(self, host, job, parent):
         self.host, self.job, self.parent = host, job, parent
         self.stop = threading.Event()
+        self.wake = threading.Event()
         self.commands = queue.Queue(maxsize=64)
         self.guard = threading.Lock()
         self.revision = 0
@@ -397,10 +398,12 @@ class NativeSession:
             self.revision = revision
             self.queued_state.update({key: value for key, value in command.items()
                                       if key in self.queued_state})
+            self.wake.set()
             return revision
 
     def close(self):
         self.stop.set()
+        self.wake.set()
         if self.thread.is_alive() and self.thread is not threading.current_thread():
             self.thread.join(timeout=3)
         return not self.thread.is_alive()
@@ -498,6 +501,8 @@ class NativeSession:
             player.command("loadfile", media_uri)
             message = W.MSG()
             while not self.stop.is_set() and not self.job.cancelled.is_set() and user.IsWindow(self.parent):
+                # Clear before draining: a concurrent submit stays signalled.
+                self.wake.clear()
                 while user.PeekMessageW(C.byref(message), None, 0, 0, 1):
                     user.TranslateMessage(C.byref(message))
                     user.DispatchMessageW(C.byref(message))
@@ -529,7 +534,7 @@ class NativeSession:
                         user.SetWindowPos(hwnd, W.HWND(0), x, y, width, height, 0x0010)
                     if "visible" in command:
                         user.ShowWindow(hwnd, 4 if command["visible"] else 0)
-                    for key, option in (("paused", "pause"), ("rate", "speed"), ("volume", "volume"), ("muted", "mute")):
+                    for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute"), ("paused", "pause")):
                         if key in command:
                             value = command[key]
                             desired[key] = value
@@ -638,7 +643,11 @@ class NativeSession:
                                      bufferEnd=min(buffer_end, self.job.duration or buffer_end),
                                      audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
                                      frameDrops=frame_drops, decoderDrops=decoder_drops)
-                self.stop.wait(.04)
+                remaining = (self.data["duration"] - position) / max(.25, desired["rate"])
+                near_end = (output_ready and not paused and not buffering and not seeking
+                            and not eof and 0 <= remaining <= 1)
+                # Controls wake immediately; fast EOF checks only in the last real second.
+                self.wake.wait(.004 if near_end else .04)
         except NativeOutputError:
             with self.guard:
                 self.data.update(state="failed", failureCode="native-output")

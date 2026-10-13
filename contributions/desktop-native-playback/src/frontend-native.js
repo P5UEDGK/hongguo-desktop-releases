@@ -111,7 +111,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
   function queue(command) {
     if (disposed || !native || fallbackStarted) return;
     Object.assign(pending, command);
-    if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, 250);
+    if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, "paused" in command || "seek" in command ? 0 : 250);
   }
   async function flush() {
     controlTimer = null;
@@ -125,7 +125,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     } catch {if (!disposed) failPreparation();}
     finally {
       controlBusy = false;
-      if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, 250);
+      if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, "paused" in pending || "seek" in pending ? 0 : 250);
     }
   }
   function layout() {
@@ -134,7 +134,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     // Keep the existing timeline, volume, speed and fullscreen buttons above
     // the native surface; the reserved band is part of the current stage.
     const bar = Math.min(84, Math.max(0, rect.height - 1));
-    const bounds = [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
+    const bounds = typeof desktopNativeSurfaceRect === "function" ? desktopNativeSurfaceRect(media) : [Math.max(0, Math.round(rect.left * scale)), Math.max(0, Math.round(rect.top * scale)),
       Math.max(1, Math.round(rect.width * scale)), Math.max(1, Math.round((rect.height - bar) * scale))];
     const visible = !document.hidden && rect.width > 0 && rect.height > 0;
     const signature = JSON.stringify([bounds, visible]);
@@ -181,7 +181,7 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     property('play', {value: () => {
       if (state.ended) {state.ended = false; seek(0);}
       const wasPaused = state.paused; state.paused = false;
-      queue({paused: false}); if (wasPaused && ready) {event('play'); event('playing');}
+      queue({paused: false}); wakeStatus(); if (wasPaused && ready) {event('play'); event('playing');}
       return Promise.resolve();
     }});
     property('pause', {value: () => {
@@ -193,6 +193,9 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     document.addEventListener('fullscreenchange', layout);
     document.addEventListener('visibilitychange', layout);
     layout();
+  }
+  function wakeStatus() {
+    clearTimeout(timer); timer = setTimeout(() => poll(generation), 0);
   }
   async function poll(ownGeneration) {
     if (disposed || fallbackStarted || ownGeneration !== generation || pollBusy) return;
@@ -246,7 +249,11 @@ function desktopNativePlayback(media, url, initialPosition, callbacks, preparati
     } catch {if (!disposed && ownGeneration === generation) failPreparation();}
     finally {
       pollBusy = false;
-      if (!disposed && !fallbackStarted && ownGeneration === generation) timer = setTimeout(() => poll(ownGeneration), 250);
+      if (!disposed && !fallbackStarted && ownGeneration === generation) {
+        const remaining = (state.duration - state.time) / Math.max(.25, state.rate);
+        const nearEnd = !state.paused && !state.buffering && !state.seeking && !state.ended && state.duration > 0 && remaining >= 0 && remaining <= 1;
+        timer = setTimeout(() => poll(ownGeneration), nearEnd ? 8 : 250);
+      }
     }
   }
   (async () => {

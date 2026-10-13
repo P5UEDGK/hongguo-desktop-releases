@@ -35,7 +35,7 @@ class NativeTests(unittest.TestCase):
 
     def test_queued_state_retains_accepted_pause_before_output_ack(self):
         import queue
-        session=object.__new__(NativeSession)
+        session=object.__new__(NativeSession);session.wake=threading.Event()
         session.guard=threading.RLock();session.commands=queue.Queue(maxsize=1)
         session.revision=0;session.queued_state={"paused":False}
         session.submit({"paused":True})
@@ -68,7 +68,7 @@ class NativeTests(unittest.TestCase):
         self.assertTrue(host.release('owned'));self.assertFalse(host.sessions)
 
     def test_close_reports_live_thread_instead_of_acknowledging_release(self):
-        session=object.__new__(NativeSession);session.stop=threading.Event()
+        session=object.__new__(NativeSession);session.stop=threading.Event();session.wake=threading.Event()
         waits=[];alive=True
         session.thread=SimpleNamespace(is_alive=lambda:alive,join=lambda timeout:waits.append(timeout))
         self.assertFalse(session.close());self.assertTrue(session.stop.is_set());self.assertEqual(waits,[3])

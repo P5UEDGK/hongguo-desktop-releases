@@ -148,17 +148,17 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
     end();await flush();
   }
   console.log('PASS: slow/missing source and transport errors never cause H264; actual native failure falls back once');
-  nativeCalls.length=0;nativeTimers.clear();let modeChosen=false;
+  nativeCalls.length=0;nativeTimers.clear();let modeChosen=false,eofPosition=90;
   nc.Date=Date;
   nc.fetch=async(url,init={})=>{
     url=String(url);nativeCalls.push([url,init]);let body;
     if(url.endsWith('/capabilities'))body={nativePlayback:1};
     else if(init.method==='DELETE')return {ok:true,status:204};
     else if(url.endsWith('/mode')){modeChosen=true;body={mode:'native'}}
-    else if(url.endsWith('/control'))body={revision:1};
+    else if(url.endsWith('/control')){const command=JSON.parse(init.body);if(command.seek!==undefined)eofPosition=command.seek;body={revision:1};}
     else if(init.method==='POST')body={id:'c'.repeat(32)};
-    else body={state:'complete',source:desc,native:modeChosen?{state:'ended',outputReady:true,
-      width:1920,height:1080,time:90,duration:90,paused:true,rate:2,volume:1,muted:false,revision:100}:null};
+    else body={state:'complete',source:desc,native:modeChosen?{state:eofPosition===90?'ended':'ready',outputReady:true,
+      width:1920,height:1080,time:eofPosition,duration:90,paused:true,rate:2,volume:1,muted:false,revision:100}:null};
     return {ok:true,status:200,json:async()=>body};
   };
   const stopAfterEof=nc.desktopNativePlayback(nativeMedia,'http://127.0.0.1',0,{onReady(){}},null);
@@ -174,7 +174,7 @@ const flush=async()=>{for(let i=0;i<10;i++)await new Promise(setImmediate)};
   nativeMedia.currentTime=25;
   assert.equal(nativeMedia.ended,false,'seek clears EOF immediately');
   await nativeMedia.play();await flush();
-  for(const [key,entry] of [...nativeTimers])if(entry.delay===250){nativeTimers.delete(key);await entry.fn();}
+  for(const [key,entry] of [...nativeTimers])if(entry.delay===250||entry.delay===0){nativeTimers.delete(key);await entry.fn();}
   await flush();
   const seeks=nativeCalls.filter(([url,init])=>url.endsWith('/control')&&JSON.parse(init.body).seek!==undefined)
     .map(([,init])=>JSON.parse(init.body).seek);
