@@ -9,21 +9,39 @@ class DesktopSearchQueue {
   state() {
     return {label:this.active?.label || '', cancelled:!!this.active?.cancelled, waiting:this.queue.length};
   }
-  run(key, label, work) {
-    if (this.tasks.has(key)) return this.tasks.get(key).promise;
+  run(key, label, work, {background = false} = {}) {
+    if (this.tasks.has(key)) {
+      const task=this.tasks.get(key);if(!background)task.background=false;
+      return task.promise;
+    }
     if (this.queue.length >= 64) return Promise.reject(Error('等待搜索过多，请稍后重试'));
     let resolve, reject;
     const promise = new Promise((a, b) => {resolve=a; reject=b;});
-    const task = {key, label, work, promise, resolve, reject, cancelled:false, pending:new Set()};
+    const task = {key, label, work, promise, resolve, reject, background, cancelled:false, pending:new Set()};
     this.tasks.set(key, task); this.queue.push(task); this.pump(); this.notify();
     return promise;
   }
   async pump() {
     if (this.active || !this.queue.length) return;
-    const task = this.active = this.queue.shift(); this.notify();
+    const index=this.queue.findIndex(task=>!task.background);
+    const task = this.active = this.queue.splice(index<0?0:index,1)[0]; this.notify();
+    await this.execute(task);
+    this.active=null;this.notify();this.pump();
+  }
+  async execute(task) {
     const context = {
       live:() => !task.cancelled,
-      request:fn => {
+      request:async fn => {
+        // Yield only between settled native requests. A timed-out IPC still
+        // occupies the global slot until its original promise settles.
+        if(task.background) {
+          await Promise.allSettled([...task.pending]);
+          let index;
+          while(!task.cancelled&&(index=this.queue.findIndex(row=>!row.background))>=0) {
+            const foreground=this.queue.splice(index,1)[0];this.active=foreground;this.notify();
+            await this.execute(foreground);this.active=task;this.notify();
+          }
+        }
         if (task.cancelled) return Promise.reject(desktopLibraryCancelled());
         const request = Promise.resolve().then(fn);
         task.pending.add(request);
@@ -38,12 +56,12 @@ class DesktopSearchQueue {
     // slot until that original request settles, even after timeout/cancellation.
     await Promise.allSettled([...task.pending]);
     if (task.cancelled && !error) error = desktopLibraryCancelled();
-    this.tasks.delete(task.key); this.active = null;
+    this.tasks.delete(task.key);
     error ? task.reject(error) : task.resolve(value);
-    this.notify(); this.pump();
+    this.notify();
   }
   cancel() {
-    if (this.active) this.active.cancelled = true;
+    for(const task of this.tasks.values())task.cancelled=true;
     for (const task of this.queue.splice(0)) {
       this.tasks.delete(task.key); task.reject(desktopLibraryCancelled());
     }
@@ -119,19 +137,55 @@ function desktopLibraryProgress(items, history, relations = new Map()) {
     percent,seriesId:latest.seriesId};
 }
 
+function desktopLibraryNext(seed,items,relations) {
+  const current=relations.get(seed.seriesId);
+  if(!current?.albumId||!Number.isSafeInteger(current.season)||current.season<1)return {items:[],automatic:false,incomplete:false};
+  const candidates=[...new Map(items.filter(item=>item.seriesId!==seed.seriesId&&
+    relations.get(item.seriesId)?.albumId===current.albumId&&relations.get(item.seriesId)?.season===current.season+1)
+    .map(item=>[item.seriesId,item])).values()];
+  const ambiguous=[...relations].some(([sid,row])=>row.albumId===current.albumId&&row.season===current.season+1&&sid!==candidates[0]?.seriesId);
+  return {items:candidates,automatic:candidates.length===1&&!ambiguous,incomplete:false};
+}
+
 function desktopCreateLibrary(api, notify, options = {}) {
   const relations = new Map(), manual = new Map(), known = new Map(), pending = new Map();
-  const removed = new Map(), writes = new Map(); let revision = 0;
+  const removed = new Map(), writes = new Map(), choices=new Map(); let revision = 0;
   const members={favorites:new Set(),history:new Set()};
   let access = null, loading = null, draining = false, error = '';
   const excluded = new Set(), autoRetry = new Map();
   const exclusionKey = 'guoban:library-auto-favorite-exclusions:v1';
   let storage=options.storage, autoWork=null, autoDirty=false, autoScheduled=false;
+  let discoveryHandler=null;
+  const discovery=new Map(),discoveryKey='guoban:library-discovery:v1';
   if (storage===undefined) {try {storage=globalThis.localStorage;} catch {storage=null;}}
   try {
     const saved=JSON.parse(storage?.getItem(exclusionKey)||'[]');
     if(Array.isArray(saved))for(const sid of saved)if(typeof sid==='string'&&/^\d{8,24}$/.test(sid))excluded.add(sid);
   } catch { /* Invalid preferences never block native membership. */ }
+  try {
+    const saved=JSON.parse(storage?.getItem(discoveryKey)||'[]');
+    if(Array.isArray(saved))for(const row of saved.slice(-64))if(row&&typeof row.key==='string'&&/^(album|series):\d{8,24}$/.test(row.key)&&Array.isArray(row.items)&&Number.isFinite(row.retryAt))
+      discovery.set(row.key,{...row,items:row.items.filter(item=>item&&typeof item.seriesId==='string'&&/^\d{8,24}$/.test(item.seriesId)&&typeof item.title==='string'&&Array.isArray(item.tags)&&Array.isArray(item.actors)).slice(0,120)});
+  } catch { /* Search hints are expendable; native membership is not. */ }
+  function discoveryIdentity(seed) {
+    const album=relations.get(seed.seriesId)?.albumId;
+    return album?'album:'+album:'series:'+seed.seriesId;
+  }
+  function discoveryRecord(seed) {
+    return discovery.get(discoveryIdentity(seed))||discovery.get('series:'+seed.seriesId);
+  }
+  function rememberDiscovery(seed,items,complete) {
+    const key=discoveryIdentity(seed),clean=items.slice(0,120).map(item=>({seriesId:item.seriesId,title:item.title,
+      tags:item.tags||[],actors:item.actors||[],episodeCount:item.episodeCount||0,cover:'',intro:'',webAccessibleEpisodes:0}));
+    discovery.delete('series:'+seed.seriesId);discovery.delete(key);
+    discovery.set(key,{key,items:clean,complete:!!complete,retryAt:complete?0:Date.now()+30000});
+    while(discovery.size>64)discovery.delete(discovery.keys().next().value);
+    try{storage?.setItem(discoveryKey,JSON.stringify([...discovery.values()]));}
+    catch{error='合集搜索记录暂时无法保存';notify();}
+  }
+  function discoveryLive(seed,start) {
+    return members.favorites.has(seed.seriesId)&&!excluded.has(seed.seriesId)&&(removed.get(seed.seriesId)||0)<=start;
+  }
   function rememberChoice(sid,value) {
     value?excluded.delete(sid):excluded.add(sid);
     try {storage?.setItem(exclusionKey,JSON.stringify([...excluded]));}
@@ -175,7 +229,7 @@ function desktopCreateLibrary(api, notify, options = {}) {
     return autoWork;
   }
   const original = {favorite:api.setFavorite.bind(api), favorites:api.favorites.bind(api), history:api.history.bind(api)};
-  async function request(path = '', body) {
+  async function request(path = '', body, onProgress) {
     const status = await api.validationStatus(), url = new URL(status.baseUrl);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
       throw Error('归组服务暂不可用');
@@ -188,6 +242,8 @@ function desktopCreateLibrary(api, notify, options = {}) {
         credentials:'omit', redirect:'error', cache:'no-store', signal:abort.signal
       });
       if (!response.ok) {if (response.status === 401) access = null; throw Error('归组信息加载失败，收藏不受影响');}
+      if (onProgress && response.headers.get('content-type')?.includes('application/x-ndjson'))
+        return await desktopReadPosterStream(response,onProgress);
       const result = await response.json();
       if (result.requestToken) access = {origin:url.origin, token:result.requestToken};
       return result;
@@ -241,6 +297,8 @@ function desktopCreateLibrary(api, notify, options = {}) {
   }
   function favorite(item, value, guard = () => true, origin = 'user') {
     const sid=item.seriesId;
+    const choice=origin==='user'?(choices.get(sid)||0)+1:choices.get(sid);
+    if(origin==='user')choices.set(sid,choice);
     if(origin==='user')rememberChoice(sid,value);
     if (!value) removed.set(sid,++revision);
     const previous=writes.get(sid) || Promise.resolve();
@@ -250,6 +308,11 @@ function desktopCreateLibrary(api, notify, options = {}) {
       if (value) {members.favorites.add(sid);known.set(sid,item);void ensure([item]);}
       else {members.favorites.delete(sid);if(!members.history.has(sid))known.delete(sid);}
       if(origin!=='auto')scheduleAutoFavorites();
+      if(origin==='user'&&value&&discoveryHandler) {
+        const start=revision;
+        queueMicrotask(()=>{void Promise.resolve().then(()=>discoveryHandler(item,()=>choices.get(sid)===choice&&discoveryLive(item,start)))
+          .catch(caught=>{error=caught.message||'合集后台搜索暂未完成';notify();});});
+      }
       return result;
     });
     writes.set(sid,write);
@@ -263,7 +326,15 @@ function desktopCreateLibrary(api, notify, options = {}) {
     for(const sid of known.keys())if(!members.favorites.has(sid)&&!members.history.has(sid))known.delete(sid);
     return ensure(items).then(value=>{scheduleAutoFavorites();return value;});
   }
-  async function collect(seed, find, live, progress) {
+  function recordDiscovery(seed,result) {
+    const album=relations.get(seed.seriesId)?.albumId;
+    const candidates=[seed,...result.items];
+    const confirmed=candidates.filter(item=>album&&relations.get(item.seriesId)?.albumId===album);
+    const incomplete=!!result.incomplete||candidates.some(item=>relations.get(item.seriesId)?.state==='failed');
+    rememberDiscovery(seed,confirmed,!incomplete);
+    return {...result,incomplete};
+  }
+  async function collect(seed, find, live, progress = () => {}) {
     const start=revision;
     progress('正在查找其他季…');
     const result=await find();
@@ -272,6 +343,7 @@ function desktopCreateLibrary(api, notify, options = {}) {
     progress(`正在核验 ${candidates.length} 个候选…`);
     await ensure(candidates);
     if (!live()) throw desktopLibraryCancelled();
+    const cachedResult=recordDiscovery(seed,result);
     const album=relations.get(seed.seriesId)?.albumId;
     const verified=candidates.filter(item => item.seriesId===seed.seriesId || album && relations.get(item.seriesId)?.albumId===album);
     const uncertain=candidates.filter(item => item.seriesId!==seed.seriesId && (!album || !relations.get(item.seriesId)?.albumId));
@@ -283,10 +355,13 @@ function desktopCreateLibrary(api, notify, options = {}) {
       await favorite(item,true,()=>{saved=live() && !excluded.has(item.seriesId) && (removed.get(item.seriesId)||0)<=start; return saved;},'collect');
       if (saved) {added++;existing.add(item.seriesId);progress(`已收藏 ${added} 季…`);}
     }
-    return {added,skipped,uncertain,incomplete:result.incomplete,verified:verified.length};
+    return {added,skipped,uncertain,incomplete:cachedResult.incomplete,verified:verified.length};
   }
-  return {relations,manual,known,ensure,observe,favorite,setManual,collect,load,syncAutoFavorites,
+  return {relations,manual,known,ensure,observe,favorite,setManual,collect,load,request,syncAutoFavorites,
+    discoveryIdentity,discoveryRecord,rememberDiscovery,recordDiscovery,
+    setDiscoveryHandler(handler){discoveryHandler=handler;},
+    get catalog(){return [...new Map([...discovery.values()].flatMap(row=>row.items).concat([...known.values()]).map(item=>[item.seriesId,item])).values()];},
     get error(){return error;}, get pendingCount(){return pending.size;}, original};
 }
 
-export { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibrarySortSeasons, desktopLibrarySortGroups, desktopLibraryPage, desktopLibraryProgress, desktopCreateLibrary };
+export {DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibrarySortSeasons, desktopLibrarySortGroups, desktopLibraryPage, desktopLibraryProgress, desktopLibraryNext, desktopCreateLibrary};

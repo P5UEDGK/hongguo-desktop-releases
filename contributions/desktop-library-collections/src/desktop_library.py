@@ -89,6 +89,25 @@ class LibraryRelations:
                     cached[sid] = self.row(row)
             return {"relations": [cached[sid] for sid in ids]}
 
+    def is_next_season(self, current_id, next_id):
+        """Use already resolved relationships; never infer from a title or search."""
+        if not identity(current_id) or not identity(next_id) or current_id == next_id:
+            return False
+        with self.connect() as db:
+            rows = db.execute("SELECT series_id,album_id,season,state FROM relations WHERE series_id IN (?,?)",
+                              (current_id, next_id)).fetchall()
+            values = {row[0]: row[1:] for row in rows}
+            current, target = values.get(current_id), values.get(next_id)
+            if not current or not target or not current[0] or current[0] != target[0]:
+                return False
+            if current[2] != "resolved" or target[2] != "resolved" or type(current[1]) is not int or type(target[1]) is not int:
+                return False
+            if current[1] < 1 or target[1] != current[1] + 1:
+                return False
+            count = db.execute("SELECT count(*) FROM relations WHERE album_id=? AND season=? AND state='resolved'",
+                               (target[0], target[1])).fetchone()[0]
+            return count == 1
+
     def set_manual(self, sid, target):
         if type(sid) is not str or not identity(sid) or target is not None and (type(target) is not str or not identity(target) or target == sid):
             raise ValueError("请选择不同的有效剧集")

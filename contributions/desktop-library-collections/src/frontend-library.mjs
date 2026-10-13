@@ -1,9 +1,9 @@
-import {parseSeasonTitle, findOtherSeasons as defaultFindOtherSeasons} from './season-search.mjs';
-import { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibrarySortSeasons, desktopLibrarySortGroups, desktopLibraryPage, desktopLibraryProgress, desktopCreateLibrary } from './library-core.mjs';
+import {parseSeasonTitle, findOtherSeasons as defaultFindOtherSeasons, findNextSeason as defaultFindNextSeason} from './season-search.mjs';
+import { DesktopSearchQueue, desktopLibraryCancelled, desktopLibraryGroups, desktopLibrarySortSeasons, desktopLibrarySortGroups, desktopLibraryPage, desktopLibraryProgress, desktopLibraryNext, desktopCreateLibrary } from './library-core.mjs';
 
 // Initialize once before mounting the host. All application APIs stay host-owned.
-export function createLibraryUI({React, jsxRuntime, api, parseSeason=parseSeasonTitle, findOtherSeasons=defaultFindOtherSeasons, Cover, coverFallback}) {
-  const O=React, b=jsxRuntime, ge=api, Ts=parseSeason, KR=findOtherSeasons, O0=Cover, P0=coverFallback;
+export function createLibraryUI({React, jsxRuntime, api, parseSeason=parseSeasonTitle, findOtherSeasons=defaultFindOtherSeasons, findNextSeason=defaultFindNextSeason, Cover, coverFallback}) {
+  const O=React, b=jsxRuntime, ge=api, Ts=parseSeason, KR=findOtherSeasons, qR=findNextSeason, O0=Cover, P0=coverFallback;
 function desktopLibraryNotify(kind) {window.dispatchEvent(new Event(kind==='membership'?'desktoplibrarymembership':'desktoplibrarychange'));}
 const desktopSearchQueue = new DesktopSearchQueue(desktopLibraryNotify);
 const desktopLibrary = desktopCreateLibrary(ge,desktopLibraryNotify);
@@ -26,16 +26,88 @@ function desktopSeasonProxy(api,context,check=()=>true) {
   };
 }
 
-function desktopSeasonSearch(api, item, check, find, label) {
-  return desktopSearchQueue.run(label+':'+item.seriesId,label,async context=>{
-    const proxy=desktopSeasonProxy(api,context,check);
-    const result=await find(proxy,item,()=>context.live() && check());
-    if (!context.live() || !check()) return {...result,automatic:false};
-    await desktopLibrary.ensure([item,...result.items]);
-    const album=desktopLibrary.relations.get(item.seriesId)?.albumId;
-    const items=result.items.filter(candidate=>!album||!desktopLibrary.relations.get(candidate.seriesId)?.albumId||desktopLibrary.relations.get(candidate.seriesId).albumId===album);
-    return {...result,items,automatic:result.automatic&&!!album&&items.length===1&&desktopLibrary.relations.get(items[0].seriesId)?.albumId===album};
+function desktopSeasonSearch(api,item,check,find,label) {
+  if(find===qR)return desktopFindNextSeason(api,item,check);
+  return desktopSeasonTask(item,{live:check,force:true});
+}
+
+const desktopDiscoveryRequests = new Map();
+async function desktopSeasonTask(item,{live=()=>true,progress=()=>{},save=false,background=false,force=false}={}) {
+  await desktopLibrary.ensure([item]);
+  if(!live())throw desktopLibraryCancelled();
+  const key=desktopLibrary.discoveryIdentity(item),taskKey='seasons:'+key;
+  let request=desktopDiscoveryRequests.get(key);
+  if(!request){request={consumers:new Set(),work:null,force:false};desktopDiscoveryRequests.set(key,request);}
+  request.consumers.add({item,live,progress,save});request.force ||= force;
+  if(request.work) {
+    if(!background)desktopSearchQueue.run(taskKey,'查找各季：'+item.title,()=>{}, {background:false});
+    return request.work;
+  }
+  request.work=desktopSearchQueue.run(taskKey,(background?'后台补齐合集：':'查找各季：')+item.title,async context=>{
+    const consumers=()=>[...request.consumers].filter(row=>row.live());
+    const check=()=>context.live()&&consumers().length>0;
+    const report=text=>{for(const row of consumers())row.progress(text);};
+    if(!check())throw desktopLibraryCancelled();
+    item=consumers()[0].item;
+    const cached=desktopLibrary.discoveryRecord(item);
+    let found;
+    if(!request.force&&cached&&(cached.complete||cached.retryAt>Date.now())) {
+      found={items:cached.items,incomplete:!cached.complete,automatic:false};
+    } else {
+      report('正在查找其他季…');
+      const proxy=desktopSeasonProxy(ge,context,check);
+      // KR is the existing 查找并收藏各季 finder, including its punctuation
+      // fallback, pagination, 30-second budget and relationship verification.
+      found=await KR(proxy,item,check);
+      if(!check())throw desktopLibraryCancelled();
+      await desktopLibrary.ensure([item,...found.items]);
+      if(!check())throw desktopLibraryCancelled();
+      found=desktopLibrary.recordDiscovery(item,found);
+    }
+    let collection=null;
+    if(consumers().some(row=>row.save)) {
+      collection=await desktopLibrary.collect(item,async()=>found,
+        ()=>context.live()&&consumers().some(row=>row.save),report);
+    }
+    return {...found,collection};
+  },{background}).finally(()=>{
+    if(desktopDiscoveryRequests.get(key)===request)desktopDiscoveryRequests.delete(key);
+    desktopLibraryNotify('membership');
   });
+  return request.work;
+}
+
+async function desktopCollectSeasons(item,{live=()=>true,progress=()=>{},background=false,force=!background}={}) {
+  const result=await desktopSeasonTask(item,{live,progress,save:true,background,force});
+  if(!live())throw desktopLibraryCancelled();
+  return result.collection;
+}
+
+async function desktopFindNextSeason(api,item,check) {
+  await desktopLibrary.ensure([item]);
+  if(!check())return {items:[],automatic:false,incomplete:true};
+  let result=desktopLibraryNext(item,desktopLibrary.catalog,desktopLibrary.relations);
+  if(!result.items.length) {
+    const found=await desktopSeasonTask(item,{live:check});
+    if(!check())return {items:[],automatic:false,incomplete:true};
+    result={...desktopLibraryNext(item,found.items,desktopLibrary.relations),incomplete:found.incomplete};
+  }
+  const rows=[];let incomplete=!!result.incomplete;
+  for(const candidate of result.items.slice(0,5)) {
+    if(!check())return {items:[],automatic:false,incomplete:true};
+    try {
+      const detail=await api.validationEpisodes(candidate.seriesId);
+      if(!check())return {items:[],automatic:false,incomplete:true};
+      if(detail.seriesId!==candidate.seriesId||!Number.isSafeInteger(detail.total)||detail.total<1||detail.total>100000||!Array.isArray(detail.episodes)||!detail.episodes.includes(1)) {incomplete=true;continue;}
+      rows.push({...candidate,episodeCount:detail.total});
+    } catch {incomplete=true;}
+  }
+  return {items:rows,incomplete,automatic:!incomplete&&result.automatic&&rows.length===1};
+}
+
+async function desktopDiscoverFavorite(item,live) {
+  if(!live()||!Ts(item.title))return;
+  return desktopCollectSeasons(item,{live,background:true});
 }
 const desktopRawSearch = {};
 for (const name of ['search','searchExplorer','searchNovelfm','validationSearch']) {
@@ -48,6 +120,8 @@ ge.setFavorite=(item,value)=>desktopLibrary.favorite(item,value);
 for (const name of ['favorites','history']) {
   ge[name]=async()=>{const items=await desktopLibrary.original[name]();void desktopLibrary.observe(items,name);return items;};
 }
+
+desktopLibrary.setDiscoveryHandler(desktopDiscoverFavorite);
 
 function DesktopCoverLabels({kind,progress}) {
   return b.jsxs(O.Fragment,{children:[
@@ -81,9 +155,9 @@ function DesktopSeasonActions({series,disabled=false}) {
     if (busy) return;
     setBusy(true);setMessage('等待搜索…');setUncertain([]);setCandidatePage(1);
     try {
-      const result=await desktopSearchQueue.run('collect:'+series.seriesId,'查找并收藏各季：'+series.title,async context=>{
-        const proxy=desktopSeasonProxy(ge,context);
-        return desktopLibrary.collect(series,()=>KR(proxy,series,context.live),context.live,text=>{if(mounted.current)setMessage(text);});
+      const result=await desktopCollectSeasons(series,{
+        live:()=>mounted.current,
+        progress:text=>{if(mounted.current)setMessage(text);}
       });
       if(mounted.current){setUncertain(result.uncertain);setMessage(`已加入 ${result.added} 季，跳过 ${result.skipped} 季；找到并确认 ${result.verified} 季${result.incomplete?'，搜索可能未完成':''}。可手动搜索补齐。`);}
     } catch(error) {if(mounted.current)setMessage(error.message);}
@@ -224,6 +298,6 @@ desktopLibraryStyle.textContent = `
 document.head.append(desktopLibraryStyle);
 
   return {LibraryGrid:DesktopLibraryGrid, CoverLabels:DesktopCoverLabels,
-    SeasonActions:DesktopSeasonActions, seasonSearch:desktopSeasonSearch,
+    SeasonActions:DesktopSeasonActions, seasonSearch:desktopSeasonSearch, collectSeasons:desktopCollectSeasons, collectSeasons:desktopCollectSeasons, collectSeasons:desktopCollectSeasons, collectSeasons:desktopCollectSeasons,
     progress:desktopLibraryProgress, library:desktopLibrary, searchQueue:desktopSearchQueue};
 }
