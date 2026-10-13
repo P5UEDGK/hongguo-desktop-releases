@@ -1,0 +1,63 @@
+--- a/backend/desktop_native.py
++++ b/backend/desktop_native.py
+@@ -204,6 +204,11 @@
+                 raise RuntimeError("Native job cancelled")
+-            for identifier, previous in list(self.sessions.items()):
+-                if previous.close() is False:
+-                    raise RuntimeError("Previous native session is stopping")
+-                self.sessions.pop(identifier, None)
++            parent = getattr(job, "prewarm_parent", None)
++            if parent:
++                if (self.sessions and parent not in self.sessions) or len(self.sessions) >= 2:
++                    raise RuntimeError("Standby parent unavailable")
++            else:
++                for identifier, previous in list(self.sessions.items()):
++                    if previous.close() is False:
++                        raise RuntimeError("Previous native session is stopping")
++                    self.sessions.pop(identifier, None)
+             session = NativeSession(self, job, self.parent_window())
+@@ -230,3 +235,33 @@
+                 raise ValueError("Native session unavailable")
+-            return session.submit(body)
++            previous_states = []
++            try:
++                if getattr(session.job, "prewarm_parent", None):
++                    if body.get("visible") is True:
++                        if not session.snapshot().get("outputReady"):
++                            raise ValueError("Standby frame unavailable")
++                        for identifier_, previous in self.sessions.items():
++                            if identifier_ != identifier:
++                                before = previous.desired_state() if hasattr(previous, "desired_state") else previous.snapshot()
++                                previous_states.append((previous, bool(before.get("paused", True))))
++                                revision = previous.submit({"paused": True})
++                                until = time.monotonic() + .3
++                                while time.monotonic() < until:
++                                    value = previous.snapshot()
++                                    if value.get("paused") and value.get("revision", 0) >= revision:
++                                        break
++                                    time.sleep(.005)
++                                else:
++                                    raise ValueError("Previous audio not paused")
++                    elif body.get("paused") is False or body.get("muted") is False:
++                        raise ValueError("Standby must remain silent and paused")
++                return session.submit(body)
++            except Exception:
++                # No child command was accepted. Restore the old playback
++                # state instead of leaving a visible episode paused on 429.
++                for previous, paused in previous_states:
++                    try:
++                        previous.submit({"paused": paused})
++                    except Exception:
++                        pass  # Preserve the original control failure.
++                raise
+
+@@ -431,3 +466,4 @@
+         # its remembered speed/volume before either picture or sound advances.
+-        desired = {"paused": True, "rate": 1, "volume": 1, "muted": False}
++        desired = {"paused": True, "rate": 1, "volume": 1,
++                   "muted": bool(getattr(self.job, "prewarm_parent", None))}
+         def retry_software(*, no_frame=False, reason="decode-error"):
+@@ -642,2 +678,3 @@
+                                      buffering=buffering, outputReady=output_ready, bufferStart=buffer_start,
++                                     visible=bool(user.IsWindowVisible(hwnd)),
+                                      bufferEnd=min(buffer_end, self.job.duration or buffer_end),

@@ -1,0 +1,7 @@
+--- a/native-tests/test_desktop_native.py
++++ b/native-tests/test_desktop_native.py
+@@ -325,3 +325,3 @@
+         user=SimpleNamespace(SetThreadDpiAwarenessContext=lambda *_:None,
+-            CreateWindowExW=lambda *_:1,IsWindow=lambda *_:True,PeekMessageW=lambda *_:False,
++            CreateWindowExW=lambda *_:1,IsWindow=lambda *_:True,IsWindowVisible=lambda *_:True,PeekMessageW=lambda *_:False,
+             DestroyWindow=lambda *_:None)

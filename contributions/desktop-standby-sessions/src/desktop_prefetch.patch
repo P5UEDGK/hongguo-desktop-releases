@@ -1,0 +1,112 @@
+--- a/backend/desktop_prefetch.py
++++ b/backend/desktop_prefetch.py
+@@ -58,6 +58,9 @@
+
+-    def begin(self, job, series_id, episode):
+-        with self.condition:
++    def begin(self, job, series_id, episode, *, expected_generation=None):
++        with self.condition:
++            if expected_generation is not None and (self.closed or expected_generation != self.generation):
++                return None
+             self.generation += 1
+             self.foreground[job.id] = self.generation
++            job.prefetch_generation = self.generation
+             self.pending = []
+@@ -76,6 +79,14 @@
+             self.condition.notify_all()
+-        self._report()
+-
++            generation = self.generation
++        self._report()
++
++        return generation
+     def before_work(self, job):
+         with self.condition:
++            warm = bool(getattr(job, "prewarm_parent", None))
++            if warm:
++                generation = getattr(job, "prefetch_generation", None)
++                if generation != self.generation:
++                    raise EncodingCancelled()
++                self.foreground.setdefault(job.id, generation)
+             while True:
+@@ -84,3 +95,5 @@
+                     raise EncodingCancelled()
+-                if self.busy is None:
++                if self.busy is None and (not warm or not any(
++                        key != job.id and generation == self.generation
++                        for key, generation in self.foreground.items())):
+                     self.busy = job.id
+@@ -97,3 +110,3 @@
+
+-    def load_source(self, series_id, episode):
++    def load_source(self, series_id, episode, *, prepared_source=None):
+         with self.condition:
+@@ -105,3 +118,3 @@
+             raise ValueError("Episode media identity unavailable")
+-        source = self.source_loader(vid)
++        source = prepared_source if prepared_source is not None else self.source_loader(vid)
+         source_complete = self._source_complete(source)
+@@ -132,2 +145,49 @@
+
++    def promote(self, job, series_id, episode):
++        if job.cancelled.is_set():
++            return False
++        # Called under HlsJobs.guard: transfer the generation before a later
++        # foreground create can overtake this activation.
++        generation = self.begin(job, series_id, episode,
++            expected_generation=getattr(job, "prefetch_generation", self.generation))
++        if generation is None:
++            return False
++        try:
++            threading.Thread(target=self._load_promoted,
++                args=(job, series_id, episode, generation),
++                name="desktop-standby-metadata", daemon=True).start()
++        except RuntimeError:
++            if getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native":
++                self.finish(job, series_id, episode, job.source)
++
++    def _load_promoted(self, job, series_id, episode, generation):
++        with self.condition:
++            invalid = self.closed or job.cancelled.is_set() or generation != self.generation
++            finish_cancelled = invalid and (getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native")
++            if invalid and finish_cancelled and self.foreground.get(job.id) == generation:
++                self.foreground.pop(job.id, None)
++                if self.busy == job.id:
++                    self.busy = None
++                self.condition.notify_all()
++        if invalid:
++            if finish_cancelled and generation == self.generation:
++                self.finish(job, series_id, episode, job.source)
++            return
++        try:
++            source = self.load_source(series_id, episode, prepared_source=job.source)
++        except Exception:
++            source = None  # Optional future-download metadata must not affect playback.
++        with self.condition:
++            # HLS may still be encoding after its first frame is playable.
++            # Activation must retain its existing encoding slot until the
++            # actual worker finishes. If it finished during metadata loading,
++            # refresh bookkeeping now that the episode list is available.
++            finish_now = getattr(job, "_prefetch_work_finished", False) or job.video_mode == "native"
++            if finish_now and generation == self.generation:
++                self.foreground[job.id] = generation
++        if finish_now:
++            # finish reports state; never hold condition while acquiring the
++            # diagnostic report lock, whose snapshot acquires condition.
++            self.finish(job, series_id, episode, source)
++
+     def _download(self):
+@@ -156,2 +216,3 @@
+         with self.condition:
++            job._prefetch_work_finished = True
+             expected = self.foreground.get(job.id)
+@@ -170,2 +231,5 @@
+             generation = self.foreground.pop(job.id, None)
++            if (getattr(job, "prewarm_parent", None) or
++                    self.current != {"seriesId": str(series_id), "episode": episode}):
++                generation = None
+             if self.busy == job.id:
+@@ -299,2 +363,3 @@
+         return result
++
+     def _report(self):
