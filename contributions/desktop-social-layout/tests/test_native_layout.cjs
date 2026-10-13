@@ -5,6 +5,7 @@ const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
 (async()=>{
   const commands=[],timers=new Map(),observed=[],listeners=new Map();let tick=0,selected=false;
   let chromeTop=450,revision=0,shown=true,panel=null,observer,overlayDisposed=false;
+  let overlayGate,bitmapReady=false;
   const chromeListeners=new Map();
   const chrome={getBoundingClientRect:()=>({left:20,top:chromeTop,width:800,height:550-chromeTop}),
     matches:()=>shown,addEventListener:(n,fn)=>chromeListeners.set(n,fn),removeEventListener:n=>chromeListeners.delete(n)};
@@ -13,7 +14,7 @@ const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
     play:()=>Promise.resolve(),pause(){},dispatchEvent(){},
     addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name),
     getBoundingClientRect:()=>({left:20,top:50,width:800,height:500})};
-  const context={desktopNativeControlsOverlay:()=>({ready:false,dispose(){overlayDisposed=true;}}),URL,Event,DOMException,Number,Math,Date,window:{devicePixelRatio:1.5},
+  const context={AbortController,desktopNativeControlsOverlay:(m,s,send,notify,gate)=>{overlayGate=gate;return {get ready(){return bitmapReady&&gate();},dispose(){overlayDisposed=true;}};},URL,Event,DOMException,Number,Math,Date,window:{devicePixelRatio:1.5},
     getComputedStyle:()=>({opacity:shown?'1':'0',display:'block',visibility:'visible'}),
     MutationObserver:class{constructor(fn){this.fn=fn;observer=this;}observe(){}disconnect(){observer=null;}},
     ResizeObserver:class{constructor(fn){this.fn=fn;context.resize=this;}observe(node){observed.push(node);}disconnect(){observed.length=0;}},
@@ -35,7 +36,10 @@ const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
   const stop=context.desktopNativePlayback(media,'http://127.0.0.1',0,{onReady(){}},null);
   await settle();
   assert.deepEqual(commands.find(c=>c.rect).rect,[30,75,1200,750],'full video height, including DPI');
-  assert.deepEqual(commands.find(c=>c.rect).occlusion,[],'initial alpha controls never cut video while the first bitmap is preparing');
+  assert.deepEqual(commands.find(c=>c.rect).occlusion,[0,600,1200,150],'live DOM controls remain operable before the first bitmap');
+  assert.equal(overlayGate(),true,'ready playback away from EOF allows raster work');
+  bitmapReady=true;context.resize.fn();await settle();
+  assert.deepEqual(commands.filter(c=>c.rect).at(-1).occlusion,[],'ready bitmap restores alpha controls');
   assert(observed.includes(chrome),'control band height changes are observed');
   chromeTop=400;context.resize.fn();await settle();
   assert.deepEqual(commands.filter(c=>c.rect).at(-1).rect,[30,75,1200,750],'toolbar resize does not rescale video');
@@ -48,7 +52,7 @@ const settle=async()=>{for(let n=0;n<20;n++)await new Promise(setImmediate);};
   assert.deepEqual(commands.filter(c=>c.rect).at(-1).occlusion,[120,225,375,390],
     'only the opaque settings panel needs a bounded cutout');
   async function flushControls(){
-    for(const [id,entry] of [...timers])if(entry.delay===250){timers.delete(id);await entry.fn();}
+    for(const [id,entry] of [...timers])if(entry.delay===250||entry.delay===0){timers.delete(id);await entry.fn();}
     await settle();
   }
   media.pause();await flushControls();

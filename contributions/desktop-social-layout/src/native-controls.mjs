@@ -4,7 +4,7 @@ export function desktopControlsCanHide(stage, dragging) {
   return !dragging && !stage?.querySelector('.player-chrome:hover,.player-chrome :focus-visible,.player-chrome :active,.desktop-danmaku-panel');
 }
 
-export function desktopNativeControlsOverlay(media, stage, send, onReady) {
+export function desktopNativeControlsOverlay(media, stage, send, onReady, canPaint = () => true) {
   const paintProperties = ('display position left right top bottom width height min-width max-width min-height max-height box-sizing flex flex-direction flex-wrap align-items align-self justify-content gap margin padding border border-radius font-family font-size font-weight font-style line-height letter-spacing text-align text-decoration white-space vertical-align color background outline box-shadow opacity transform transform-origin filter overflow appearance accent-color color-scheme fill stroke stroke-width').split(' ');
   let disposed = false, busy = false, ready = false, previous = '', css = null;
   // paint() compares the resolved control image, including time and layout.
@@ -14,7 +14,7 @@ export function desktopNativeControlsOverlay(media, stage, send, onReady) {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', {willReadFrequently:true});
   async function paint() {
-    if (disposed || busy || document.hidden) return;
+    if (disposed || busy || document.hidden || !canPaint()) return;
     const chrome = stage.querySelector('.player-chrome');
     if (!chrome || !context) return;
     const rect = stage.getBoundingClientRect(), box = chrome.getBoundingClientRect();
@@ -60,7 +60,7 @@ export function desktopNativeControlsOverlay(media, stage, send, onReady) {
       const image = new Image();
       image.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
       await image.decode();
-      if (disposed) return;
+      if (disposed || !canPaint()) return;
       canvas.width = width; canvas.height = height; context.clearRect(0,0,width,height);
       context.drawImage(image,0,0,width,height);
       const pixels = context.getImageData(0,0,width,height).data;
@@ -85,5 +85,5 @@ export function desktopNativeControlsOverlay(media, stage, send, onReady) {
   }
   const timer = setInterval(paint,120);
   paint();
-  return {get ready(){return ready;}, dispose(){disposed=true;clearInterval(timer);headObserver.disconnect();}};
+  return {get ready(){return ready && canPaint();}, dispose(){disposed=true;clearInterval(timer);headObserver.disconnect();}};
 }
