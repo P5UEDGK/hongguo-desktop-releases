@@ -201,7 +201,7 @@ function DesktopLibrarySort({value,onChange,seasons=false,view}) {
   const label=seasons?'合集季号排序':view==='history'?'历史排序':'收藏排序';
   const options=seasons?[['desc','季号倒序'],['asc','季号正序']]:view==='history'?[
     ['recent','最近观看'],['title-asc','名称正序'],['title-desc','名称倒序']
-  ]:[['recent','最近添加'],['played','最近播放']];
+  ]:[['played','最近播放'],['recent','最近添加']];
   return b.jsx('label',{className:'desktop-library-sort',children:b.jsx('select',{
     'aria-label':label,value,onChange:event=>onChange(event.target.value),
     children:options.map(([key,text])=>b.jsx('option',{value:key,children:text},key))

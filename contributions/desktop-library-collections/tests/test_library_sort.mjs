@@ -73,7 +73,7 @@ test('factory renders every season, exposes separate persistent controls, sortin
   const rootSort=tree.props.children[0].props.children[1];
   assert.equal(rootSort.props.value,'recent');
   const control=rootSort.type(rootSort.props);assert.equal(control.props.children.type,'select');assert.equal(control.props.children.props['aria-label'],'收藏排序');
-  assert.deepEqual(control.props.children.props.children.map(option=>option.props.children),['最近添加','最近播放']);
+  assert.deepEqual(control.props.children.props.children.map(option=>option.props.children),['最近播放','最近添加']);
   rootSort.props.onChange('played');
   tree=render();tree.props.children[1].props.children[0].props.children[0].props.onClick();
   tree=render();
