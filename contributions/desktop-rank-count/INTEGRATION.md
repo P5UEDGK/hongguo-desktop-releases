@@ -13,11 +13,13 @@ rank = DesktopRank(lambda board, page: upstream_page(board, page, H.http_request
 app.include_router(make_router(rank))
 ```
 
-宿主 `H.http_request` 需支持 requests 的 `params`、`timeout`、`stream`、`allow_redirects` 及响应上下文管理；沿用既有连接池、TLS验证和代理策略，禁用隐式重试。第一页不发送 `page=1`，该参数在实测中返回无内容；后续页传入对应页码。
+宿主 `H.http_request` 需支持 requests 的 `params`、`timeout`、`stream`、`allow_redirects` 及响应上下文管理；响应还须提供可中断读取的 `raw.shutdown()`（测试使用requests及urllib3 2.7）。沿用既有连接池、TLS验证和代理策略，禁用隐式重试。不支持限时中断的传输会明确报错，不能静默降级为无限等待。第一页不发送 `page=1`，该参数在实测中返回无内容；后续页传入对应页码。
+
+连接及单次socket读超时仍为5/15秒，另设20秒总读取预算，从调用上游前计时。收到响应头后按剩余预算设置定时器，直接中止底层读取，避免 `iter_content` 等待凑满一块数据时永不返回。正常结束先关闭取消门禁，再归还连接池，避免定时器误伤已复用的连接。
 
 读取的是官网榜单自身的 `__loader=rank_<route>/page&__ssrDirect=true` 响应，非详情接口。响应可能直接返回JSON，也可能先给 `__deferred_promise:content`，再用 `data:` 块提供完整 `content`。仅在同一响应完整结束且结构通过验证后计算集数；缺块不得转查详情或猜测。
 
-后端只监听loopback。GET `/desktop/rank?board=hot&page=1&refresh=false` 返回卡片数组。board为hot/real/comic/ai，page为1至5，refresh为布尔值。按榜单与页码缓存30分钟；同页并发普通读取合并，显式刷新更新同页缓存，失败保留原成功缓存。
+后端只监听loopback。GET `/desktop/rank?board=hot&page=1&refresh=false` 返回卡片数组。board为hot/real/comic/ai，page为1至5，refresh为布尔值。按榜单与页码缓存30分钟；重叠加载共享同一个in-flight结果或异常，失败不会让等待者依次重新访问上游。下一独立调用可重新加载，显式刷新失败仍保留原成功缓存。
 
 沿用宿主认证与CORS规则，不能全局关闭认证。此路由自行检查本机客户端地址、Origin和 `x-desktop-rank-client: 1`。允许来源 `http://tauri.localhost`、`tauri://localhost`，CORS增加GET和该请求头；仅在受管理桌面服务上下文中接入。不要对外暴露本地服务。
 

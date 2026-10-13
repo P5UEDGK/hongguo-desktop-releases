@@ -2,8 +2,10 @@ import copy
 import json
 import sys
 import threading
+import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -93,6 +95,52 @@ class RankTests(unittest.TestCase):
         self.assertEqual(service.page('hot',1)[0]['episodeCount'],162)
         self.assertEqual(len(calls),2)
 
+    def test_concurrent_failures_share_one_load_and_next_call_recovers(self):
+        started=threading.Event();release=threading.Event();joined=threading.Event()
+        joined_lock=threading.Lock();waiters=[0];calls=[]
+        class ObservedFuture(Future):
+            def result(self,*args,**kwargs):
+                with joined_lock:
+                    waiters[0]+=1
+                    if waiters[0]==3:joined.set()
+                return super().result(*args,**kwargs)
+        def request(board,page):
+            calls.append((board,page))
+            if len(calls)==1:
+                started.set();release.wait(5);raise ValueError('shared failure')
+            return payload()
+        with patch('desktop_rank.Future',ObservedFuture,create=True):
+            service=DesktopRank(request)
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                jobs=[pool.submit(service.page,'hot',1) for _ in range(4)]
+                try:
+                    self.assertTrue(started.wait(2))
+                    self.assertTrue(joined.wait(.5),'waiting requests must join the same load')
+                finally:release.set()
+                for job in jobs:
+                    with self.assertRaisesRegex(ValueError,'shared failure'):job.result()
+            self.assertEqual(calls,[('hot',1)])
+            self.assertEqual(service.page('hot',1)[0]['episodeCount'],162)
+            self.assertEqual(len(calls),2)
+
+    def test_total_deadline_interrupts_slow_stream_before_one_chunk_completes(self):
+        class SlowBody(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200);self.send_header('Content-Length','100');self.end_headers()
+                try:
+                    for _ in range(100):
+                        self.wfile.write(b'x');self.wfile.flush();time.sleep(.03)
+                except (BrokenPipeError,ConnectionResetError):pass
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),SlowBody)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            with patch('desktop_rank.BASE',f'http://127.0.0.1:{server.server_port}'),patch('desktop_rank.TOTAL_SECONDS',.2,create=True):
+                started=time.monotonic()
+                with self.assertRaisesRegex(ValueError,'超时'):upstream_page('hot',1)
+                self.assertLess(time.monotonic()-started,1)
+        finally:server.shutdown();server.server_close();thread.join(2)
+
     def test_invalid_requests_make_no_network_call(self):
         service=DesktopRank(lambda *args:self.fail('Unexpected network'))
         for args in [('unknown',1),('hot',0),('hot',6),('hot',True),('hot',1,'true')]:
@@ -101,6 +149,7 @@ class RankTests(unittest.TestCase):
     def test_upstream_wire_one_rank_request_and_bounded_body(self):
         class Reply:
             status_code=200
+            raw=type('Raw',(),{'shutdown':staticmethod(lambda:None)})()
             def __enter__(self):return self
             def __exit__(self,*args):pass
             def raise_for_status(self):pass
@@ -114,6 +163,9 @@ class RankTests(unittest.TestCase):
             self.assertFalse(call.call_args.kwargs['allow_redirects'])
         with patch('desktop_rank.MAX_BYTES',1):
             with self.assertRaises(ValueError):upstream_page('hot',1,lambda *a,**k:Reply())
+        unsupported=Reply();unsupported.raw=None
+        with self.assertRaisesRegex(ValueError,'限时中断'):
+            upstream_page('hot',1,lambda *a,**k:unsupported)
 
     def test_local_route_origin_and_header(self):
         calls=[];service=DesktopRank(lambda board,page:(calls.append(1) or payload()))

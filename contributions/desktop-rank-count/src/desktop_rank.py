@@ -3,6 +3,7 @@ import json
 import re
 import threading
 import time
+from concurrent.futures import Future
 
 import requests
 from fastapi import APIRouter, HTTPException, Request
@@ -13,9 +14,11 @@ BOARDS = {'hot': 'hot-drama', 'real': 'hot-real-drama',
 ORIGINS = ('http://tauri.localhost', 'tauri://localhost')
 ID = re.compile(r'[0-9]{8,24}').fullmatch
 MAX_BYTES = 8 * 1024 * 1024
+TOTAL_SECONDS = 20.0
 
 
 def upstream_page(board, page, request=requests.request):
+    deadline = time.monotonic() + TOTAL_SECONDS
     route = BOARDS[board]
     params = {'__loader': 'rank_' + route + '/page', '__ssrDirect': 'true'}
     if page != 1:
@@ -27,15 +30,55 @@ def upstream_page(board, page, request=requests.request):
             response.raise_for_status()
             if response.status_code != 200:
                 raise ValueError('排行榜响应异常，请重试')
-            chunks, size = [], 0
-            for chunk in response.iter_content(65536):
-                size += len(chunk)
-                if size > MAX_BYTES:
-                    raise ValueError('排行榜响应过大，请重试')
-                chunks.append(chunk)
-            return b''.join(chunks).decode('utf-8')
+            return _read_body(response, deadline)
     except (requests.RequestException, OSError, UnicodeError) as error:
         raise ValueError('排行榜暂时无法连接，请重试') from error
+
+
+def _read_body(response, deadline):
+    # Requests buffers iter_content chunks. A monotonic check only inside the
+    # loop cannot stop a peer trickling bytes before a complete chunk arrives.
+    shutdown = getattr(getattr(response, 'raw', None), 'shutdown', None)
+    if not callable(shutdown):
+        raise ValueError('排行榜连接不支持限时中断')
+    expired, guard, finished = threading.Event(), threading.Lock(), False
+
+    def expire():
+        with guard:
+            if not finished:
+                expired.set()
+                try:
+                    shutdown()
+                except (OSError, ValueError, RuntimeError):
+                    pass  # The connection may already have finished reading.
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError('排行榜请求超时，请重试')
+    timer = threading.Timer(remaining, expire)
+    timer.daemon = True
+    timer.start()
+    try:
+        chunks, size = [], 0
+        for chunk in response.iter_content(65536):
+            if expired.is_set() or time.monotonic() >= deadline:
+                raise ValueError('排行榜请求超时，请重试')
+            size += len(chunk)
+            if size > MAX_BYTES:
+                raise ValueError('排行榜响应过大，请重试')
+            chunks.append(chunk)
+        if expired.is_set() or time.monotonic() >= deadline:
+            raise ValueError('排行榜请求超时，请重试')
+        return b''.join(chunks).decode('utf-8')
+    except (requests.RequestException, OSError) as error:
+        if expired.is_set():
+            raise ValueError('排行榜请求超时，请重试') from error
+        raise
+    finally:
+        # Finish cancellation before __exit__ can release a reusable connection.
+        with guard:
+            finished = True
+        timer.cancel()
 
 
 def parse_page(text, page):
@@ -97,19 +140,36 @@ class DesktopRank:
     def __init__(self, request=upstream_page, clock=time.monotonic, ttl=1800):
         self.request, self.clock, self.ttl = request, clock, ttl
         self.cache = {}
-        self.locks = {(board, page): threading.Lock() for board in BOARDS for page in range(1, 6)}
+        self.lock = threading.Lock()
+        self.inflight = {}
 
     def page(self, board, page, refresh=False):
         if not isinstance(board, str) or board not in BOARDS or type(page) is not int or not 1 <= page <= 5 or type(refresh) is not bool:
             raise ValueError('排行榜类型或页码无效')
         key = (board, page)
-        with self.locks[key]:
+        with self.lock:
             cached = self.cache.get(key)
             if not refresh and cached is not None and cached[0] > self.clock():
                 return cached[1]
+            future = self.inflight.get(key)
+            owner = future is None
+            if owner:
+                future = Future()
+                self.inflight[key] = future
+        if not owner:
+            return future.result()
+        try:
             result = parse_page(self.request(board, page), page)
+        except BaseException as error:
+            with self.lock:
+                self.inflight.pop(key)
+                future.set_exception(error)
+            raise
+        with self.lock:
             self.cache[key] = (self.clock() + self.ttl, result)
-            return result
+            self.inflight.pop(key)
+            future.set_result(result)
+        return result
 
 
 def make_router(service):
