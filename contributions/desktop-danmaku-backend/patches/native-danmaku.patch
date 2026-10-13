@@ -1,0 +1,45 @@
+--- a/contributions/desktop-native-playback/src/desktop_native.py
++++ b/contributions/desktop-native-playback/src/desktop_native.py
+@@ -19,2 +19,4 @@
+ import uuid
++from desktop_danmaku import validate_danmaku, validate_settings
++from desktop_danmaku_track import DanmakuTrack
+
+@@ -25,3 +27,3 @@
+     if not isinstance(body, dict) or not body or set(body) - {
+-            "paused", "rate", "volume", "muted", "seek", "rect", "visible"}:
++            "paused", "rate", "volume", "muted", "seek", "rect", "visible", "danmaku", "danmakuSettings"}:
+         raise ValueError("Invalid native control")
+@@ -41,3 +43,8 @@
+             raise ValueError("Invalid native rectangle")
+-    return dict(body)
++    result = dict(body)
++    if 'danmaku' in body:
++        result['danmaku'] = validate_danmaku(body['danmaku'])
++    if 'danmakuSettings' in body:
++        result['danmakuSettings'] = validate_settings(body['danmakuSettings'])
++    return result
+
+@@ -421,2 +428,3 @@
+         drop_watch = FrameDropWatch()
++        danmaku_track = DanmakuTrack()  # pass assets=validated_emoji_assets for vector emojis
+         description = getattr(self.job, "source_description", None)
+@@ -514,2 +522,4 @@
+                         frame_ready = True
++                    if event.id == 8:  # MPV_EVENT_FILE_LOADED discards external subtitle tracks
++                        danmaku_track.source_reloaded()
+                     if event.id == 7 and event.data:
+@@ -536,2 +546,3 @@
+                         user.ShowWindow(hwnd, 4 if command["visible"] else 0)
++                    danmaku_track.update(command)
+                     for key, option in (("rate", "speed"), ("volume", "volume"), ("muted", "mute"), ("paused", "pause")):
+@@ -562,2 +573,3 @@
+                 position = player.number("time-pos", self.job.start_seconds)
++                danmaku_track.apply(player)
+                 paused = player.get("pause") == "yes"
+@@ -644,3 +656,4 @@
+                                      audioExclusive=player.get("audio-exclusive"), audioOutput=player.get("current-ao"),
+-                                     frameDrops=frame_drops, decoderDrops=decoder_drops)
++                                     frameDrops=frame_drops, decoderDrops=decoder_drops,
++                                     **danmaku_track.snapshot(position))
+                 remaining = (self.data["duration"] - position) / max(.25, desired["rate"])

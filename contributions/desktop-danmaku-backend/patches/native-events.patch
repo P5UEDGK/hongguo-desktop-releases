@@ -1,0 +1,18 @@
+--- a/contributions/desktop-native-playback/src/frontend-native.js
++++ b/contributions/desktop-native-playback/src/frontend-native.js
+@@ -65,2 +65,3 @@
+     resize?.disconnect();
++    media.removeEventListener('desktopdanmaku', updateDanmaku);
+     document.removeEventListener('fullscreenchange', layout);
+@@ -130,2 +131,6 @@
+   }
++  function updateDanmaku() {
++    queue({danmaku: media.desktopDanmaku || [], danmakuSettings: media.desktopDanmakuSettings ||
++      {opacity:80, lanes:3, fontSize:28, duration:14}});
++  }
+   function layout() {
+@@ -194,2 +199,4 @@
+     document.addEventListener('visibilitychange', layout);
++    media.addEventListener('desktopdanmaku', updateDanmaku);
++    updateDanmaku();
+     layout();
