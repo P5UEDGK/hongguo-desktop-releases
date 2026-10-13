@@ -1,0 +1,132 @@
+import copy
+import json
+import sys
+import threading
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+from desktop_rank import DesktopRank, parse_page, upstream_page, make_router
+from fastapi import HTTPException, Request
+
+
+def content():
+    return {'isSuccess': True, 'rankList': [
+        {'seriesId': '7690195777649380414', 'title': '爆笑姐妹',
+         'episodeVids': [str(7690281396031458328 + i) for i in range(162)],
+         'description': '简介', 'tags': ['穿越'], 'heatText': '热度', 'cover': 'cover'}],
+        'pagination': {'pageNum': 1, 'totalPages': 5}}
+
+
+def payload(value=None, page=1, deferred=True):
+    value = content() if value is None else value
+    head = {'pageNum': page, 'content': '__deferred_promise:content' if deferred else value}
+    return json.dumps(head) + ('\n\ndata:' + json.dumps({'content': value}) if deferred else '')
+
+
+class RankTests(unittest.TestCase):
+    def test_inline_and_deferred_same_result(self):
+        actual = parse_page(payload(), 1)
+        self.assertEqual(actual, parse_page(payload(deferred=False), 1))
+        self.assertEqual(actual[0]['episodeCount'], 162)
+        self.assertEqual(actual[0]['tags'], ['穿越'])
+        self.assertEqual(actual[0]['hotText'], '热度')
+        self.assertEqual(actual, parse_page(payload().replace('\n', '\r\n'), 1))
+
+    def test_redacted_official_samples(self):
+        fixture=json.loads((Path(__file__).parent/'fixtures/rank-samples.json').read_text(encoding='utf8'))
+        first=parse_page(json.dumps(fixture['page1']),1)
+        second=parse_page(json.dumps(fixture['page2']),2)
+        self.assertEqual([row['episodeCount'] for row in first],[540,162])
+        self.assertEqual([row['episodeCount'] for row in second],[150,112])
+        self.assertEqual(second[0]['seriesId'],'7691698632214449177')
+
+    def test_incomplete_and_error_frames_are_rejected(self):
+        values = [payload().split('\n\n')[0], payload()+'\n\nerror:{}',
+                  payload()+'\n\ndata:'+json.dumps({'content':content()}),
+                  '<html></html>', '{}', '[]', payload(page=2)]
+        for value in values:
+            with self.subTest(value=value[:60]), self.assertRaises(ValueError):
+                parse_page(value, 1)
+
+    def test_invalid_identity_and_partial_lists_are_rejected(self):
+        for modify in [lambda x:x['rankList'][0].update(seriesId='bad'),
+                       lambda x:x['rankList'][0].update(episodeVids=[]),
+                       lambda x:x['rankList'][0].pop('episodeVids'),
+                       lambda x:x['rankList'][0].update(episodeVids=['12345678']*2),
+                       lambda x:x['rankList'][0].update(episodeVids=[True]),
+                       lambda x:x['rankList'].append(copy.deepcopy(x['rankList'][0])),
+                       lambda x:x.update(isSuccess=False),
+                       lambda x:x['pagination'].update(pageNum=2)]:
+            value=content();modify(value)
+            with self.assertRaises(ValueError):parse_page(payload(value), 1)
+
+    def test_single_request_cache_refresh_and_expiry(self):
+        calls=[];now=[0]
+        service=DesktopRank(lambda board,page:(calls.append((board,page)) or payload()),clock=lambda:now[0],ttl=10)
+        for _ in range(3):self.assertEqual(service.page('hot',1)[0]['episodeCount'],162)
+        self.assertEqual(len(calls),1)
+        service.page('hot',1,True);self.assertEqual(len(calls),2)
+        now[0]=11;service.page('hot',1);self.assertEqual(len(calls),3)
+
+    def test_concurrent_load_is_coalesced(self):
+        started=threading.Event();release=threading.Event();calls=[]
+        def request(board,page):
+            calls.append((board,page));started.set();release.wait(5);return payload()
+        service=DesktopRank(request)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            jobs=[pool.submit(service.page,'hot',1) for _ in range(4)]
+            self.assertTrue(started.wait(2));release.set()
+            self.assertTrue(all(job.result()[0]['episodeCount']==162 for job in jobs))
+        self.assertEqual(calls,[('hot',1)])
+
+    def test_failed_refresh_preserves_good_cache_and_no_retry(self):
+        calls=[]
+        def request(board,page):
+            calls.append(1)
+            if len(calls)>1:raise ValueError('failure')
+            return payload()
+        service=DesktopRank(request);service.page('hot',1)
+        with self.assertRaises(ValueError):service.page('hot',1,True)
+        self.assertEqual(service.page('hot',1)[0]['episodeCount'],162)
+        self.assertEqual(len(calls),2)
+
+    def test_invalid_requests_make_no_network_call(self):
+        service=DesktopRank(lambda *args:self.fail('Unexpected network'))
+        for args in [('unknown',1),('hot',0),('hot',6),('hot',True),('hot',1,'true')]:
+            with self.assertRaises(ValueError):service.page(*args)
+
+    def test_upstream_wire_one_rank_request_and_bounded_body(self):
+        class Reply:
+            status_code=200
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def raise_for_status(self):pass
+            def iter_content(self,size):yield payload().encode()
+        with patch('desktop_rank.requests.request',return_value=Reply()) as call:
+            upstream_page('hot',2,call)
+            self.assertEqual(call.call_count,1)
+            self.assertEqual(call.call_args.args,('GET','https://hongguoduanju.com/rank/hot-drama'))
+            self.assertEqual(call.call_args.kwargs['params']['page'],2)
+            self.assertEqual(call.call_args.kwargs['params']['__loader'],'rank_hot-drama/page')
+            self.assertFalse(call.call_args.kwargs['allow_redirects'])
+        with patch('desktop_rank.MAX_BYTES',1):
+            with self.assertRaises(ValueError):upstream_page('hot',1,lambda *a,**k:Reply())
+
+    def test_local_route_origin_and_header(self):
+        calls=[];service=DesktopRank(lambda board,page:(calls.append(1) or payload()))
+        endpoint=make_router(service).routes[0].endpoint
+        def request(headers):return Request({'type':'http','client':('127.0.0.1',1234),'headers':[(k.encode(),v.encode()) for k,v in headers.items()]})
+        good={'origin':'http://tauri.localhost','x-desktop-rank-client':'1'}
+        self.assertEqual(endpoint(request(good),'hot',1,False)[0]['episodeCount'],162)
+        for headers,board,code in [({'origin':'http://tauri.localhost'},'hot',401),
+                                  ({**good,'origin':'https://evil.test'},'hot',403),
+                                  (good,'invalid',502)]:
+            with self.assertRaises(HTTPException) as raised:endpoint(request(headers),board,1,False)
+            self.assertEqual(raised.exception.status_code,code)
+        self.assertEqual(len(calls),1)
+
+
+if __name__=='__main__':unittest.main()
