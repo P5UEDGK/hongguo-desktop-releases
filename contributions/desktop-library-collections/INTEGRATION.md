@@ -127,3 +127,16 @@ guoban:library-discovery:v1保存最多64个系列的成功搜索结果或失败
 倒数第二集只查关系，最后一集解析第一集，临近结束才创建一个备用会话；普通倒数第二集到最后一集切换复用在途查询。取消接播调用cancel；自然季尾接播先take(candidate)取得片源与备用资源，再交给原播放入口。旧effect不能释放已转交的资源。画面保留、倍速/音量继承和音频互斥沿用宿主既有机制，未准备好时回退正常解析。
 
 后端安装desktop_season_playback.py，为现有HlsJobs增加可选allow_season_prewarm回调，并接入make_season_prewarm(prefetch, relations)，详见integration/season-standby.patch。默认仍只允许同季下一集；跨季例外必须同时满足当前generation、真实季末集、同合集、唯一连续下一季及第1集。回调只读本地关系和现有集表，不发搜索、不写成员。保留单备用槽、父会话生命周期、零起点与codec negotiation校验。完整宿主源码不在本仓库，补丁需按实际版本审查接入，不得为了跨季连播移除原身份校验。
+
+
+## 安装资源的收藏接线验收
+
+修改宿主压缩资源后，从最终安装包解压实际 JavaScript，再运行：
+
+```pwsh
+node contributions/desktop-library-collections/tools/verify-host-bundle.cjs <decoded-host-bundle.js>
+```
+
+此工具适用于本贡献的既有宿主资源边界，执行资源内真实收藏编排和入口接线，以隔离内存收藏与详情响应核验：先保存当前季、后台加入同合集其他季、反复取消再收藏复用搜索、重建窗口后复用持久记录，以及人工取消项保持排除。它不连接真实账号，也不写用户收藏。
+
+替换组件代码时，保留组件之后的初始化语句，特别是 `desktopLibrary.setDiscoveryHandler(desktopDiscoverFavorite)`；仅源码工厂测试通过不能证明最终安装资源已经接线。再用实际收藏按钮、真实搜索和原生终态完成宿主验收；搜索失败或分页不完整仍按既有冷却与重试规则处理。
