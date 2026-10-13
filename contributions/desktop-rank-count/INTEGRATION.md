@@ -15,9 +15,11 @@ app.include_router(make_router(rank))
 
 网络依赖为HTTPX异步客户端，运行依赖见 `requirements-test.txt`。不再接收同步 `H.http_request`：同步传输在响应头返回前无法可靠取消。默认保留TLS校验及HTTPX环境代理/CA设置，复用已验证的SSL信任上下文。第一页不发送 `page=1`，该参数在实测中返回无内容；后续页传入对应页码。
 
-连接及单次socket读超时为5/15秒，`asyncio.wait_for`另包住20秒整次网络预算，覆盖连接、状态行/响应头、正文流和异步上下文清理。超时取消网络任务并关闭连接，避免只取消浏览器fetch而让后端继续等待；不创建超时后继续运行的读取线程。
+连接及单次socket读超时为5/15秒。服务复用一个网络事件循环及异步客户端，调用通过Future等待最多20秒，覆盖DNS、连接、状态行/响应头和正文读取；超时取消网络任务。请求路径不关闭事件循环，也不等待系统DNS线程结束，因此DNS停滞不会延长调用预算。系统解析器本身不能强制中止，返回后由执行器回收结果。
 
-若宿主有独立代理或CA策略，通过 `upstream_page(board, page, client_factory=...)` 注入HTTPX客户端工厂。工厂接收 `timeout`、`follow_redirects`，返回新的异步客户端；使用宿主已验证的SSL上下文，不能关闭TLS验证或开启隐式重试。默认会读取环境代理，不能绕过宿主网络策略。每次加载使用独立事件循环，不能跨调用复用绑定旧循环的AsyncClient；SSL信任上下文可以复用。工厂构造不得执行阻塞网络操作。
+若宿主有独立代理或CA策略，通过 `DesktopRank(client_factory=...)` 注入HTTPX客户端工厂。工厂接收 `timeout`、`follow_redirects`，在服务的网络循环内创建一次异步客户端；使用宿主已验证的SSL上下文，不能关闭TLS验证或开启隐式重试。默认会读取环境代理，不能绕过宿主网络策略。工厂构造不得执行阻塞网络操作。
+
+`make_router` 的lifespan在宿主关闭时调用 `rank.close()`，取消未完成任务并关闭客户端和网络循环。宿主必须执行FastAPI lifespan；不通过此路由接入时，由宿主显式关闭服务。不要在每次请求中创建或关闭 `DesktopRank`，也不要复用已经关闭的实例。
 
 读取的是官网榜单自身的 `__loader=rank_<route>/page&__ssrDirect=true` 响应，非详情接口。响应可能直接返回JSON，也可能先给 `__deferred_promise:content`，再用 `data:` 块提供完整 `content`。仅在同一响应完整结束且结构通过验证后计算集数；缺块不得转查详情或猜测。
 

@@ -1,5 +1,6 @@
 import copy
 import json
+import socket
 import sys
 import threading
 import time
@@ -10,8 +11,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from desktop_rank import DesktopRank, parse_page, upstream_page, make_router
+from desktop_rank import DesktopRank, RankTransport, parse_page, make_router
 from fastapi import HTTPException, Request
+
+
+def upstream_page(board,page,client_factory=None):
+    transport=RankTransport(client_factory)
+    try:return transport.page(board,page)
+    finally:transport.close()
 
 
 def content():
@@ -158,6 +165,23 @@ class RankTests(unittest.TestCase):
                 self.assertLess(time.monotonic()-started,1)
         finally:server.shutdown();server.server_close();thread.join(2)
 
+    def test_deadline_does_not_join_stalled_dns(self):
+        import desktop_rank
+        import httpx
+        entered=threading.Event();release=threading.Event();original=socket.getaddrinfo
+        def stalled(host,*args,**kwargs):
+            if host in ('deadline.test',b'deadline.test'):
+                entered.set();release.wait(2);host='127.0.0.1'
+            return original(host,*args,**kwargs)
+        factory=lambda **options:httpx.AsyncClient(verify=desktop_rank._SSL_CONTEXT,trust_env=False,**options)
+        try:
+            with patch('socket.getaddrinfo',stalled),patch('desktop_rank.BASE','http://deadline.test:9'),patch('desktop_rank.TOTAL_SECONDS',.2):
+                started=time.monotonic()
+                with self.assertRaisesRegex(ValueError,'超时'):upstream_page('hot',1,factory)
+                self.assertTrue(entered.is_set())
+                self.assertLess(time.monotonic()-started,1)
+        finally:release.set()
+
     def test_invalid_requests_make_no_network_call(self):
         service=DesktopRank(lambda *args:self.fail('Unexpected network'))
         for args in [('unknown',1),('hot',0),('hot',6),('hot',True),('hot',1,'true')]:
@@ -175,6 +199,7 @@ class RankTests(unittest.TestCase):
             def __init__(self,**kwargs):options.append(kwargs)
             async def __aenter__(self):return self
             async def __aexit__(self,*args):pass
+            async def aclose(self):pass
             def stream(self,*args,**kwargs):calls.append((args,kwargs));return Reply()
         upstream_page('hot',2,Client)
         self.assertEqual(len(calls),1)
@@ -197,6 +222,35 @@ class RankTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as raised:endpoint(request(headers),board,1,False)
             self.assertEqual(raised.exception.status_code,code)
         self.assertEqual(len(calls),1)
+
+    def test_transport_reuses_client_and_loop_and_closes_with_router(self):
+        import asyncio
+        loops=[];created=[];closed=[]
+        class Reply:
+            status_code=200
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
+            def raise_for_status(self):pass
+            async def aiter_bytes(self,size):yield payload().encode()
+        class Client:
+            def __init__(self,**kwargs):created.append(1)
+            async def aclose(self):closed.append(1)
+            def stream(self,*args,**kwargs):
+                loops.append(asyncio.get_running_loop());return Reply()
+        service=DesktopRank(client_factory=Client)
+        router=make_router(service)
+        async def run():
+            async with router.lifespan_context(None):
+                self.assertEqual(service.page('hot',1)[0]['episodeCount'],162)
+                self.assertEqual(service.page('hot',1,True)[0]['episodeCount'],162)
+        try:asyncio.run(run())
+        finally:service.close()
+        self.assertEqual(len(created),1)
+        self.assertEqual(loops,[loops[0],loops[0]])
+        self.assertEqual(closed,[1])
+        self.assertFalse(service.transport.thread.is_alive())
+        self.assertTrue(service.transport.loop.is_closed())
+        with self.assertRaisesRegex(ValueError,'已关闭'):service.page('hot',1,True)
 
 
 if __name__=='__main__':unittest.main()
