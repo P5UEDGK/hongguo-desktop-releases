@@ -41,3 +41,9 @@ python -X utf8 -m unittest discover -s contributions/desktop-danmaku-backend/tes
 ```pwsh
 pwsh -NoProfile -Command "python contributions/desktop-danmaku-backend/tests/verify_mpv.py --native-package contributions/desktop-native-playback --dll <verified-libmpv-dll>"
 ```
+
+## 原生依赖补丁适配（2026-10-13）
+
+两个原生补丁按 #204 最新硬解策略与快速交接源码重新生成上下文：保留格式解码选择、控制唤醒、播放前声音设置及有界 EOF 轮询，不覆盖这些 owner 行。弹幕模块、设置、轨道刷新及协议行为没有变化。接入顺序为 #204 → 本包两个补丁 → #213 前端桥 → #210 布局补丁；本包也可在未接 #213 时应用。组合补丁逐个 `git apply --check` 通过，弹幕 12 项与组合位图协议 5 项通过。
+
+本次依赖 #204 提交 `eb18a03a936056f0e6a4b39c602ff11c04c59dc8`。后端接线顺序：#204 → #212 → #207 → #210；前端接线顺序：#204 → #207 → #213 → #210。请使用本轮同步后的补丁与基线，不能混用旧补丁。

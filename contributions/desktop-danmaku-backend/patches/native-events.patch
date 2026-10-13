@@ -1,29 +1,18 @@
 --- a/contributions/desktop-native-playback/src/frontend-native.js
 +++ b/contributions/desktop-native-playback/src/frontend-native.js
-@@ -61,5 +61,6 @@
-     clearTimeout(timer); clearTimeout(controlTimer);
+@@ -65,2 +65,3 @@
      resize?.disconnect();
 +    media.removeEventListener('desktopdanmaku', updateDanmaku);
      document.removeEventListener('fullscreenchange', layout);
-     document.removeEventListener('visibilitychange', layout);
-     stage?.classList.remove('desktop-native-playback');
-@@ -124,6 +125,10 @@
-       if (Object.keys(pending).length && !disposed && native) controlTimer = setTimeout(flush, 250);
-     }
+@@ -130,2 +131,6 @@
    }
 +  function updateDanmaku() {
 +    queue({danmaku: media.desktopDanmaku || [], danmakuSettings: media.desktopDanmakuSettings ||
 +      {opacity:80, lanes:3, fontSize:28, duration:14}});
 +  }
    function layout() {
-     if (!native || !stage) return;
-     const rect = media.getBoundingClientRect(), scale = window.devicePixelRatio || 1;
-@@ -190,6 +195,8 @@
-     resize = new ResizeObserver(layout); resize.observe(media);
-     document.addEventListener('fullscreenchange', layout);
+@@ -194,2 +199,4 @@
      document.addEventListener('visibilitychange', layout);
 +    media.addEventListener('desktopdanmaku', updateDanmaku);
 +    updateDanmaku();
      layout();
-   }
-   async function poll(ownGeneration) {
