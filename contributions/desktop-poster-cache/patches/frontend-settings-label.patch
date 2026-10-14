@@ -1,0 +1,9 @@
+--- a/src/frontend-cache-settings.js
++++ b/src/frontend-cache-settings.js
+@@ -113,5 +113,5 @@
+     ]}),
+     b.jsxs("div", {style:row, children:[
+-      b.jsx("label", {htmlFor:"video-cache-directory", style:label, children:"视频缓存目录"}),
++      b.jsx("label", {htmlFor:"video-cache-directory", style:label, children:"缓存目录（视频和图片）"}),
+       b.jsx("input", {id:"video-cache-directory", value:draftDirectory, onChange:event=>setDraftDirectory(event.target.value), onBlur:()=>setDirectory(draftDirectory), disabled:busy||!loaded, style:{...field, flex:"3 1 280px"}}),
+       b.jsx("button", {type:"button", style:button, onClick:choose, disabled:busy||!loaded, children:"选择目录"}),

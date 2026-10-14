@@ -1,0 +1,40 @@
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -209,5 +209,5 @@
+         # 管理/统计: 由各自处理器用 ADMIN_TOKEN 校验
+         pass
+-    elif path not in _EXEMPT and not (os.environ.get("HONGGUO_SESSION_API_KEY") and path in ("/desktop/cache-settings", "/desktop/cache-settings/choose", "/desktop/cache-settings/clear", "/desktop/library", "/desktop/library/relations", "/desktop/library/manual")):
++    elif path not in _EXEMPT and not (os.environ.get("HONGGUO_SESSION_API_KEY") and path in ("/desktop/cache-settings", "/desktop/cache-settings/choose", "/desktop/cache-settings/clear", "/desktop/library", "/desktop/library/relations", "/desktop/library/manual", "/desktop/library/covers")):
+         key = request.headers.get("x-api-key") or request.query_params.get("api_key") or ""
+         if not _keys.is_valid(key):            # 强制: 必须有效密钥
+@@ -613,5 +613,9 @@
+     app.include_router(make_cache_settings_router(_desktop_cache_settings))
+     from desktop_library import LibraryRelations, make_router as make_library_router
+-    _desktop_library_relations = LibraryRelations(os.environ["HONGGUO_BACKEND_DATA_DIR"], H)
++    from desktop_posters import PosterCache
++    _desktop_posters = PosterCache(_desktop_cache_settings.active_root, lambda url: api_img(url).body)
++    if (Path(os.environ["HONGGUO_BACKEND_DATA_DIR"]) / "poster-cache-v1").is_dir():
++        _desktop_posters.seed_from(PosterCache(os.environ["HONGGUO_BACKEND_DATA_DIR"], lambda url: api_img(url).body))
++    _desktop_library_relations = LibraryRelations(os.environ["HONGGUO_BACKEND_DATA_DIR"], H, posters=_desktop_posters)
+     app.include_router(make_library_router(_desktop_library_relations))
+     _desktop_budgets = {}
+@@ -730,5 +734,7 @@
+         changed = os.path.normcase(value['directory']) != os.path.normcase(_desktop_cache_settings.active_root)
+         cache = None
++        posters = None
+         if changed:
++            posters = _desktop_posters.prepare_directory(value['directory'])
+             streams, work, _ = _desktop_cache_settings.startup_paths(_desktop_jobs.root, value)
+             cache = PlayableEpisodeCache(streams / '.desktop-playable-v1', encoder=encode_hls,
+@@ -738,7 +744,10 @@
+             work = work.resolve(strict=True)
+         def apply():
+-            global STREAM_CACHE
++            global STREAM_CACHE, _desktop_posters
+             with _desktop_jobs.guard:
+                 if changed:
++                    _desktop_posters.activate(posters)
++                    _desktop_posters = posters
++                    _desktop_library_relations.posters = posters
+                     STREAM_CACHE = str(streams)
+                     os.environ['HONGGUO_STREAM_CACHE'] = str(streams)

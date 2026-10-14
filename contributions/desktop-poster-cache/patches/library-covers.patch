@@ -1,0 +1,186 @@
+--- a/backend/desktop_library.py
++++ b/backend/desktop_library.py
+@@ -1,12 +1,16 @@
+ """Persistent series relationships. Native favorites/history remain their own owner."""
+ import re
++import json
+ import secrets
+ import sqlite3
+ import threading
+ import time
++from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+ from contextlib import contextmanager
+ from pathlib import Path
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Request
++from fastapi.responses import StreamingResponse
++from desktop_posters import cover_url
+ 
+ IDENTITY = re.compile(r"[0-9]{8,24}").fullmatch
+@@ -20,8 +24,9 @@
+ 
+ class LibraryRelations:
+-    def __init__(self, directory, provider, clock=time.time):
++    def __init__(self, directory, provider, clock=time.time, posters=None):
+         self.path = Path(directory) / "library-relations.sqlite3"
+         self.path.parent.mkdir(parents=True, exist_ok=True)
+         self.provider, self.clock = provider, clock
++        self.posters = posters
+         self.guard = threading.RLock()
+         self.request_token = secrets.token_hex(32)
+@@ -31,4 +36,5 @@
+                        "album_id TEXT, season INTEGER, title TEXT NOT NULL, state TEXT NOT NULL, retry_at INTEGER NOT NULL)")
+             db.execute("CREATE TABLE IF NOT EXISTS manual_groups (series_id TEXT PRIMARY KEY, group_id TEXT NOT NULL)")
++            db.execute("CREATE TABLE IF NOT EXISTS poster_urls (series_id TEXT PRIMARY KEY, url TEXT NOT NULL)")
+ 
+     @contextmanager
+@@ -42,6 +48,9 @@
+ 
+     def snapshot(self):
+-        with self.guard, self.connect() as db:
+-            rows = db.execute("SELECT series_id,album_id,season,title,state,retry_at FROM relations").fetchall()
++        # WAL readers must not wait behind an unrelated remote detail lookup.
++        with self.connect() as db:
++            db.execute("BEGIN")
++            rows = db.execute("SELECT r.series_id,r.album_id,r.season,r.title,r.state,r.retry_at,p.url FROM relations r "
++                              "LEFT JOIN poster_urls p ON p.series_id=r.series_id").fetchall()
+             manual = dict(db.execute("SELECT series_id,group_id FROM manual_groups").fetchall())
+         return {"relations": [self.row(row) for row in rows], "manual": manual}
+@@ -49,7 +58,7 @@
+     @staticmethod
+     def row(row):
+-        return dict(zip(("seriesId", "albumId", "season", "title", "state", "retryAt"), row))
+-
+-    def resolve(self, ids):
++        return dict(zip(("seriesId", "albumId", "season", "title", "state", "retryAt", "coverUrl"), row))
++
++    def resolve(self, ids, require_covers=False):
+         if not isinstance(ids, list) or not 1 <= len(ids) <= 100 or any(type(sid) is not str or not identity(sid) for sid in ids):
+             raise ValueError("每次最多查询100个有效剧集 ID")
+@@ -60,7 +69,9 @@
+             now = int(self.clock())
+             cached = {row[0]: self.row(row) for row in db.execute(
+-                "SELECT series_id,album_id,season,title,state,retry_at FROM relations WHERE series_id IN ("
++                "SELECT r.series_id,r.album_id,r.season,r.title,r.state,r.retry_at,p.url FROM relations r "
++                "LEFT JOIN poster_urls p ON p.series_id=r.series_id WHERE r.series_id IN ("
+                 + ",".join("?" for _ in ids) + ")", ids)}
+-            todo = [sid for sid in ids if sid not in cached or cached[sid]["retryAt"] and cached[sid]["retryAt"] <= now]
++            todo = [sid for sid in ids if sid not in cached or cached[sid]["retryAt"] and cached[sid]["retryAt"] <= now
++                    or require_covers and not cached[sid].get("coverUrl")]
+             for start in range(0, len(todo), 20):
+                 batch = todo[start:start + 20]
+@@ -77,4 +88,6 @@
+                     actual = identity(vd.get("series_id_str")) or identity(vd.get("series_id"))
+                     valid = actual == sid and isinstance(vd.get("series_title"), str) and bool(vd["series_title"])
++                    if not valid and sid in cached and cached[sid]["state"] != "failed":
++                        continue  # A cover backfill failure must not discard a known relationship.
+                     album = identity(vd.get("related_album_id")) if valid else None
+                     season = vd.get("season_index") if valid else None
+@@ -83,10 +96,81 @@
+                     row = (sid, album, season, vd["series_title"][:500] if valid else "",
+                            "resolved" if valid and album else "ungrouped" if valid else "failed",
+-                           0 if album else now + (86400 if valid else 300))
+-                    db.execute("INSERT INTO relations VALUES (?,?,?,?,?,?) ON CONFLICT(series_id) DO UPDATE SET "
++                           0 if album else now + (86400 if valid else 300),
++                           cover_url(vd.get("series_cover")) if valid else None)
++                    db.execute("INSERT INTO relations (series_id,album_id,season,title,state,retry_at) VALUES (?,?,?,?,?,?) ON CONFLICT(series_id) DO UPDATE SET "
+                         "album_id=excluded.album_id,season=excluded.season,title=excluded.title,"
+-                        "state=excluded.state,retry_at=excluded.retry_at", row)
++                        "state=excluded.state,retry_at=excluded.retry_at", row[:6])
++                    if row[6]:
++                        db.execute("INSERT INTO poster_urls VALUES (?,?) ON CONFLICT(series_id) DO UPDATE SET url=excluded.url", (sid,row[6]))
++                    if not row[6] and sid in cached:
++                        row = (*row[:6], cached[sid].get("coverUrl"))
+                     cached[sid] = self.row(row)
+             return {"relations": [cached[sid] for sid in ids]}
++
++    def covers(self, ids, local_only=False):
++        if not isinstance(ids, list) or not 1 <= len(ids) <= 20 or any(type(sid) is not str or not identity(sid) for sid in ids):
++            raise ValueError("每次最多读取20张有效剧集封面")
++        if type(local_only) is not bool:
++            raise ValueError("localOnly 必须为布尔值")
++        posters = self.posters
++        if posters is None:
++            raise OSError("封面缓存尚未就绪")
++        ids = list(dict.fromkeys(ids))
++        result = {sid: data for sid in ids if (data := posters.read(sid))}
++        local_hits = len(result)
++        initial = {"covers": result, "missing": [sid for sid in ids if sid not in result], "localHits": local_hits}
++        if not local_only:
++            for update in self.cover_updates(ids, initial, posters):
++                result.update(update["covers"])
++            initial["missing"] = [sid for sid in ids if sid not in result]
++        return initial
++
++    def cover_updates(self, ids, initial=None, posters=None):
++        """Publish disk hits first, then each download in completion order."""
++        posters = posters or self.posters
++        initial = initial if initial is not None else self.covers(ids, local_only=True)
++        # A request can become warm between the local probe and the stream.
++        # Keep each frame within the same single-image bound as downloads.
++        if initial["covers"]:
++            for sid, data in initial["covers"].items():
++                yield {**initial, "covers": {sid: data}}
++        else:
++            yield initial
++        missing = [sid for sid in initial["missing"] if posters.ready_to_fetch(sid)]
++        if not missing:
++            return
++        # Known image URLs are read through WAL without the relationship lock.
++        # A background relationship lookup (or an unknown sibling in this batch)
++        # must not hold up downloads that already have an address.
++        with self.connect() as db:
++            known = {sid: url for sid, url in db.execute(
++                "SELECT series_id,url FROM poster_urls WHERE series_id IN ("
++                + ",".join("?" for _ in missing) + ")", missing) if cover_url(url)}
++        unknown = [sid for sid in missing if sid not in known]
++        with ThreadPoolExecutor(max_workers=6) as pool:
++            work = {pool.submit(self._fetch_cover, posters, {"seriesId": sid, "coverUrl": url}): sid
++                    for sid, url in known.items()}
++            metadata = pool.submit(self.resolve, unknown, require_covers=True) if unknown else None
++            if metadata is not None:
++                work[metadata] = None
++            while work:
++                completed, _ = wait(work, return_when=FIRST_COMPLETED)
++                for future in completed:
++                    sid = work.pop(future)
++                    if future is metadata:
++                        for row in future.result()["relations"]:
++                            work[pool.submit(self._fetch_cover, posters, row)] = row["seriesId"]
++                    else:
++                        data = future.result()
++                        yield {"covers": {sid: data} if data else {}, "missing": [] if data else [sid]}
++
++    def _fetch_cover(self, posters, row):
++        sid = row["seriesId"]
++        data = posters.get(sid, row.get("coverUrl"))
++        if not data and row.get("coverUrl"):
++            # Keep the shared cooldown, but refresh an expired URL on retry.
++            with self.connect() as db:
++                db.execute("DELETE FROM poster_urls WHERE series_id=? AND url=?", (sid, row["coverUrl"]))
++        return data
+ 
+     def set_manual(self, sid, target):
+@@ -138,3 +222,22 @@
+             raise HTTPException(400, str(error)) from None
+ 
++    @router.post("/covers", dependencies=[Depends(check)])
++    def covers(value: dict):
++        try:
++            ids, local_only, stream = value.get("seriesIds"), value.get("localOnly", False), value.get("stream", False)
++            if type(local_only) is not bool:
++                raise ValueError("localOnly 必须为布尔值")
++            if type(stream) is not bool:
++                raise ValueError("stream 必须为布尔值")
++            if stream and not local_only:
++                initial = service.covers(ids, local_only=True)
++                updates = service.cover_updates(ids, initial)
++                return StreamingResponse((json.dumps(part, separators=(",", ":")) + "\n" for part in updates),
++                    media_type="application/x-ndjson", headers={"Cache-Control": "no-store"})
++            return service.covers(ids, local_only)
++        except ValueError as error:
++            raise HTTPException(400, str(error)) from None
++        except (sqlite3.Error, OSError):
++            raise HTTPException(503, "封面缓存暂时不可用") from None
++
+     return router
