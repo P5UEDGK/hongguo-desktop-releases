@@ -1,0 +1,109 @@
+--- a/backend/desktop_stream.py
++++ b/backend/desktop_stream.py
+@@ -20,11 +20,23 @@
+     pass
+ 
+ 
++class EndpointUnavailable(SourceReadError):
++    pass
++
++
+ class ProgressiveSource:
+     block_size = 65536
+     max_blocks = 256  # 16 MiB per active source; no persistent partial files.
+ 
+-    def __init__(self, url, *, request, identity, key=None, size=0):
++    def __init__(self, url, *, request, identity, key=None, size=0, backup_urls=()):
++        urls = list(dict.fromkeys([url, *backup_urls]))
++        if len(urls) > 4:
++            raise ValueError("Media endpoint budget exceeded")
++        for endpoint in urls:
++            candidate = urlsplit(endpoint)
++            if (candidate.scheme not in ("http", "https") or not candidate.hostname
++                    or candidate.username or candidate.password or candidate.fragment):
++                raise ValueError("Invalid provider media endpoint")
+         parts = urlsplit(url)
+         if (parts.scheme not in ("http", "https") or not parts.hostname
+                 or parts.username or parts.password or parts.fragment):
+@@ -32,6 +44,8 @@
+         if key is not None and not re.fullmatch(r"[0-9a-fA-F]{32}", key):
+             raise ValueError("Invalid media encryption configuration")
+         self._url, self._request, self._key = url, request, key
++        self._urls, self._url_index = urls, 0
++        self._switched = False
+         self.identity = str(identity)
+         self.path_hash = hashlib.sha256((parts.netloc + parts.path).encode()).hexdigest()
+         self.size = int(size or 0)
+@@ -80,17 +94,25 @@
+                 headers["If-Range"] = self.if_range
+             try:
+                 self.reading.set()
+-                for attempt in range(3):
++                attempt = 0
++                while True:
+                     if cancelled():
+                         raise InterruptedError("Media read cancelled")
+                     try:
+                         value, total, validator = self._range(start, end, headers, cancelled)
+                         break
++                    except EndpointUnavailable:
++                        if not self._next_endpoint(headers):
++                            raise
+                     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                             requests.exceptions.ChunkedEncodingError):
+                         if cancelled():
+                             raise InterruptedError("Media read cancelled")
+-                        if attempt == 2:
++                        if self._next_endpoint(headers):
++                            attempt = 0
++                            continue
++                        attempt += 1
++                        if attempt >= 3:
+                             raise
+                         # Keep the player in its cache/buffering path. Do not
+                         # poison the source for a recoverable transport stall.
+@@ -103,6 +125,7 @@
+                     raise InterruptedError("Media read cancelled")
+                 with self.guard:
+                     self.size, self.validator = total, validator
++                    self._switched = False
+                     self.blocks[index] = value
+                     if index not in self.seen:
+                         self.seen.add(index)
+@@ -118,11 +141,25 @@
+             finally:
+                 self.reading.clear()
+ 
++    def _next_endpoint(self, headers):
++        if self._url_index + 1 >= len(self._urls):
++            return False
++        self._url_index += 1
++        self._url = self._urls[self._url_index]
++        self._switched = True
++        # If-Range validators belong to an endpoint. Verify object identity
++        # below before exposing any bytes from a different endpoint.
++        headers.pop("If-Range", None)
++        self.if_range = None
++        return True
++
+     def _range(self, start, end, headers, cancelled):
+         response = None
+         try:
+             response = self._request("GET", self._url, headers=headers,
+                                      stream=True, timeout=(3, 10))
++            if response.status_code in (403, 404, 410) or response.status_code >= 500:
++                raise EndpointUnavailable("Provider endpoint unavailable")
+             match = re.fullmatch(r"bytes ([0-9]+)-([0-9]+)/([0-9]+)",
+                                  response.headers.get("Content-Range", ""))
+             if response.status_code != 206 or not match:
+@@ -132,6 +169,10 @@
+                     or not 0 < total <= 2 * 1024 ** 3 or self.size and self.size != total):
+                 raise SourceReadError("Invalid provider byte range")
+             validator = response.headers.get("ETag") or response.headers.get("Last-Modified")
++            if self._switched and self.seen and not (
++                    self.validator and self.validator.startswith('"')
++                    and response.headers.get("ETag") == self.validator):
++                raise SourceReadError("Backup media identity not proven")
+             if self.validator and validator != self.validator:
+                 raise SourceReadError("Provider media changed")
+             data = bytearray()

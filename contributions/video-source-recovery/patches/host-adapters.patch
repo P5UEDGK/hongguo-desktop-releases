@@ -1,0 +1,162 @@
+--- a/backend/hongguo.py
++++ b/backend/hongguo.py
+@@ -504,7 +504,9 @@
+     normalized = []
+     for source in tracks:
+         track = dict(source)
+-        for field in ("main_url", "backup_url"):
++        fields = ["main_url", "backup_url"] + [name for name in track
++                  if name.startswith("backup_url_") and name[11:].isdigit()]
++        for field in fields:
+             value = track.get(field)
+             if not value:
+                 continue
+@@ -531,82 +533,37 @@
+     return normalized
+ 
+ 
++from desktop_video_resolver import VideoModelResolver, media_urls
++_video_resolver = VideoModelResolver(lambda *a, **kw: api(*a, **kw), empty_error=UpstreamResponseError)
++
++def get_video_models(vids, force=False):
++    """Shared bounded model cache and batch-to-single resolution."""
++    return _video_resolver.resolve(vids, force=force)
++
+ def get_video_urls(vids, force=False):
+-    """批量取视频直链。返回 {vid: {"url":, "size":, "definition":}}
+-    每个vid的直链缓存5小时(url_expire约6h),命中则不重复调video_model,大幅降低风控。
+-    force=True 跳过缓存强制重取(续传时直链过期用)。"""
++    """Return best URLs using the shared model resolver and expiry-aware cache."""
+     out = {}
+-    todo = []
+-    for v in vids:
+-        c = None if force else SG.cache_get(SG.cache_key("vmodel", str(v)))
+-        if c is not None:
+-            out[str(v)] = c
+-        else:
+-            todo.append(v)
+-    # 只对未缓存的分批请求,每批5个(贴近app真实批量大小)
+-    for i in range(0, len(todo), 5):
+-        batch = [str(v) for v in todo[i:i+5]]
+-        body = {"biz_param": {"detail_page_version": 0, "device_level": 3,
+-                              "disable_digg_stat": False, "disable_video_relate_book": False,
+-                              "need_all_video_definition": True, "need_mp4_align": False,
+-                              "use_os_player": False, "use_server_dns": False, "video_platform": 1024},
+-                "mixed_video_id_map": {"1": batch}}
+-        j = api("POST", "/novel/player/multi_video_model/v1/", body=body)
+-        for vid, v in (j.get("data") or {}).items():
+-            vm = v.get("video_model")
+-            if not vm:
+-                continue
+-            vmj = json.loads(vm)
+-            best = None
+-            for item in video_model_tracks(vmj):
+-                meta = item.get("video_meta", {})
+-                size = meta.get("size", 0)
+-                if best is None or size > best["size"]:
+-                    best = {"url": item.get("main_url"), "backup": item.get("backup_url"),
+-                            "size": size, "definition": meta.get("definition", "?"),
+-                            "shape": {key: type(item[key]).__name__ for key in
+-                                      ("video_meta", "encrypt_info", "main_url", "size", "definition", "codec_type", "vwidth", "vheight", "encrypt", "spade_a", "file_hash") if key in item},
+-                            "url_is_http": str(item.get("main_url", "")).startswith(("https://", "http://"))}
+-            if best:
+-                out[vid] = best
+-                SG.cache_set(SG.cache_key("vmodel", vid), best, ttl=18000)  # 直链缓存5小时
++    for vid, tracks in get_video_tracks(vids, force=force).items():
++        best = max(tracks, key=lambda t: (t.get("video_meta") or {}).get("size", 0), default=None)
++        if best:
++            meta = best.get("video_meta") or {}
++            urls = media_urls(best)
++            out[vid] = {"url": urls[0] if urls else None,
++                        "backup": urls[1] if len(urls) > 1 else None,
++                        "size": meta.get("size", 0), "definition": meta.get("definition", "?")}
+     return out
+ 
+ 
+ def get_video_tracks(vids, force=False, batch_size=5):
+-    """批量取每个vid的完整 video_list 轨道(含 main_url/backup_url/video_meta/encrypt_info.spade_a)。
+-    与 get_video_urls 不同: 保留 spade_a(离线解密必需) 和全部清晰度轨道(供选清晰度)。
+-    一次 5 个 vid(app 真实批量大小)→ 5 集只签 1 次, 大幅降签名/节流/风控压力。
+-    按 vid 缓存 5h(main_url url_expire 约6h); force=True 跳过缓存(URL过期续传用)。
+-    返回 {vid(str): [track,...]}; 未返回的 vid 不在结果里(调用方自行回退)。"""
+-    out, todo, seen = {}, [], set()
+-    for v in vids:
+-        v = str(v)
+-        if v in seen:
+-            continue
+-        seen.add(v)
+-        c = None if force else SG.cache_get(SG.cache_key("vmtracks", v))
+-        if c is not None:
+-            out[v] = c
+-        else:
+-            todo.append(v)
++    """Normalize shared models; no independent fixed-five-hour URL cache."""
++    ids = list(dict.fromkeys(str(v) for v in vids))
++    out = {}
+     bs = max(1, min(int(batch_size or 5), 5))
+-    for i in range(0, len(todo), bs):
+-        batch = todo[i:i+bs]
+-        body = {"biz_param": {"detail_page_version": 0, "device_level": 3,
+-                              "disable_digg_stat": False, "disable_video_relate_book": False,
+-                              "need_all_video_definition": True, "need_mp4_align": False,
+-                              "use_os_player": False, "use_server_dns": False, "video_platform": 1024},
+-                "mixed_video_id_map": {"1": batch}}
+-        j = api("POST", "/novel/player/multi_video_model/v1/", body=body)
+-        for vid, v in (j.get("data") or {}).items():
+-            vm = v.get("video_model")
+-            if not vm:
+-                continue
+-            tracks = video_model_tracks(json.loads(vm))
++    for i in range(0, len(ids), bs):
++        for vid, model in get_video_models(ids[i:i+bs], force=force).items():
++            tracks = video_model_tracks(model)
+             if tracks:
+-                out[str(vid)] = tracks
+-                SG.cache_set(SG.cache_key("vmtracks", str(vid)), tracks, ttl=18000)
++                out[vid] = tracks
+     return out
+ 
+ 
+--- a/backend/offline_dl.py
++++ b/backend/offline_dl.py
+@@ -73,16 +73,8 @@
+ 
+ # ---------- API + 下载解密 ----------
+ def _video_model(vid):
+-    body = {"biz_param": {"detail_page_version": 0, "device_level": 3, "disable_digg_stat": False,
+-                          "disable_video_relate_book": False, "need_all_video_definition": True,
+-                          "need_mp4_align": False, "use_os_player": False, "use_server_dns": False,
+-                          "video_platform": 1024},
+-            "mixed_video_id_map": {"1": [str(vid)]}}
+-    d = H.api("POST", "/novel/player/multi_video_model/v1/", body=body).get("data", {})
+-    v = d.get(str(vid)) or (list(d.values())[0] if d else None)
+-    if not v or not v.get("video_model"):
+-        return None
+-    return json.loads(v["video_model"])
++    return H.get_video_models([str(vid)]).get(str(vid))
++
+ 
+ def _defn(t):
+     return ((t.get("video_meta") or {}).get("definition") or "").lower()
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -44,7 +44,8 @@
+         return None
+     enc = tr.get("encrypt_info") or {}
+     meta = tr.get("video_meta") or {}
+-    return {"url": tr.get("main_url"), "spade_a": enc.get("spade_a"),
++    urls = H.media_urls(tr)
++    return {"url": urls[0] if urls else None, "backup_urls": urls[1:], "spade_a": enc.get("spade_a"),
+             "encrypt": bool(enc.get("encrypt")),
+             "definition": meta.get("definition") or defn, "size": meta.get("size", 0)}
+ 
+@@ -160,7 +161,8 @@
+         if key is None:
+             raise HTTPException(503, "Media encryption configuration unavailable")
+     return ProgressiveSource(track["url"], request=H.http_request,
+-                             identity=str(vid) + ":desktop-resolution-v1", key=key)
++                             identity=str(vid) + ":desktop-resolution-v1", key=key,
++                             size=track.get("size", 0), backup_urls=track.get("backup_urls", ()))
+ 
+ urllib3.disable_warnings()
+ app = FastAPI(title="红果短剧 API", version="1.0")
