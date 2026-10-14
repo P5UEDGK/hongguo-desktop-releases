@@ -8,6 +8,37 @@ assert.equal(parseSeasonTitle(title).base,title);
 assert.equal(parseSeasonTitle(title+'第二季').base,title);
 assert.deepEqual(seasonSearchQueries(title),[title,'谁说没灵根不能修仙的']);
 const seed={seriesId:'8800000000000002001',title,tags:['漫剧'],actors:[]};
+
+test('paired season parentheses support real title without changing its stored spelling',()=>{
+  for(const [suffix,season] of [['（第1季）',1],['(第12季)',12],['（第十二季）',12],['(第２季)',2],['（  第 2 季  ）',2],['（12季）',12]]) {
+    const original='凡尘问道'+suffix;
+    const parsed=parseSeasonTitle(original);
+    assert.equal(parsed?.base,'凡尘问道');assert.equal(parsed?.season,season);
+    assert.equal(parsed?.explicit,true);assert.deepEqual(seasonSearchQueries(original),['凡尘问道']);
+    assert.equal(original,'凡尘问道'+suffix);
+  }
+  assert.equal(parseSeasonTitle('凡尘问道（第1季）').key,parseSeasonTitle('凡尘问道第十二季').key);
+  assert.equal(parseSeasonTitle('凡尘问道（序章）第1季').base,'凡尘问道（序章）');
+  for(const invalid of ['凡尘问道（第1季)','凡尘问道(第1季）','凡尘问道（第1季','凡尘问道第1季）','（第1季）','凡尘问道（第0季）','凡尘问道（第99季）'])assert.equal(parseSeasonTitle(invalid),null,invalid);
+});
+
+test('wrapped season candidates share search and strict next-season validation',async()=>{
+  const first={...seed,title:'凡尘问道（第1季）'};
+  const second={...seed,seriesId:'8800000000000002002',title:'凡尘问道(第2季)'};
+  const third={...second,seriesId:'8800000000000002003',title:'凡尘问道（第3季）'};
+  const seen=[];const api={
+    searchNovelfm:async(query,page,mode)=>{seen.push(query);return {source:'novelfm',page,mode,hasMore:false,items:[second,third]};},
+    resolveSeasonCandidates:async(seed,items)=>({items,verified:items.length>0}),
+    validationEpisodes:async sid=>({seriesId:sid,title:second.title,total:50,episodes:[1]})
+  };
+  assert.deepEqual((await findOtherSeasons(api,first)).items,[second,third]);
+  assert.deepEqual(seen,['凡尘问道','凡尘问道']);seen.length=0;
+  const next=await findNextSeason(api,first);
+  assert.deepEqual(next.items,[{...second,episodeCount:50}]);assert.equal(next.automatic,true);
+  api.validationEpisodes=async sid=>({seriesId:sid,title:third.title,total:50,episodes:[1]});
+  assert.equal((await findNextSeason(api,first)).automatic,false);
+  assert.equal(first.title,'凡尘问道（第1季）');
+});
 const second={...seed,seriesId:'8800000000000002002',title:'谁说没灵根不能修仙的？之重登仙途第二季'};
 const calls=[];
 const api={

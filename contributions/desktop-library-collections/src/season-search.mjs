@@ -18,11 +18,13 @@ function VR(e) {
 function Ts(title) {
     if (typeof title !== "string") return null;
     const text = title.trim();
-    const explicit = text.match(/^(.*?)第?([一二两三四五六七八九十\d０-９]{1,3})季[\s！!。]*$/u);
+    const explicit = text.match(/^(.*?)（\s*第?\s*([一二两三四五六七八九十\d０-９]{1,3})\s*季\s*）[\s！!。]*$/u)
+        || text.match(/^(.*?)\(\s*第?\s*([一二两三四五六七八九十\d０-９]{1,3})\s*季\s*\)[\s！!。]*$/u)
+        || text.match(/^(.*?)第?([一二两三四五六七八九十\d０-９]{1,3})季[\s！!。]*$/u);
     const numbered = explicit ? null : text.match(/^(.*?[^\d０-９])([\d０-９]{1,2})$/u);
     const base = (explicit?.[1] || numbered?.[1] || text).trim();
     const season = explicit ? zR(explicit[2].normalize("NFKC")) : numbered ? Number(numbered[2].normalize("NFKC")) : 1;
-    return !base || base.length > 65 || season < 1 || season >= 99 || /第.+季|完结篇|合集|完整版|[上下]部/.test(base) ? null : {
+    return !base || base.length > 65 || season < 1 || season >= 99 || /[（(]$|第.+季|完结篇|合集|完整版|[上下]部/.test(base) ? null : {
         base: base,
         key: HR(base),
         season: season,
