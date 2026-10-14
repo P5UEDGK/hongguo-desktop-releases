@@ -1,0 +1,48 @@
+--- a/backend/desktop_hls_service.py
++++ b/backend/desktop_hls_service.py
+@@ -56,7 +56,8 @@
+ class HlsJobs:
+     def __init__(self, root, source_loader, *, encoder=encode_hls, max_jobs=4, max_workers=2, idle_seconds=300,
+                  on_start=None, before_work=None, on_finish=None, full_cache_ready=None, negotiation_seconds=12, native=None,
+-                 on_activate=None):
++                 on_activate=None, allow_season_prewarm=None):
++        self.allow_season_prewarm = allow_season_prewarm
+         self.root = Path(root).resolve(strict=True)
+         if not self.root.is_dir() or self.root.is_symlink():
+             raise ValueError("Desktop work directory is unavailable")
+@@ -139,8 +140,15 @@
+                 raise HTTPException(503, "Desktop sessions are closed")
+             if prewarm_parent is not None:
+                 parent = self.get(prewarm_parent)
+-                if (parent.prewarm_parent or parent.failed or parent.series_id != series_id
+-                        or parent.episode + 1 != episode or start_seconds or not negotiate_codec):
++                next_episode = parent.series_id == series_id and parent.episode + 1 == episode
++                next_season = False
++                if not next_episode and self.allow_season_prewarm is not None:
++                    try:
++                        next_season = self.allow_season_prewarm(parent, series_id, episode) is True
++                    except Exception:
++                        next_season = False
++                if (parent.prewarm_parent or parent.failed or not (next_episode or next_season)
++                        or start_seconds or not negotiate_codec):
+                     raise HTTPException(400, "Invalid standby identity")
+                 if any(item.prewarm_parent is not None for item in self.jobs.values()):
+                     raise HTTPException(409, "Standby already exists")
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -734,12 +734,15 @@
+             _desktop_prefetch.ahead = validate_ahead(_desktop_cache_settings.load()["ahead"])
+         return _desktop_prefetch.load_source(series_id, episode)
+ 
++    from desktop_season_playback import make_season_prewarm
++
+     _desktop_jobs = HlsJobs(
+         os.environ["HONGGUO_HLS_WORK_DIR"], _desktop_source,
+         encoder=_desktop_prefetch.encode, on_start=_desktop_prefetch.begin,
+         before_work=_desktop_prefetch.before_work, on_finish=_desktop_prefetch.finish,
+         full_cache_ready=lambda *args, **kwargs: _desktop_prefetch.cache.contains(*args, **kwargs), on_activate=_desktop_prefetch.promote,
+         native=NativeHost(),
++        allow_season_prewarm=make_season_prewarm(_desktop_prefetch, _desktop_library_relations),
+     )
+     _desktop_session_roots = {_desktop_jobs.root}
+ 

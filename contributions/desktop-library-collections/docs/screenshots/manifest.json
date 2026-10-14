@@ -1,0 +1,198 @@
+{
+  "capture": "新增2张为隔离Edge/Chromium中的完整候选React播放器、生产HLS/copy与真实12秒H264；剧集身份受控，不含个人片单。此前图片保留逐图范围，原图未修改。",
+  "images": [
+    {
+      "file": "before-inline-layout.png",
+      "sha256": "1d10335bdcd32d6db85db77eaeb6560f1affb8dcb04edc96736462e536fceda6",
+      "caption": "早期实现：当前页面直接展开合集，提示另占行。并非上游原版截图。"
+    },
+    {
+      "file": "favorites-root.png",
+      "sha256": "d88c98a29ef28b9397ffcfe309a3becc2e7d0197d7af904a83b4bd5bb484f2c9",
+      "caption": "收藏根页：合集与单季标志、合集季数、50%观看进度与条目统计。"
+    },
+    {
+      "file": "progress-labels.png",
+      "sha256": "eb6c6be9656e92311202aa74fdfed937d08821c4922589f3ef5a209d2751de8e",
+      "caption": "补齐后合集共13季，最近观看季进度单行显示，背景40%不透明度。"
+    },
+    {
+      "file": "single-season.png",
+      "sha256": "e1384007e4f60f282c289330396ce761621989d96c92457a0a9b385fb998698a",
+      "caption": "单季使用同一个系列页，只显示一季，进入页面不搜索。"
+    },
+    {
+      "file": "collection-page-two.png",
+      "sha256": "fc653021a03a447d705013912f86b594c6431304eb672cd0ef1310da51c36d80",
+      "caption": "13季合集的第二页，只有第13季；每页12季。"
+    },
+    {
+      "file": "play-details.png",
+      "sha256": "328a85ca6a5af6839cd1c40249979b21c621cb9a51b0f78aa507b34e93557c14",
+      "caption": "播放详情保留原播放与收藏操作，不再放补季面板。"
+    },
+    {
+      "file": "search-idle.png",
+      "sha256": "13df72a2297011f03677a4ee6cd5eb297e2baa8f181030a343c610991eaea771",
+      "caption": "空闲状态，提示位于按钮右侧。"
+    },
+    {
+      "file": "search-running.png",
+      "sha256": "5ceb6fdd0f994db9191e8b8006b012b6f2d1eef78090ff114aac6321fdd4d389",
+      "caption": "搜索中同排文字与取消按钮，季列表位置保持。"
+    },
+    {
+      "file": "search-verifying.png",
+      "sha256": "2e00b8b7342cd857809fa599d9c5a3f588063cd03bf84d952fb80711a76fbb56",
+      "caption": "候选核验中，只替换同一处文字。"
+    },
+    {
+      "file": "search-complete.png",
+      "sha256": "1e642bf215790b47f805a38cb6cb8759a2b9355c21f45de475ab89d19d8c566f",
+      "caption": "完成后同排显示加入、跳过与确认数量，并保留搜索可能不完整提示。"
+    },
+    {
+      "file": "search-error.png",
+      "sha256": "913c536214b438bf8c755e6d96829278f948f256149bbb7de234f3506dd1806b",
+      "caption": "失败提示保留在同一位置，不新增下方状态行。"
+    },
+    {
+      "file": "search-cancelling.png",
+      "sha256": "c75a5752b80d7c77fe6b7cb2de46073a635b9c6d2132b2126289c379d097b87b",
+      "caption": "取消中等待原生在途请求结束，再释放搜索槽。"
+    },
+    {
+      "file": "narrow-complete.png",
+      "sha256": "8c57e8fc7a442ed183e07bfcc750bcebd265556e552fe449e0a35bdbf9cdeb3c",
+      "caption": "640 CSS像素窗口：状态单行省略，季卡片两列；只验收本次区域，顶部既有控件挤压未修复。"
+    },
+    {
+      "file": "unified-favorites.png",
+      "sha256": "6dc25360892e051be4c7b571012e921c9c38988399b59ac3fcf79bd5434b6579",
+      "caption": "收藏：同一合集共13季，最近第11季已看80%。"
+    },
+    {
+      "file": "unified-history.png",
+      "sha256": "ef8fdfa1d86e162529bb3c9c63f3d05bafb2894e6e60e157853d2a2b4c4ea36b",
+      "caption": "历史：同一合集同为13季、同一封面与80%进度，原生历史仍只有7季。"
+    },
+    {
+      "file": "unified-history-open.png",
+      "sha256": "61877e5fe6797ed2b34a8968c923789eb525bdc0a5bca0cf01019771fc0fc52f",
+      "caption": "历史展开：包含全部13季；未观看的季如实标记，无删除历史按钮。"
+    },
+    {
+      "file": "unified-history-page-two.png",
+      "sha256": "9ec1cfaf78e9b90538a5373d52bfe5c1ff614dfdc3171b68addce1924597b8c0",
+      "caption": "历史分页：每页12季，第二页显示第13季。"
+    },
+    {
+      "file": "auto-new-season.png",
+      "sha256": "6d51496f76f338f91a454d1fcea0a2a4596b1e91e6ae7a80e575245afef6c683",
+      "caption": "本地新归入第14季后自动收藏，两页更新为14季。"
+    },
+    {
+      "file": "unified-history-narrow.png",
+      "sha256": "93278b65d0361f0f1aa7ab1c7b6c8cd8a45cabb2dad849ddc6f41e7777d11499",
+      "caption": "640 CSS像素：统一系列页与14季统计。"
+    },
+    {
+      "file": "unified-restart.png",
+      "sha256": "c6507fc1487ffcace82641d409042f734a11bcf740d787ad5e0a526498733e45",
+      "caption": "取消第14季收藏后重启：合集仍14季，收藏13条、真实历史8条，不自动恢复取消。"
+    },
+    {
+      "file": "punctuation-before.png",
+      "sha256": "96bd8d1b7754c40b5737a77c052bf274a58a3b56c74e0d61ab691e2e20741569",
+      "caption": "补齐前：中文问号与副标题完整显示，系列只有一季。"
+    },
+    {
+      "file": "punctuation-searching.png",
+      "sha256": "6171787026bd68ea190347e75e87dff105f23f392ef6991a884a834d07f505a5",
+      "caption": "补季等待：继续使用按钮右侧状态和取消入口，无顶部搜索横条。"
+    },
+    {
+      "file": "punctuation-completed.png",
+      "sha256": "7e8c9656f117eb47a5ea187cd546e8127576532c4d79c1ee855c82c51ce14b3d",
+      "caption": "补齐完成：同合集的不同副标题加入，关系未知仅显示人工收藏候选。"
+    },
+    {
+      "file": "punctuation-restart.png",
+      "sha256": "00b88a7b6b06ab7559c7b7fbc712b00e5cb9133a4a8cd3c0c007c5e46dac483e",
+      "caption": "重启后：中文问号与两季原标题完整保存，合集仍为两季。"
+    },
+    {
+      "file": "sorting-collection-name.png",
+      "sha256": "fae30288dd44047c1f19064d3fda3df2cb92abbe65282cc81595eaac95257867",
+      "caption": "合集显示“持械入宋”，各季原标题仍保留冒号。",
+      "scope": "本机真实目标合集，仅导航与读取"
+    },
+    {
+      "file": "sorting-seasons-desc.png",
+      "sha256": "a82b0c71d02b98c812801074670ae1971e4a9deb2f5c3d2dceec44a566f73d96",
+      "caption": "真实41季一次列出，默认季号倒序，主题选择框带粉色键盘焦点。",
+      "scope": "本机真实目标合集，仅偏好与导航"
+    },
+    {
+      "file": "sorting-all-seasons-bottom.png",
+      "sha256": "58aef652060b0c403fc7541f9bd352810d272129c9b8a2a7f7b4e6248df8d483",
+      "caption": "向下滚动到第1季，无合集内分页。",
+      "scope": "本机真实目标合集，仅偏好与导航"
+    },
+    {
+      "file": "sorting-seasons-narrow.png",
+      "sha256": "cf3076ee06f500727ec5076db6d58cdbb5f7acf866036d141c4d949856d88382",
+      "caption": "640 CSS像素：选择框和两列季卡片保持在窗口内。",
+      "scope": "本机真实目标合集，仅偏好与导航"
+    },
+    {
+      "file": "sorting-isolated-favorites-root.png",
+      "sha256": "cafaeaac7b430b669be31dab70a8c3568af7783715dad781e907e7005e3e7228",
+      "caption": "收藏根页：最近添加、名称正序/倒序共用主题选择框，无额外排序标签。",
+      "scope": "隔离原生profile，人工记录与默认封面"
+    },
+    {
+      "file": "sorting-isolated-history-root.png",
+      "sha256": "c959db61282ec18d5cc4d39c3252bdbcf4e6f54bd91cd6928c9b60cbe7c01a4a",
+      "caption": "历史根页：最近观看排序，仍只保存实际输入的一条历史。",
+      "scope": "隔离原生profile，人工记录与默认封面"
+    },
+    {
+      "file": "sorting-seasons-restart.png",
+      "sha256": "f3f504ecff82ad0d6e155723650590ae7f2c7b28220b20acef97c50d863e093f",
+      "caption": "重启后41季仍保存，最新季在前，排序偏好持久化。",
+      "scope": "本机真实目标合集，重启只读核验"
+    },
+    {
+      "file": "root-scroll-favorites.png",
+      "sha256": "ecd87a40b6118a1214a2f70a7d6bb68901098b0c862889ba5dfb3f42a2cc2e8c",
+      "caption": "收藏连续列表：首批显示与名称排序，卡片及观看进度保留。"
+    },
+    {
+      "file": "root-scroll-bottom.png",
+      "sha256": "b9e2a06b8d4c2e3c453b647513b3535daf4c6845f04ffcc59b0d84838056ff94",
+      "caption": "自动追加到第37个根条目，最后一批无页码或继续加载控件。"
+    },
+    {
+      "file": "root-scroll-history-narrow.png",
+      "sha256": "784e84c64194dce22a62c571f722e19221be3e8e96da56d76dbf3c134e324f44",
+      "caption": "620 CSS像素历史列表：两列卡片、原生移除历史入口与排序。顶部原有搜索区域拥挤仍不在本批范围。"
+    },
+    {
+      "file": "startup-restored-collection.png",
+      "sha256": "d63a588e06525e2216b1e7a35593ec15a67fe1c9f83c05061d7defa4f24c6318",
+      "caption": "启动顺序修复后：真实41季合集恢复，倒序与原标题保留。",
+      "scope": "实际安装版，真实目标合集，只读导航；收藏99/历史51前后内容一致"
+    },
+    {
+      "file": "cross-season-cache-ready.png",
+      "sha256": "88e80d0d8d1d4fa9b89b5a2d8c048f853dd3488da1f716be99263e3933b146b1",
+      "caption": "隔离真实H264/HLS/copy：本季播放期间下一季第1～3集完整缓存；缓存状态由同批JSON证明，图片仅展示实际播放器。"
+    },
+    {
+      "file": "cross-season-cache-playing.png",
+      "sha256": "44e8abbd1aa38f6fab7d156a0a3bc6f566076c6778f068ae3185fda268d58794",
+      "caption": "同一隔离React播放器自动进入下一季第1集，2x保留；无重复下载/转码由同批计数证明。"
+    }
+  ]
+}

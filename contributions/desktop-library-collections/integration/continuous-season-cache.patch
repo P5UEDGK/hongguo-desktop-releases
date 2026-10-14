@@ -1,0 +1,295 @@
+--- a/backend/desktop_prefetch.py
++++ b/backend/desktop_prefetch.py
+@@ -19,12 +19,18 @@
+ class EpisodePrefetcher:
+     def __init__(self, source_loader, episode_loader, cache_root, *, encoder,
+                  ahead=3, status_path=None, quota_bytes=2 * 1024 ** 3, download_loader=None,
+-                 profile_files=None, source_status=None, background_guard=None):
++                 profile_files=None, source_status=None, background_guard=None, next_season_loader=None):
+         if ahead is not None and (type(ahead) is not int or not 0 <= ahead <= 100000):
+             raise ValueError("Invalid prefetch window")
+         self.source_loader, self.episode_loader = source_loader, episode_loader
+         self.download_loader = download_loader or source_loader
+         self.background_guard = background_guard
++        self.next_season_loader = next_season_loader
++        self.continuation_enabled = False
++        self.continuation_epoch = 0
++        self.next_season = None
++        self.next_lookup = None
++        self.next_attempt = None
+         self.download_paused = False
+         self.conversion_paused = False
+         self.source_status = source_status or (lambda source: {"kind": "local", "complete": True})
+@@ -85,6 +91,10 @@
+             self.current_source = None
+             self.playback_mode = None
+             self.latest_episodes = []
++            self.continuation_enabled = False
++            self.continuation_epoch += 1
++            self.next_season = None
++            self.next_attempt = None
+             self.background_cancelled.set()
+             self.condition.notify_all()
+             generation = self.generation
+@@ -136,7 +146,7 @@
+                 self.current_source = source
+                 self.current_source_complete = source_complete
+                 seen = {vid}
+-                for index, future_vid in items:
++                for index, future_vid in self._sequence_items():
+                     if index > episode and future_vid not in seen and (self.ahead is None or len(self.download_pending) < self.ahead):
+                         self.download_pending.append((generation, index, future_vid))
+                         seen.add(future_vid)
+@@ -151,7 +161,107 @@
+                         self.downloader = None
+                 self.condition.notify_all()
+         self._report()
++        self._maybe_next_season()
+         return source
++
++    def _sequence_items(self):
++        # Positions are local to this generation, not episode numbers in a season.
++        # Keep latest_episodes unchanged for the host's strict season-end checks.
++        items = list(self.latest_episodes)
++        if self.continuation_enabled and self.ahead is not None and self.next_season and items:
++            offset = items[-1][0]
++            items.extend((offset + index, vid) for index, vid in self.next_season[1])
++        return items
++
++    def _selected_items(self):
++        if not self.current:
++            return []
++        result, seen = [], set()
++        for position, vid in self._sequence_items():
++            if position > self.current['episode'] and vid not in seen:
++                if self.ahead is not None and len(result) >= self.ahead:
++                    break
++                result.append((position, vid))
++                seen.add(vid)
++        return result
++
++    def _task_allowed(self, position):
++        return bool(self.current and (position == self.current['episode'] or
++                    any(index == position for index, _ in self._selected_items())))
++
++    def set_continuation(self, job, enabled):
++        if type(enabled) is not bool:
++            raise ValueError('Continuation must be boolean')
++        with self.condition:
++            if (self.closed or enabled and (job.cancelled.is_set() or job.failed) or
++                    getattr(job, 'prefetch_generation', None) != self.generation or
++                    self.current != {'seriesId': job.series_id, 'episode': job.episode}):
++                return False
++            if self.continuation_enabled != enabled:
++                self.continuation_epoch += 1
++                self.continuation_enabled = enabled
++            ahead = self.ahead
++        self.reconfigure(ahead)
++        return True
++
++    def _maybe_next_season(self):
++        with self.condition:
++            if (self.closed or not self.current or not self.continuation_enabled or
++                    self.next_season_loader is None or self.ahead is None or not self.ahead or
++                    not self.latest_episodes or self.next_season is not None or
++                    self.next_attempt == self.generation or self.next_lookup is not None or
++                    len(self._selected_items()) >= self.ahead):
++                return
++            generation, epoch, sid = self.generation, self.continuation_epoch, self.current['seriesId']
++            self.next_attempt = generation
++            worker = threading.Thread(target=self._load_next_season, args=(generation, epoch, sid),
++                                      name='desktop-next-season-metadata', daemon=True)
++            self.next_lookup = worker
++            try:
++                worker.start()
++            except RuntimeError:
++                self.next_lookup = None
++
++    def _load_next_season(self, generation, epoch, sid):
++        value, failed = None, False
++        try:
++            value = self.next_season_loader(sid)
++            if value:
++                next_id, metadata = value
++                if (not isinstance(next_id, str) or not re.fullmatch(r'[0-9]{8,24}', next_id)
++                        or next_id == sid):
++                    raise ValueError('Invalid next season identity')
++                prefix = []
++                for index, vid in self._episodes(metadata):
++                    if index != len(prefix) + 1:
++                        break
++                    prefix.append((index, vid))
++                if not prefix:
++                    raise ValueError("Next season first episode unavailable")
++                value = (next_id, prefix)
++        except Exception:
++            failed = True
++            value = None
++        finally:
++            with self.condition:
++                valid = (not self.closed and generation == self.generation and
++                         epoch == self.continuation_epoch and self.continuation_enabled)
++                if valid:
++                    self.next_season = value
++                    # Missing local relationship is cheap to recheck after the
++                    # existing finder confirms it; network errors remain bounded.
++                    if value is None and not failed:
++                        self.next_attempt = None
++                    if value:
++                        self.reconfigure(self.ahead)
++                elif self.continuation_enabled:
++                    self.next_attempt = None
++                self.next_lookup = None
++                ahead = self.ahead
++                changed_generation = generation != self.generation
++                self.condition.notify_all()
++            if not valid and (changed_generation or self.continuation_enabled):
++                self._maybe_next_season()
+ 
+     def promote(self, job, series_id, episode):
+         if job.cancelled.is_set():
+@@ -218,7 +328,7 @@
+             except Exception:
+                 source = None
+             with self.condition:
+-                if task[0] == self.generation and not self.closed:
++                if task[0] == self.generation and not self.closed and self._task_allowed(task[1]):
+                     if paused:
+                         self.download_pending.insert(0, task)
+                         self.download_paused = True
+@@ -273,7 +383,7 @@
+                                 or not (job.directory / "complete.marker").is_file()):
+                             selected.append((episode, current_vid))
+                     future_count = 0
+-                    for index, vid in self.latest_episodes:
++                    for index, vid in self._sequence_items():
+                         if index > episode and vid not in seen and (self.ahead is None or future_count < self.ahead):
+                             selected.append((index, vid))
+                             seen.add(vid)
+@@ -350,7 +460,7 @@
+                 except (OSError, ValueError):
+                     failed = True
+                 with self.condition:
+-                    if task[0] == self.generation and paused:
++                    if task[0] == self.generation and paused and self._task_allowed(task[1]):
+                         self.pending.insert(0, task)
+                         self.conversion_paused = True
+                     elif task[0] == self.generation and not cancelled:
+@@ -382,7 +492,7 @@
+                 return
+             episode = self.current['episode']
+             selected, seen = [], set()
+-            for index, vid in self.latest_episodes:
++            for index, vid in self._sequence_items():
+                 if index > episode and vid not in seen and (ahead is None or len(selected) < ahead):
+                     selected.append((index, vid)); seen.add(vid)
+             active_vid = self.download_active[2] if self.download_active else None
+@@ -415,9 +525,16 @@
+                             self.pending = []
+             self.condition.notify_all()
+ 
++        self._maybe_next_season()
++
+     def snapshot(self):
+         with self.condition:
+             source = self.current_source
++            total = self.latest_episodes[-1][0] if self.latest_episodes else 0
++            def target(position):
++                if position > total and self.next_season:
++                    return {'seriesId': self.next_season[0], 'episode': position - total}
++                return {'seriesId': self.current['seriesId'], 'episode': position} if self.current else None
+             result = {
+                 "schema": 2, "processId": os.getpid(), "ahead": self.ahead,
+                 "cacheKind": "original-media" if self.playback_mode == "native" else "complete-playable-hls",
+@@ -433,6 +550,11 @@
+                 "downloadPendingEpisodes": [task[1] for task in self.download_pending],
+                 "downloadActiveEpisode": self.download_active[1] if self.download_active else None,
+                 "capacityPaused": self.download_paused or self.conversion_paused,
++                "continuationEnabled": self.continuation_enabled,
++                "cacheTargets": [target(position) for position, _ in self._selected_items()],
++                "downloadPendingTargets": [target(task[1]) for task in self.download_pending],
++                "downloadCompletedTargets": [target(position) for position in self.download_completed],
++                "completedTargets": [target(position) for position in self.completed],
+                 "failureCode": "preparation-failed" if self.failed else None,
+                 "state": "closed" if self.closed else "preparing" if (
+                     self.foreground or self.pending or self.active or self.download_pending
+@@ -462,7 +584,7 @@
+         with self.condition:
+             return self.condition.wait_for(lambda: not self.foreground and not self.pending
+                                            and self.active is None and not self.download_pending
+-                                           and self.download_active is None, timeout=timeout)
++                                           and self.download_active is None and self.next_lookup is None, timeout=timeout)
+ 
+     def close(self):
+         with self.condition:
+--- a/backend/desktop_hls_service.py
++++ b/backend/desktop_hls_service.py
+@@ -56,7 +56,8 @@
+ class HlsJobs:
+     def __init__(self, root, source_loader, *, encoder=encode_hls, max_jobs=4, max_workers=2, idle_seconds=300,
+                  on_start=None, before_work=None, on_finish=None, full_cache_ready=None, negotiation_seconds=12, native=None,
+-                 on_activate=None, allow_season_prewarm=None):
++                 on_activate=None, allow_season_prewarm=None, on_continuation=None):
++        self.on_continuation = on_continuation
+         self.allow_season_prewarm = allow_season_prewarm
+         self.root = Path(root).resolve(strict=True)
+         if not self.root.is_dir() or self.root.is_symlink():
+@@ -306,6 +307,11 @@
+             for child in list(self.jobs.values()):
+                 if child.prewarm_parent == identifier:
+                     self.release(child.id)
++            if self.on_continuation:
++                try:
++                    self.on_continuation(job, False)
++                except Exception:
++                    pass  # Optional background work cannot block releasing playback.
+             job.cancelled.set()
+             if self.native:
+                 if self.native.release(identifier) is False:
+@@ -463,6 +469,20 @@
+         job.stream_key = request.headers["x-api-key"]
+         return {"id": job.id}
+ 
++    @router.post("/{identifier}/continuation")
++    def continuation(identifier: str, value: dict):
++        if (set(value) != {"enabled", "revision"} or type(value.get("enabled")) is not bool or
++                type(value.get("revision")) is not int or not 1 <= value['revision'] <= 9007199254740991):
++            raise HTTPException(400, "Invalid continuation setting")
++        with jobs.guard:
++            job = jobs.get(identifier)
++            if jobs.on_continuation is None:
++                raise HTTPException(503, "Continuation cache unavailable")
++            if value['revision'] <= getattr(job, 'continuation_revision', 0):
++                return {"accepted": False}
++            job.continuation_revision = value['revision']
++            return {"accepted": jobs.on_continuation(job, value["enabled"]) is True}
++
+     @router.api_route("/{identifier}/source.mp4", methods=["GET", "HEAD"])
+     def media_source(identifier: str, request: Request):
+         job = jobs.get(identifier)
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -717,12 +717,15 @@
+         except CacheLimitReached as exc:
+             raise PrefetchPaused() from exc
+ 
++    from desktop_season_playback import make_known_season_loader, make_continuation_control
++
+     _desktop_prefetch = EpisodePrefetcher(
+         _desktop_progressive_source,
+         _desktop_library_episodes,
+         os.path.join(STREAM_CACHE, ".desktop-playable-v1"),
+         encoder=encode_hls,
+         ahead=validate_ahead(_desktop_cache_settings.load()["ahead"]),
++        next_season_loader=make_known_season_loader(_desktop_library_relations, _desktop_library_episodes),
+         download_loader=_desktop_download_source,
+         background_guard=_background_cache_write,
+         source_status=source_progress,
+@@ -746,6 +749,7 @@
+         full_cache_ready=lambda *args, **kwargs: _desktop_prefetch.cache.contains(*args, **kwargs), on_activate=_desktop_prefetch.promote,
+         native=NativeHost(),
+         allow_season_prewarm=make_season_prewarm(_desktop_prefetch, _desktop_library_relations),
++        on_continuation=make_continuation_control(_desktop_prefetch),
+     )
+     _desktop_session_roots = {_desktop_jobs.root}
+ 
