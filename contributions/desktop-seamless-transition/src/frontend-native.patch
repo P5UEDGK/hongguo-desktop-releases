@@ -1,0 +1,225 @@
+--- a/frontend/frontend-native.js
++++ b/frontend/frontend-native.js
+@@ -6,7 +6,7 @@
+   let ready = false, timer, controlTimer, pollBusy = false, controlBusy = false, revision = 0;
+   let pending = {}, saved = new Map(), stage = media.closest('.player-stage') || media.parentElement;
+   let resize = null, lastRect = '', generation = 0, seekPending = null;
+-  let reportedSeek = false, fallbackStarted = false;
++  let reportedSeek = false, fallbackStarted = false, batchingControls = false;
+   let state = {time: initialPosition || 0, duration: 0, paused: false, ended: false,
+     rate: media.playbackRate || 1, volume: media.volume, muted: media.muted, width: 0, height: 0,
+     seeking: false, buffering: false, bufferStart: 0, bufferEnd: 0};
+@@ -36,13 +36,23 @@
+     negotiationMethods.clear();
+   }
+   const headers = {'x-api-key': endpoint.key};
++  media.desktopSessionId = () => id || delegated?.sessionId?.();
+   const options = {credentials: 'omit', redirect: 'error', cache: 'no-store'};
+   const event = name => {if (!disposed && native) media.dispatchEvent(new Event(name));};
+-  async function request(path, init = {}) {
+-    const response = await fetch(endpoint.origin + '/desktop/hls' + path,
+-      {...options, ...init, headers: {...headers, ...init.headers}});
+-    if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
+-    return response.status === 204 ? null : response.json();
++  async function request(path, init = {}, timeoutMs = 15000) {
++    const abort = new AbortController();
++    let timeout;
++    try {
++      return await Promise.race([
++        (async () => {
++          const response = await fetch(endpoint.origin + '/desktop/hls' + path,
++            {...options,...init,signal:abort.signal,headers:{...headers,...init.headers}});
++          if (!response.ok) {const error = Error('Desktop native session unavailable'); error.status = response.status; throw error;}
++          return response.status === 204 ? null : response.json();
++        })(),
++        new Promise((_,reject)=>{timeout=setTimeout(()=>{abort.abort();reject(Error('Desktop request timed out'));},Math.max(1,timeoutMs));})
++      ]);
++    } finally {clearTimeout(timeout);}
+   }
+   async function release(identifier) {
+     if (!identifier) return true;
+@@ -70,7 +80,7 @@
+       if (descriptor) Object.defineProperty(media, key, descriptor);
+       else delete media[key];
+     }
+-    saved.clear(); native = false;
++    saved.clear(); native = false; delete media.desktopNativePicture;
+     media.playbackRate = state.rate;
+     media.volume = state.volume;
+     media.muted = state.muted;
+@@ -97,7 +107,7 @@
+       transfer = {claim:async () => {if (claimed) return null; claimed = true; return old;},
+                   dispose() {if (!claimed) {claimed = true; release(old);}}};
+     }
+-    delegated = desktopCodecHls(media, url, Math.max(0, state.time), callbacks,
++    delegated = desktopCodecHls(media, url, Math.max(0, state.time), {...callbacks, onReady() { preparation?.finishRetained?.(); callbacks.onReady?.(); }},
+       transfer, windowed, {forceH264, paused: state.paused});
+   }
+   async function failPreparation() {
+@@ -106,21 +116,21 @@
+     const old = id; id = null;
+     restore();
+     await release(old);
+-    if (!disposed) {callbacks.onComplete?.(false); callbacks.onError?.();}
++    if (!disposed) {preparation?.cancelClaim?.(); preparation?.finishRetained?.(); callbacks.onComplete?.(false); callbacks.onError?.();}
+   }
+   function queue(command) {
+     if (disposed || !native || fallbackStarted) return;
+     Object.assign(pending, command);
+-    if (!controlTimer && !controlBusy) controlTimer = setTimeout(flush, "paused" in command || "seek" in command ? 0 : 250);
+-  }
+-  async function flush() {
++    if (!batchingControls && !controlTimer && !controlBusy) controlTimer = setTimeout(flush, "paused" in command || "seek" in command ? 0 : 250);
++  }
++  async function flush(deadline = null) {
+     controlTimer = null;
+     if (disposed || !id || !native || controlBusy || !Object.keys(pending).length) return;
+     controlBusy = true;
+     const command = pending; pending = {};
+     try {
+       const result = await request('/' + id + '/control', {method: 'POST',
+-        headers: {'content-type': 'application/json'}, body: JSON.stringify(command)});
++        headers: {'content-type': 'application/json'}, body: JSON.stringify(command)}, deadline === null ? 15000 : deadline-Date.now());
+       revision = result.revision;
+     } catch {if (!disposed) failPreparation();}
+     finally {
+@@ -155,13 +165,13 @@
+     // is downloading. Capture it immediately before replacing the properties.
+     state.rate = media.playbackRate || state.rate;
+     state.volume = media.volume; state.muted = media.muted;
+-    native = true;
++    native = true; media.desktopNativePicture = true;
+     function property(name, descriptor) {
+       saved.set(name, Object.getOwnPropertyDescriptor(media, name));
+       Object.defineProperty(media, name, {configurable: true, ...descriptor});
+     }
+     for (const [name, key] of Object.entries({paused: 'paused', duration: 'duration', ended: 'ended',
+-      videoWidth: 'width', videoHeight: 'height', seeking: 'seeking'})) property(name, {get: () => state[key]});
++      videoWidth: 'width', videoHeight: 'height', seeking: 'seeking', desktopBuffering: 'buffering'})) property(name, {get: () => state[key]});
+     property('readyState', {get: () => ready ? 4 : 0});
+     property('currentTime', {get: () => state.time, set: seek});
+     property('buffered', {get: () => ({length: state.bufferEnd > state.bufferStart ? 1 : 0,
+@@ -220,6 +230,7 @@
+         callbacks.onComplete?.(!progressive || result.sourceProgress.complete || value.state === 'ended');
+         event('progress');
+         const applied = value.revision >= revision && !controlBusy && !Object.keys(pending).length;
++        if (applied && value.visible && value.outputReady) preparation?.finishRetained?.();
+         if (seekPending === null || applied) state.time = value.time;
+         if (!ready) {
+           ready = true;
+@@ -258,21 +269,33 @@
+   }
+   (async () => {
+     try {
+-      const capability = await request('/capabilities');
++      const standby = await preparation?.claimRecord?.(url, initialPosition);
++      if (disposed) {standby?.dispose(); return;}
++      if (standby?.settings) { media.playbackRate = standby.settings.rate; media.volume = standby.settings.volume; media.muted = standby.settings.muted; }
++      if (standby?.mode !== 'native' && standby?.adopt) {
++        delegated = standby.adopt(media, callbacks, () => {
++          delegated = null;
++          preparation?.cancelClaim?.(true);
++          delegate(false);
++        });
++        return;
++      }
++      const preparedNative = standby?.mode === 'native';
++      const capability = preparedNative ? {nativePlayback:1} : await request('/capabilities');
+       if (disposed) return;
+       if (capability.nativePlayback !== 1) {delegate(false); return;}
+       const sourceUrl = new URL(endpoint.url);
+       if (state.time > 0) sourceUrl.searchParams.set('start_seconds', state.time);
+-      const created = await fetch(sourceUrl, {...options, method: 'POST',
++      const created = standby ? null : await fetch(sourceUrl, {...options, method: 'POST',
+         headers: {...headers, 'x-desktop-codec-negotiation': '1'}});
+-      if (!created.ok) throw Error('Native session preparation failed');
+-      const identifier = (await created.json()).id;
++      if (created && !created.ok) throw Error('Native session preparation failed');
++      const identifier = standby?.id || (await created.json()).id;
+       if (!/^[a-f0-9]{32}$/.test(identifier)) throw Error('Invalid native session');
+       if (disposed) {await release(identifier); return;}
+       id = identifier;
+       const deadline = Date.now() + 90000;
+-      let metadata;
+-      while (!disposed && Date.now() < deadline) {
++      let metadata = preparedNative ? standby.source : null;
++      while (!metadata && !disposed && Date.now() < deadline) {
+         const result = await request('/' + id + '/status');
+         if (result.state === 'failed') throw Error('Source preparation failed');
+         if (result.source) {
+@@ -285,7 +308,7 @@
+       // Source download/transport failure says nothing about decoder support.
+       if (!metadata) {failPreparation(); return;}
+       if (!metadata?.video?.contentType?.startsWith('video/mp4; codecs="hvc1.')) {delegate(false); return;}
+-      try {
++      if (!preparedNative) try {
+         await request('/' + id + '/mode', {method: 'POST', headers: {'content-type': 'application/json'},
+           body: JSON.stringify({mode: 'native'})});
+       } catch (error) {
+@@ -294,15 +317,63 @@
+         if (!['h264', 'copy'].includes(latest.videoMode) || latest.state === 'failed') throw error;
+         delegate(false, true); return;
+       }
++      if (!preparedNative) {
++        let registered = false;
++        while (!disposed && Date.now() < deadline) {
++          const result = await request('/' + id + '/status');
++          if (result.state === 'failed' || result.native?.state === 'failed') {
++            if (result.failureCode === 'source-read' || result.native?.failureCode === 'source-read') failPreparation();
++            else delegate(true);
++            return;
++          }
++          if (Number.isInteger(result.native?.revision)) {registered = true; break;}
++          await new Promise(resolve => setTimeout(resolve, 20));
++        }
++        if (!disposed && !registered) throw Error('Native session registration timed out');
++      }
+       if (disposed) return;
+       preparation?.dispose();
+-      patch(); poll(generation);
++      // Batch initial layout and playback before allowing observers or polls
++      // to announce readiness. A prepared first frame must start advancing in
++      // the same control revision that makes the surface visible.
++      batchingControls = !!standby;
++      patch();
++      if (standby) {
++        // Apply geometry, speed and audio in the same activation command.
++        // The backend refuses activation until a decoded output frame exists.
++        layout();
++        Object.assign(pending, {paused: false, rate: state.rate, volume: state.volume, muted: state.muted});
++        batchingControls = false;
++        clearTimeout(controlTimer); controlTimer = null;
++        const untilVisible = Date.now() + 2000;
++        await flush(untilVisible);
++        let confirmed = false;
++        while (!disposed && Date.now() < untilVisible) {
++          if (!controlBusy && Object.keys(pending).length) {
++            clearTimeout(controlTimer); controlTimer = null;
++            await flush(untilVisible);
++            if (disposed) break;
++          }
++          const shown = (await request('/' + id + '/status', {}, untilVisible-Date.now())).native;
++          if (shown?.visible && shown.outputReady && shown.revision >= revision && !controlBusy && !Object.keys(pending).length) { await request('/' + id + '/activate', {method:'POST'}, untilVisible-Date.now()); confirmed = true; preparation?.finishRetained?.(); break; }
++          await new Promise(resolve => setTimeout(resolve, 4));
++        }
++        if (!disposed && !confirmed) throw Error('Standby activation timed out');
++      }
++      if (!disposed) poll(generation);
+     } catch {if (!disposed) failPreparation();}
+   })();
+   return Object.assign(() => {
+     if (disposed) return;
+     disposed = true; generation++;
+-    delegated?.(); preparation?.dispose(); restore();
+-    const old = id; id = null; release(old);
++    const retained = typeof desktopRetainPicture === 'function' && desktopRetainPicture(media);
++    preparation?.finishRetained?.();
++    if (!id && !delegated) preparation?.cancelClaim?.();
++    if (retained && delegated) retained(delegated); else delegated?.();
++    preparation?.dispose(); restore();
++    const old = id; id = null;
++    if (retained && old) retained(() => release(old));
++    else release(old);
++    delete media.desktopSessionId;
+   }, {seek});
+ }
