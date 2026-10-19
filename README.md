@@ -152,7 +152,7 @@ v1.0.3 新增热播榜按需加载、播放服务未就绪时的明确提示，�
 
 摘要用于核对文件一致性，不能代替发布者身份认证。应用内更新使用固定公钥验证更新包签名；更新签名与 Windows 发布者代码签名不同。软件启动后可以检查版本，也可在设置中手动检查，仅在用户点击更新后下载安装。
 
-[当前正式版说明与附件](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/releases/tag/v1.0.15) · [全部版本](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/releases)
+[当前正式版说明与附件](https://github.com/P5UEDGK/hongguo-desktop-releases/releases/tag/v1.0.15) · [全部版本](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/releases)
 
 ## 关于本仓库
 
