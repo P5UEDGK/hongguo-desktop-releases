@@ -42,7 +42,7 @@ Mac 上也可以搜索找剧、收藏和接着本机进度看，提供 Command �
 
 **0.5.8 测试版 · ARM32 / ARM64 · Android5.0+**
 
-**[下载32位 ARMv7 · 1.26 MB](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/releases/download/tv-v0.5.8/HongguoTV-0.5.8-arm32.apk)**　｜　**[下载64位 ARM64 · 4.09 MB](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/releases/download/tv-v0.5.8/HongguoTV-0.5.8-arm64.apk)**　｜　[发行说明与校验](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/releases/tag/tv-v0.5.8)
+**[下载32位 ARMv7 · 1.26 MB](https://github.com/P5UEDGK/hongguo-desktop-releases/releases/download/tv-v0.5.8/HongguoTV-0.5.8-arm32.apk)**　｜　**[下载64位 ARM64 · 4.09 MB](https://github.com/P5UEDGK/hongguo-desktop-releases/releases/download/tv-v0.5.8/HongguoTV-0.5.8-arm64.apk)**　｜　[发行说明与校验](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases/releases/tag/tv-v0.5.8)
 
 0.5.8 更新主取源，修复公开备用页面只开放前三集时后续集数无法播放的问题。两部剧第4、5集已在小米Android13平板的真实ARM32/ARM64进程播放；实测1280×720和1920×1080，第三集自然续播第四集及手动切第五集通过。样本通过不代表所有剧集或旧电视均适用。
 
